@@ -672,6 +672,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private void ResetRuntimeState()
     {
+        _corrections.ClearThrottleState();
         ReleaseAllKnownButtonPulses();
         _buttonPulses.CancelAll();
         _registry.ResetAll();

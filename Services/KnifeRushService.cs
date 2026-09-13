@@ -55,7 +55,7 @@ public sealed class KnifeRushService
         if (mandatoryKnife)
         {
             if (IsActive(state))
-                EndWithoutRestore(state);
+                EndWithoutRestore(pawn, state);
 
             SetMode(state, BotBehaviorMode.KnifeLevel, "mandatory knife level");
             EnsureKnifeSelected(controller, pawn, state, now, mandatory: true);
@@ -64,6 +64,12 @@ public sealed class KnifeRushService
 
         if (IsActive(state))
             return MaintainRush(controller, pawn, bot, state, enemy, now);
+
+        // A rejected roll belongs to one encounter only. Keep the decision while
+        // the same enemy remains inside the hysteresis envelope, but allow a new
+        // roll after the encounter clearly ended (far away or unseen long enough).
+        if (ResetRejectedEncounterIfEnded(state, enemy, now))
+            return false;
 
         if (!Config.KnifeRushEnabled || (grenadeLevel && !Config.KnifeRushAllowOnGrenadeLevel) ||
             enemy is not { IsVisible: true } || enemy.Value.Distance3D > Config.KnifeRushTriggerDistance ||
@@ -185,7 +191,8 @@ public sealed class KnifeRushService
         string? previousWeapon = state.WeaponBeforeKnifeRush;
         if (shouldRestore)
             AbortCount++;
-        _buttonPulses.Cancel(state.Slot);
+
+        ReleaseButtonPulses(pawn, state.Slot);
         state.ClearKnifeRushEncounter();
         SetMode(state, BotBehaviorMode.NormalGunGame, "Knife Rush ended without restore");
 
@@ -213,7 +220,14 @@ public sealed class KnifeRushService
 
     public void EndWithoutRestore(BotRuntimeState state)
     {
-        _buttonPulses.Cancel(state.Slot);
+        // Compatibility overload for callers that do not have a live pawn.
+        // Without a pawn we can only clear bookkeeping safely.
+        EndWithoutRestore(null, state);
+    }
+
+    public void EndWithoutRestore(CCSPlayerPawn? pawn, BotRuntimeState state)
+    {
+        ReleaseButtonPulses(pawn, state.Slot);
         state.ClearKnifeRushEncounter();
         SetMode(state, BotBehaviorMode.NormalGunGame, "Knife Rush ended without restore");
     }
@@ -282,10 +296,19 @@ public sealed class KnifeRushService
         bool mandatory)
     {
         if (_weaponActivation.IsKnifeActive(pawn))
+        {
+            // A verified ActiveWeapon is the only real success signal. Reset the
+            // retry budget so we can recover again if Valve later switches away.
+            state.KnifeSwitchAttempts = 0;
+            state.LastKnifeSwitchRequestAt = float.NegativeInfinity;
             return true;
+        }
 
-        if (!_weaponActivation.IsBackendAvailable || state.KnifeSwitchAttempts >= Config.MaxWeaponSwitchRetries)
+        if (!_weaponActivation.IsBackendAvailable ||
+            state.KnifeSwitchAttempts >= Config.MaxWeaponSwitchRetries)
+        {
             return mandatory;
+        }
 
         if (now - state.LastKnifeSwitchRequestAt < Config.WeaponSwitchRetryIntervalSeconds)
             return true;
@@ -297,6 +320,63 @@ public sealed class KnifeRushService
             return mandatory;
 
         return true;
+    }
+
+    private bool ResetRejectedEncounterIfEnded(
+        BotRuntimeState state,
+        EnemySnapshot? enemy,
+        float now)
+    {
+        if (!state.KnifeRushDecisionMade || state.KnifeRushAccepted)
+            return false;
+
+        if (enemy == null)
+        {
+            // BotSensorService normally clears this already. Keep this as a
+            // defensive fallback for callers that supply a null snapshot.
+            state.ClearKnifeRushEncounter();
+            return true;
+        }
+
+        if (state.CurrentEnemyEntityIndex.HasValue &&
+            state.CurrentEnemyEntityIndex.Value != enemy.Value.EntityIndex)
+        {
+            state.ClearKnifeRushEncounter();
+            return true;
+        }
+
+        bool leftDistanceEnvelope =
+            enemy.Value.Distance3D > Config.KnifeRushAbortDistance;
+
+        bool lostLongEnough =
+            !enemy.Value.IsVisible &&
+            state.EnemyLastSeenAt > 0.0f &&
+            now - state.EnemyLastSeenAt > Config.KnifeRushLostSightSeconds;
+
+        if (!leftDistanceEnvelope && !lostLongEnough)
+            return false;
+
+        _corrections.Action(
+            state.Slot,
+            nameof(KnifeRushService),
+            "knife-rush-encounter",
+            "ended",
+            leftDistanceEnvelope
+                ? $"rejected encounter left hysteresis distance; distance={enemy.Value.Distance3D:0.###}"
+                : $"rejected encounter lost sight for {now - state.EnemyLastSeenAt:0.###}s");
+
+        state.ClearKnifeRushEncounter();
+        return true;
+    }
+
+    private void ReleaseButtonPulses(
+        CCSPlayerPawn? pawn,
+        int slot)
+    {
+        if (pawn != null && pawn.IsValid)
+            _buttonPulses.Release(slot, pawn);
+        else
+            _buttonPulses.Cancel(slot);
     }
 
     private void ApplyKnifeChaseMovement(

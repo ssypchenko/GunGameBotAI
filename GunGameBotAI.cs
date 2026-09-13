@@ -43,7 +43,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     public GunGameBotAI()
     {
         _corrections = new CorrectionLogger(() => Config.Debug,
-            message => Logger.LogDebug("[GunGameBotAI] {Message}", message));
+            message => Logger.LogInformation("[GunGameBotAI][DEBUG] {Message}", message));
         _buttonPulses = new ButtonPulseService(_corrections);
         _ladderAssist = new LadderAssistService(_buttonPulses, _corrections);
         _aggression = new AggressionService(_corrections);
@@ -51,7 +51,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _idleRecovery = new IdleRecoveryService(_corrections);
         _combatMovement = new CombatMovementService(_corrections);
         _grenadeLevel = new GrenadeLevelService(_corrections);
-        _weaponActivation = new WeaponActivationService(new ClientCommandWeaponSwitchBackend(), _corrections);
+        _weaponActivation = new WeaponActivationService(
+            new NativeSelectItemWeaponSwitchBackend(), _corrections);
         _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
     }
 
@@ -122,8 +123,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     public override void Unload(bool hotReload)
     {
-        _enabled = false;
         StopSharedTimers();
+        ReleaseAllKnownButtonPulses();
+        _enabled = false;
         _buttonPulses.CancelAll();
         _registry.Clear();
 
@@ -328,6 +330,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 }
 
                 EnemySnapshot? enemy = _sensor.ReadEnemy(pawn, bot, state, now);
+
+                // Fast actuator responsibilities belong here. Knife Rush already has a fast path.
+                // LadderAssistService must expose its own ApplyFast/Actuate method before ladder
+                // movement can be safely sustained here; do not re-run TryHandle every tick.
+                _ladderAssist.ApplyFast(pawn, bot, state, enemy, now);
                 _knifeRush.ApplyFast(controller, pawn, bot, state, enemy, now);
                 _buttonPulses.Update(slot, pawn);
             }
@@ -405,7 +412,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private void OnClientDisconnect(int playerSlot)
     {
-        _buttonPulses.Cancel(playerSlot);
+        ReleaseButtonPulse(playerSlot);
         _registry.Remove(playerSlot);
     }
 
@@ -447,7 +454,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         int slot = @event.Userid?.Slot ?? -1;
         if (slot >= 0)
         {
-            _buttonPulses.Cancel(slot);
+            ReleaseButtonPulse(slot);
             _registry.Remove(slot);
         }
 
@@ -457,7 +464,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private HookResult OnWeaponFire(EventWeaponFire @event, GameEventInfo info)
     {
         if (!_enabled || @event.Userid is not { IsValid: true, IsBot: true } player || player.IsHLTV ||
-            !BotValidation.TryResolveLiveBot(player.Slot, out _, out CCSPlayerPawn? pawn, out _ ) || pawn == null)
+            !BotValidation.TryResolveLiveBot(player.Slot, out _, out CCSPlayerPawn? pawn, out _) || pawn == null)
         {
             return HookResult.Continue;
         }
@@ -481,7 +488,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (slot >= 0 && _registry.TryGet(slot, out BotRuntimeState? state) && state != null)
         {
             state.HasBeenControlledByPlayerThisRound = true;
-            _buttonPulses.Cancel(slot);
+            ReleaseButtonPulse(slot);
             _registry.DeactivateActuator(slot);
         }
 
@@ -493,7 +500,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (!_enabled || !_registry.TryGet(args.Killer, out BotRuntimeState? state) || state == null)
             return;
 
-        _buttonPulses.Cancel(args.Killer);
+        ReleaseButtonPulse(args.Killer);
         state.ResetMovementSamples();
         state.LevelWeaponClass = WeaponClass.Unknown;
         state.LevelWeaponDesignerName = null;
@@ -544,7 +551,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         Config.Debug = enabled;
         PersistConfig(command);
-        command.ReplyToCommand($"[GunGameBotAI] debug={(Config.Debug ? "enabled" : "disabled")}.");
+
+        Logger.LogInformation(
+            "[GunGameBotAI] Debug correction logging {State}. Debug corrections are emitted at Information level into the standard CounterStrikeSharp logs.",
+            Config.Debug ? "ENABLED" : "DISABLED");
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] debug={(Config.Debug ? "enabled" : "disabled")}; sink=standard CSS log; level=Information.");
     }
 
     [ConsoleCommand("css_ggbotai_knife_chance", "Set Knife Rush chance percentage.")]
@@ -647,15 +660,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             return;
 
         if (!enabled)
-        {
-            foreach (int slot in _registry.ActiveActuatorSlots.ToArray())
-            {
-                if (BotValidation.TryResolveLiveBot(slot, out _, out CCSPlayerPawn? pawn, out _) && pawn != null)
-                    _buttonPulses.Release(slot, pawn);
-                else
-                    _buttonPulses.Cancel(slot);
-            }
-        }
+            ReleaseAllKnownButtonPulses();
 
         _enabled = enabled;
         _corrections.Action(-1, nameof(GunGameBotAI), "runtime", enabled ? "enabled" : "disabled", "operator command or configuration");
@@ -667,6 +672,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private void ResetRuntimeState()
     {
+        ReleaseAllKnownButtonPulses();
         _buttonPulses.CancelAll();
         _registry.ResetAll();
         _knifeRush.ResetStatistics();
@@ -706,7 +712,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         command.ReplyToCommand(
-            $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; debug={(Config.Debug ? "enabled" : "disabled")}; liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; ladderAssist={(Config.LadderAssistEnabled ? "enabled" : "disabled")}.");
+            $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; debug={(Config.Debug ? "enabled" : "disabled")}; debugLevel=Information; liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; ladderAssist={(Config.LadderAssistEnabled ? "enabled" : "disabled")}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] decisionTimer={_decisionTimer != null}; actuatorTimer={_actuatorTimer != null}; decision={Config.DecisionIntervalSeconds:0.###}s; fastTicks={Config.FastActuatorEveryTicks}; backend={_weaponActivation.BackendName}; backendAvailable={_weaponActivation.IsBackendAvailable}.");
         command.ReplyToCommand(
@@ -722,7 +728,34 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private void DebugLog(string message)
     {
         if (Config.Debug)
-            Logger.LogDebug("[GunGameBotAI] {Message}", message);
+            Logger.LogInformation("[GunGameBotAI][DEBUG] {Message}", message);
+    }
+
+    private void ReleaseButtonPulse(int slot)
+    {
+        try
+        {
+            if (BotValidation.TryResolveLiveBot(slot, out _, out CCSPlayerPawn? pawn, out _) && pawn != null)
+                _buttonPulses.Release(slot, pawn);
+            else
+                _buttonPulses.Cancel(slot);
+        }
+        catch (Exception exception)
+        {
+            _buttonPulses.Cancel(slot);
+            LogRateLimited($"pulse-release-{slot}", exception, $"Failed to release a button pulse for bot slot {slot}.");
+        }
+    }
+
+    private void ReleaseAllKnownButtonPulses()
+    {
+        // Snapshot the keys because Release/cleanup may indirectly mutate runtime collections.
+        int[] slots = _registry.States.Keys.ToArray();
+        foreach (int slot in slots)
+            ReleaseButtonPulse(slot);
+
+        // Covers any pulse that may exist without a registry entry.
+        _buttonPulses.CancelAll();
     }
 
     private void SetMode(BotRuntimeState state, BotBehaviorMode mode, string reason)

@@ -65,9 +65,10 @@ public sealed class StuckRecoveryService
         bool progressed =
             progress2D >= Config.StuckMinProgress;
 
-        // Any meaningful displacement proves the bot is not trapped, even if
-        // it happens to be stationary at this exact decision tick while firing.
-        if (!bot.IsStuck && progressed)
+        // Any meaningful displacement proves the bot made useful progress.
+        // Valve's IsStuck flag can remain true after the bot has already moved,
+        // so it must not prevent the sample from being reset.
+        if (progressed)
         {
             state.ResetMovementSamples();
             state.StuckRecoveryAttempt = 0;
@@ -83,16 +84,23 @@ public sealed class StuckRecoveryService
         bool lowObservedMotion =
             state.StuckMaxSpeed <= LowObservedSpeed;
 
-        // Hard recovery may trust Valve's own IsStuck signal immediately after
-        // StuckHardSeconds. Without that signal, require consistently low real
-        // movement so combat strafing / stopping to fire does not look "stuck".
+        // Valve's IsStuck is only supporting evidence, never sufficient on its
+        // own. The log showed IsStuck remaining true while bots were moving at
+        // >100 u/s, which caused repeated false recoveries.
+        //
+        // Hard recovery requires:
+        //   - no meaningful displacement,
+        //   - low CURRENT motion,
+        //   - and either Valve's stuck signal or consistently low observed
+        //     motion during the whole sample.
         bool hardStuck =
             stalledSeconds >= Config.StuckHardSeconds &&
-            (bot.IsStuck ||
-             (lowCurrentMotion && lowObservedMotion && !progressed));
+            !progressed &&
+            lowCurrentMotion &&
+            (bot.IsStuck || lowObservedMotion);
 
-        // Soft recovery is deliberately stricter than before. Merely spending
-        // StuckSoftSeconds inside a <StuckMinProgress radius is NOT enough.
+        // Soft recovery is stricter and ignores Valve's flag entirely: the bot
+        // must have remained slow for the whole sample window.
         bool softStuck =
             stalledSeconds >= Config.StuckSoftSeconds &&
             !progressed &&
@@ -124,6 +132,7 @@ public sealed class StuckRecoveryService
             $"stalled={stalledSeconds:0.###}s; " +
             $"progress2D={progress2D:0.###}/{Config.StuckMinProgress:0.###}; " +
             $"speed2D={speed2D:0.###}; maxSpeed2D={state.StuckMaxSpeed:0.###}; " +
+            $"lowCurrent={lowCurrentMotion}; lowObserved={lowObservedMotion}; " +
             $"forward={escape.Forward:0.###}; side={escape.Side:0.###}; " +
             $"movementServices={escape.AppliedMovement}");
 

@@ -98,7 +98,20 @@ public sealed class KnifeRushService
         state.KnifeRushStartedAt = now;
         state.KnifeRushLastTargetSeenAt = now;
         state.KnifeRushNeedsRestore = true;
-        state.WeaponBeforeKnifeRush = _weaponActivation.GetActiveDesignerName(pawn);
+        state.WeaponBeforeKnifeRush =
+            ResolveWeaponBeforeKnifeRush(pawn, state);
+
+        _corrections.Action(
+            state.Slot,
+            nameof(KnifeRushService),
+            "knife-restore-snapshot",
+            string.IsNullOrWhiteSpace(state.WeaponBeforeKnifeRush)
+                ? "unavailable"
+                : "captured",
+            $"weapon={state.WeaponBeforeKnifeRush ?? "null"}; " +
+            $"levelClass={state.LevelWeaponClass}; " +
+            $"levelWeapon={state.LevelWeaponDesignerName ?? "null"}; " +
+            $"active={_weaponActivation.GetActiveDesignerName(pawn) ?? "null"}");
         state.KnifeSwitchAttempts = 0;
         state.LastKnifeSwitchRequestAt = float.NegativeInfinity;
         state.NextKnifeAttackAt = now;
@@ -283,6 +296,72 @@ public sealed class KnifeRushService
 
         SetMode(state, BotBehaviorMode.OpportunisticKnifeRush, "maintain Knife Rush");
         return true;
+    }
+
+    private string? ResolveWeaponBeforeKnifeRush(
+        CCSPlayerPawn pawn,
+        BotRuntimeState state)
+    {
+        // Prefer the GunGame level weapon because it is the weapon we actually
+        // want to resume after an opportunistic rush. ActiveWeapon can briefly
+        // be a knife during spawn/AI transitions, so never use a special weapon
+        // as the restore target for a normal GunGame rush.
+        if (state.LevelWeaponClass is not
+                (WeaponClass.Unknown or
+                 WeaponClass.Knife or
+                 WeaponClass.Grenade) &&
+            !string.IsNullOrWhiteSpace(
+                state.LevelWeaponDesignerName))
+        {
+            return state.LevelWeaponDesignerName;
+        }
+
+        try
+        {
+            CBasePlayerWeapon? active =
+                pawn.WeaponServices?.ActiveWeapon.Value;
+
+            WeaponClass activeClass =
+                WeaponClassifier.Classify(active);
+
+            if (active != null &&
+                active.IsValid &&
+                activeClass is not
+                    (WeaponClass.Unknown or
+                     WeaponClass.Knife or
+                     WeaponClass.Grenade) &&
+                !string.IsNullOrWhiteSpace(
+                    active.DesignerName))
+            {
+                return active.DesignerName;
+            }
+        }
+        catch
+        {
+            // Fall through to the last safe state fallback.
+        }
+
+        // A normal level can temporarily have Unknown classification while the
+        // inventory catches up. If we still have a non-empty tracked designer
+        // name, accept it only when it is clearly not a special weapon name.
+        string? tracked =
+            state.LevelWeaponDesignerName;
+
+        if (!string.IsNullOrWhiteSpace(tracked) &&
+            !tracked.Contains(
+                "knife",
+                StringComparison.OrdinalIgnoreCase) &&
+            !tracked.Contains(
+                "grenade",
+                StringComparison.OrdinalIgnoreCase) &&
+            !tracked.Contains(
+                "hegrenade",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return tracked;
+        }
+
+        return null;
     }
 
     private bool EnsureKnifeSelected(

@@ -30,6 +30,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly GrenadeLevelService _grenadeLevel;
     private readonly WeaponActivationService _weaponActivation;
     private readonly KnifeRushService _knifeRush;
+    private LadderMapService? _ladderMap;
     private readonly Dictionary<string, float> _lastErrorAt = new();
 
     private Timer? _decisionTimer;
@@ -79,6 +80,25 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _loaded = true;
         ApplyConfigToServices();
 
+        LadderMapStore ladderMapStore = new(
+            ModuleDirectory,
+            message => Logger.LogInformation("[GunGameBotAI][LADDER] {Message}", message),
+            (exception, message) => Logger.LogWarning(exception, "[GunGameBotAI][LADDER] {Message}", message));
+
+        _ladderMap = new LadderMapService(
+            ladderMapStore,
+            _buttonPulses,
+            _corrections,
+            message => Logger.LogInformation("[GunGameBotAI][LADDER] {Message}", message),
+            message => Logger.LogInformation("[GunGameBotAI][LADDER] {Message}", message))
+        {
+            Config = Config
+        };
+
+        string currentMap = Server.MapName;
+        if (!string.IsNullOrWhiteSpace(currentMap))
+            _ladderMap.OnMapStart(currentMap);
+
         RegisterListener<Listeners.OnMapStart>(OnMapStart);
         RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
         RegisterListener<Listeners.OnClientDisconnect>(OnClientDisconnect);
@@ -123,6 +143,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     public override void Unload(bool hotReload)
     {
         StopSharedTimers();
+        _ladderMap?.Shutdown();
+        _ladderMap = null;
         ReleaseAllKnownButtonPulses();
         _enabled = false;
         _buttonPulses.CancelAll();
@@ -210,6 +232,19 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 }
 
                 ThinkBot(controller, pawn, bot, state, now);
+
+                bool ladderJumpScheduled =
+                    _ladderMap?.ObserveAndMaybeScheduleJump(
+                        pawn,
+                        bot,
+                        state,
+                        now) == true;
+
+                // Button pulses are actuated from the shared fast loop. Keep
+                // the slot active until every scheduled pulse has been applied
+                // and released, even if normal ThinkBot logic deactivated it.
+                if (ladderJumpScheduled || _buttonPulses.HasPending(slot))
+                    _registry.ActivateActuator(slot);
             }
             catch (Exception exception)
             {
@@ -457,6 +492,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = false;
         ResetRuntimeState();
+        _ladderMap?.OnMapStart(mapName);
+
         if (_loaded)
             StartSharedTimers();
     }
@@ -465,12 +502,14 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = true;
         StopSharedTimers();
+        _ladderMap?.OnMapEnd();
         ResetRuntimeState();
     }
 
     private void OnClientDisconnect(int playerSlot)
     {
         ReleaseButtonPulse(playerSlot);
+        _ladderMap?.RemoveSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
 
@@ -489,6 +528,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         int? userId = player.UserId;
         BotRuntimeState state = _registry.GetOrCreate(slot);
         state.ResetForRound();
+        _ladderMap?.RemoveSlot(slot);
         _buttonPulses.Cancel(slot);
 
         Server.NextFrame(() =>
@@ -513,6 +553,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (slot >= 0)
         {
             ReleaseButtonPulse(slot);
+            _ladderMap?.RemoveSlot(slot);
             _registry.Remove(slot);
         }
 
@@ -564,6 +605,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         {
             state.HasBeenControlledByPlayerThisRound = true;
             ReleaseButtonPulse(slot);
+            _ladderMap?.RemoveSlot(slot);
             _registry.DeactivateActuator(slot);
         }
 
@@ -612,6 +654,60 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     public void OnStatusCommand(CCSPlayerController? player, CommandInfo command)
     {
         PrintStatus(command);
+    }
+
+    [ConsoleCommand("css_ggbotai_ladders", "Show learned ladder entries for the current map.")]
+    [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnLaddersCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        PrintLadderMap(command);
+    }
+
+    [ConsoleCommand("css_ggbotai_ladders_reload", "Reload the current map's ladder JSON from disk.")]
+    [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnLaddersReloadCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (_ladderMap == null || string.IsNullOrWhiteSpace(_ladderMap.CurrentMap))
+        {
+            command.ReplyToCommand("[GunGameBotAI] No ladder map is currently loaded.");
+            return;
+        }
+
+        _ladderMap.ReloadCurrentMap();
+        command.ReplyToCommand(
+            $"[GunGameBotAI] Reloaded ladder map '{_ladderMap.CurrentMap}'; entries={_ladderMap.EntryCount}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_ladder_jump", "Enable or disable proactive jumps at learned ladder entries.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnLadderJumpCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_ladder_jump 0|1");
+            return;
+        }
+
+        Config.LadderEntryJumpEnabled = enabled;
+        PersistConfig(command);
+        command.ReplyToCommand(
+            $"[GunGameBotAI] learned ladder-entry jump={(enabled ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_ladder_learning", "Enable or disable persistent ladder learning.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnLadderLearningCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_ladder_learning 0|1");
+            return;
+        }
+
+        Config.LadderLearningEnabled = enabled;
+        PersistConfig(command);
+        command.ReplyToCommand(
+            $"[GunGameBotAI] persistent ladder learning={(enabled ? "enabled" : "disabled")}.");
     }
 
     [ConsoleCommand("css_ggbotai_debug", "Enable or disable GunGameBotAI debug logging.")]
@@ -741,6 +837,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _corrections.Action(-1, nameof(GunGameBotAI), "runtime", enabled ? "enabled" : "disabled", "operator command or configuration");
         _buttonPulses.CancelAll();
         _registry.Clear();
+        _ladderMap?.ResetRuntimeTracking();
+
         if (!enabled)
             _knifeRush.ResetStatistics();
     }
@@ -751,6 +849,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ReleaseAllKnownButtonPulses();
         _buttonPulses.CancelAll();
         _registry.ResetAll();
+        _ladderMap?.ResetRuntimeTracking();
         _knifeRush.ResetStatistics();
     }
 
@@ -759,6 +858,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aggression.Config = Config;
         _stuckRecovery.Config = Config;
         _ladderAssist.Config = Config;
+
+        if (_ladderMap != null)
+            _ladderMap.Config = Config;
+
         _idleRecovery.Config = Config;
         _combatMovement.Config = Config;
         _grenadeLevel.Config = Config;
@@ -792,12 +895,38 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] decisionTimer={_decisionTimer != null}; actuatorTimer={_actuatorTimer != null}; decision={Config.DecisionIntervalSeconds:0.###}s; fastTicks={Config.FastActuatorEveryTicks}; backend={_weaponActivation.BackendName}; backendAvailable={_weaponActivation.IsBackendAvailable}.");
         command.ReplyToCommand(
+            $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; entries={_ladderMap?.EntryCount ?? 0}; learning={Config.LadderLearningEnabled}; entryJump={Config.LadderEntryJumpEnabled}; descendingJump={Config.LadderEntryJumpDescendingEnabled}.");
+        command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
 
         foreach (BotRuntimeState state in _registry.States.Values)
         {
             command.ReplyToCommand(
                 $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}.");
+        }
+    }
+
+    private void PrintLadderMap(CommandInfo command)
+    {
+        if (_ladderMap == null || string.IsNullOrWhiteSpace(_ladderMap.CurrentMap))
+        {
+            command.ReplyToCommand("[GunGameBotAI] No ladder map is currently loaded.");
+            return;
+        }
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] ladderMap={_ladderMap.CurrentMap}; entries={_ladderMap.EntryCount}; path={_ladderMap.CurrentPath}");
+
+        foreach (LadderMapEntry entry in _ladderMap.Entries)
+        {
+            System.Numerics.Vector3 mount = entry.Mount.ToVector3();
+            System.Numerics.Vector3 approach = entry.ApproachDirection.ToVector3();
+
+            command.ReplyToCommand(
+                $"[GunGameBotAI] ladder id={entry.Id}; mount=({mount.X:0.###},{mount.Y:0.###},{mount.Z:0.###}); " +
+                $"approach=({approach.X:0.###},{approach.Y:0.###},{approach.Z:0.###}); " +
+                $"direction={entry.TravelDirection}; observations={entry.Observations}; " +
+                $"problematic={entry.Problematic}; problems={entry.ProblemCount}.");
         }
     }
 

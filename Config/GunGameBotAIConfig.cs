@@ -36,6 +36,22 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderAssistForwardMove { get; set; } = 200.0f;
     public float LadderAssistSideMove { get; set; } = 80.0f;
 
+    // Persistent per-map ladder learning. WALK -> LADDER transitions are the
+    // authoritative learning signal; LadderNormal/GoalPosition guesses are not.
+    public bool LadderLearningEnabled { get; set; } = true;
+    public bool LadderEntryJumpEnabled { get; set; } = true;
+    public bool LadderEntryJumpDescendingEnabled { get; set; } = false;
+    public bool LadderMapDebug { get; set; } = true;
+    public float LadderLearnClusterRadius { get; set; } = 32.0f;
+    public float LadderEntryJumpDistance { get; set; } = 85.0f;
+    public float LadderEntryMaxVerticalDelta { get; set; } = 48.0f;
+    public float LadderEntryApproachDot { get; set; } = 0.35f;
+    public float LadderEntryJumpCooldownSeconds { get; set; } = 0.75f;
+    public int LadderEntryJumpPulseTicks { get; set; } = 3;
+    public float LadderProblemSeconds { get; set; } = 0.75f;
+    public float LadderProblemSpeed { get; set; } = 8.0f;
+    public float LadderProblemNearMountDistance { get; set; } = 64.0f;
+
     public bool CombatStrafeEnabled { get; set; } = true;
     public bool CounterStrafeEnabled { get; set; } = true;
     public bool SniperPeekEnabled { get; set; } = true;
@@ -77,6 +93,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderAssistVerticalThreshold = Clamp(LadderAssistVerticalThreshold, 8.0f, 256.0f, 24.0f, nameof(LadderAssistVerticalThreshold), warn);
         LadderAssistForwardMove = Clamp(LadderAssistForwardMove, 50.0f, 450.0f, 200.0f, nameof(LadderAssistForwardMove), warn);
         LadderAssistSideMove = Clamp(LadderAssistSideMove, 0.0f, 250.0f, 80.0f, nameof(LadderAssistSideMove), warn);
+
+        LadderLearnClusterRadius = Clamp(LadderLearnClusterRadius, 8.0f, 128.0f, 32.0f, nameof(LadderLearnClusterRadius), warn);
+        LadderEntryJumpDistance = Clamp(LadderEntryJumpDistance, 24.0f, 200.0f, 85.0f, nameof(LadderEntryJumpDistance), warn);
+        LadderEntryMaxVerticalDelta = Clamp(LadderEntryMaxVerticalDelta, 8.0f, 128.0f, 48.0f, nameof(LadderEntryMaxVerticalDelta), warn);
+        LadderEntryApproachDot = Clamp(LadderEntryApproachDot, -1.0f, 1.0f, 0.35f, nameof(LadderEntryApproachDot), warn);
+        LadderEntryJumpCooldownSeconds = Clamp(LadderEntryJumpCooldownSeconds, 0.1f, 5.0f, 0.75f, nameof(LadderEntryJumpCooldownSeconds), warn);
+        LadderEntryJumpPulseTicks = Clamp(LadderEntryJumpPulseTicks, 1, 12, 3, nameof(LadderEntryJumpPulseTicks), warn);
+        LadderProblemSeconds = Clamp(LadderProblemSeconds, 0.25f, 5.0f, 0.75f, nameof(LadderProblemSeconds), warn);
+        LadderProblemSpeed = Clamp(LadderProblemSpeed, 0.0f, 50.0f, 8.0f, nameof(LadderProblemSpeed), warn);
+        LadderProblemNearMountDistance = Clamp(LadderProblemNearMountDistance, 8.0f, 160.0f, 64.0f, nameof(LadderProblemNearMountDistance), warn);
 
         KnifeRushChancePercent = Clamp(KnifeRushChancePercent, 0, 100, 50, nameof(KnifeRushChancePercent), warn);
         KnifeRushTriggerDistance = Clamp(KnifeRushTriggerDistance, 100.0f, 1000.0f, 400.0f, nameof(KnifeRushTriggerDistance), warn);

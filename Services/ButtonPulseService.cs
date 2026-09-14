@@ -52,6 +52,11 @@ public sealed class ButtonPulseService
 
     public int Count => _pulses.Count;
 
+    public bool HasPending(int slot)
+    {
+        return _pulses.ContainsKey(slot);
+    }
+
     /// <summary>
     /// Schedule a button pulse for at least one game tick.
     ///

@@ -51,8 +51,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _idleRecovery = new IdleRecoveryService(_corrections);
         _combatMovement = new CombatMovementService(_corrections);
         _grenadeLevel = new GrenadeLevelService(_corrections);
-        _weaponActivation = new WeaponActivationService(
-            new NativeSelectItemWeaponSwitchBackend(), _corrections);
+        _weaponActivation = new WeaponActivationService(new NativeSelectItemWeaponSwitchBackend(), _corrections);
         _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
     }
 
@@ -331,9 +330,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 EnemySnapshot? enemy = _sensor.ReadEnemy(pawn, bot, state, now);
 
-                // Fast actuator responsibilities belong here. Knife Rush already has a fast path.
-                // LadderAssistService must expose its own ApplyFast/Actuate method before ladder
-                // movement can be safely sustained here; do not re-run TryHandle every tick.
+                // Fast actuator: only short-lived continuous corrections belong here.
                 _ladderAssist.ApplyFast(pawn, bot, state, enemy, now);
                 _knifeRush.ApplyFast(controller, pawn, bot, state, enemy, now);
                 _buttonPulses.Update(slot, pawn);
@@ -349,42 +346,103 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         WeaponClass oldClass = state.LevelWeaponClass;
         string? oldDesignerName = state.LevelWeaponDesignerName;
-        LevelWeaponInfo info = WeaponClassifier.InspectLevelWeapon(pawn, state.LevelWeaponDesignerName);
-        if (info.Class != WeaponClass.Unknown)
-        {
-            state.LevelWeaponClass = info.Class;
-            if (!string.IsNullOrWhiteSpace(info.DesignerName))
-                state.LevelWeaponDesignerName = info.DesignerName;
-        }
 
+        LevelWeaponInfo info =
+            WeaponClassifier.InspectLevelWeapon(pawn, state.LevelWeaponDesignerName);
+
+        // Without GunGame API we have no authoritative progression level,
+        // therefore inventory classification remains the fallback.
         if (_gunGameApi == null)
         {
+            ApplyInventoryWeaponInfo(state, info);
             LogWeaponStateCorrection(slot, state, oldClass, oldDesignerName);
             return;
         }
 
         try
         {
-            int level = _gunGameApi.GetPlayerLevel(slot);
             int maxLevel = _gunGameApi.GetMaxLevel();
+            int grenadeLevel = maxLevel - 1;
+            int level = _gunGameApi.GetPlayerLevel(slot);
+
             state.GunGameLevel = level;
             state.GunGameMaxLevel = maxLevel;
 
-            if (_gunGameApi.IsPlayerOnKnifeLevel(slot) || (maxLevel > 0 && level >= maxLevel))
+            // GunGame progression is authoritative for the two special levels:
+            //   maxLevel     = mandatory knife
+            //   maxLevel - 1 = HE grenade
+            //
+            // Do NOT infer either level from inventory. Immediately after spawn
+            // a bot may temporarily own/hold only a knife before GunGame gives
+            // the real level weapon.
+            if (maxLevel > 0 && level == maxLevel)
             {
                 state.LevelWeaponClass = WeaponClass.Knife;
+
+                if (info.Class == WeaponClass.Knife &&
+                    !string.IsNullOrWhiteSpace(info.DesignerName))
+                {
+                    state.LevelWeaponDesignerName = info.DesignerName;
+                }
             }
-            else if (maxLevel > 1 && level == maxLevel - 1)
+            else if (maxLevel > 1 && level == grenadeLevel)
             {
                 state.LevelWeaponClass = WeaponClass.Grenade;
+
+                if (info.Class == WeaponClass.Grenade &&
+                    !string.IsNullOrWhiteSpace(info.DesignerName))
+                {
+                    state.LevelWeaponDesignerName = info.DesignerName;
+                }
+            }
+            else
+            {
+                // Normal GunGame level. A transient knife/grenade inventory state
+                // must never promote the bot to a special progression mode.
+                if (info.Class != WeaponClass.Unknown &&
+                    info.Class != WeaponClass.Knife &&
+                    info.Class != WeaponClass.Grenade)
+                {
+                    state.LevelWeaponClass = info.Class;
+
+                    if (!string.IsNullOrWhiteSpace(info.DesignerName))
+                        state.LevelWeaponDesignerName = info.DesignerName;
+                }
+                else if (state.LevelWeaponClass is WeaponClass.Knife or WeaponClass.Grenade)
+                {
+                    // We know from the GunGame level that this is NOT a special
+                    // level, so clear a stale/transient special classification
+                    // until the real normal weapon becomes visible in inventory.
+                    state.LevelWeaponClass = WeaponClass.Unknown;
+                    state.LevelWeaponDesignerName = null;
+                }
             }
         }
         catch (Exception exception)
         {
-            LogRateLimited("gungame-level", exception, "GunGame API level read failed; inventory fallback remains active.");
+            // If the API call itself fails, degrade safely to inventory for this
+            // pass rather than leaving stale weapon state indefinitely.
+            ApplyInventoryWeaponInfo(state, info);
+            LogRateLimited(
+                "gungame-level",
+                exception,
+                "GunGame API level read failed; inventory fallback used for this pass.");
         }
 
         LogWeaponStateCorrection(slot, state, oldClass, oldDesignerName);
+    }
+
+    private static void ApplyInventoryWeaponInfo(
+        BotRuntimeState state,
+        LevelWeaponInfo info)
+    {
+        if (info.Class == WeaponClass.Unknown)
+            return;
+
+        state.LevelWeaponClass = info.Class;
+
+        if (!string.IsNullOrWhiteSpace(info.DesignerName))
+            state.LevelWeaponDesignerName = info.DesignerName;
     }
 
     private void LogWeaponStateCorrection(int slot, BotRuntimeState state, WeaponClass oldClass, string? oldDesignerName)

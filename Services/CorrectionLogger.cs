@@ -11,11 +11,8 @@ public sealed class CorrectionLogger
         public int Suppressed { get; set; }
     }
 
-    // Continuous movement/timer fields are the main source of debug-log volume.
-    private const long FieldIntervalMs = 1000;
-
-    // Repeated identical actions (for example repeated native switch invocations)
-    // are useful once, but not several times per second.
+    private const long DefaultFieldIntervalMs = 1000;
+    private const long AggressionHeartbeatIntervalMs = 5000;
     private const long IdenticalActionIntervalMs = 500;
 
     private readonly Func<bool> _isEnabled;
@@ -29,9 +26,11 @@ public sealed class CorrectionLogger
     }
 
     /// <summary>
-    /// Logs ordinary field corrections with per-slot/component/field sampling.
-    /// The first change is always emitted; repeated high-frequency changes are
-    /// sampled at most once per second.
+    /// Ordinary high-frequency field corrections are sampled.
+    ///
+    /// Most fields: once per second.
+    /// AggressionService.AlertTimer.Timestamp: once per five seconds because it
+    /// is a heartbeat, not an interesting state transition.
     /// </summary>
     public void Field(
         int slot,
@@ -50,11 +49,12 @@ public sealed class CorrectionLogger
         if (string.Equals(oldText, newText, StringComparison.Ordinal))
             return;
 
+        long intervalMs = GetFieldIntervalMs(component, field);
         string key = $"field|{slot}|{component}|{field}";
 
         WriteThrottled(
             key,
-            FieldIntervalMs,
+            intervalMs,
             suppressed =>
                 $"[Correction] slot={slot}; component={component}; field={field}; " +
                 $"old={oldText}; new={newText}; reason={Sanitise(reason)}" +
@@ -63,9 +63,8 @@ public sealed class CorrectionLogger
     }
 
     /// <summary>
-    /// Logs discrete actions. Only byte-for-byte identical actions are
-    /// throttled, so important actions with different reasons/results remain
-    /// fully visible.
+    /// Discrete actions remain visible. Only byte-for-byte identical actions
+    /// repeated inside a short window are collapsed.
     /// </summary>
     public void Action(
         int slot,
@@ -78,7 +77,8 @@ public sealed class CorrectionLogger
             return;
 
         string safeReason = Sanitise(reason);
-        string key = $"action|{slot}|{component}|{action}|{result}|{safeReason}";
+        string key =
+            $"action|{slot}|{component}|{action}|{result}|{safeReason}";
 
         WriteThrottled(
             key,
@@ -91,8 +91,7 @@ public sealed class CorrectionLogger
     }
 
     /// <summary>
-    /// State transitions are intentionally never throttled.
-    /// Mode/weapon/state changes are low-volume and diagnostically important.
+    /// State transitions are never throttled.
     /// </summary>
     public void State(
         int slot,
@@ -119,6 +118,25 @@ public sealed class CorrectionLogger
     public void ClearThrottleState()
     {
         _throttle.Clear();
+    }
+
+    private static long GetFieldIntervalMs(
+        string component,
+        string field)
+    {
+        if (string.Equals(
+                component,
+                "AggressionService",
+                StringComparison.Ordinal) &&
+            string.Equals(
+                field,
+                "AlertTimer.Timestamp",
+                StringComparison.Ordinal))
+        {
+            return AggressionHeartbeatIntervalMs;
+        }
+
+        return DefaultFieldIntervalMs;
     }
 
     private void WriteThrottled(

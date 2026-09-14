@@ -1,32 +1,32 @@
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Utils;
-using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 
 namespace GunGameBotAI.Native;
 
 /// <summary>
 /// Native wrapper around CCSPlayer_WeaponServices::SelectItem.
 ///
-/// The function signature is read from the shared CounterStrikeSharp gamedata:
-///   CCSPlayer_WeaponServices::SelectItem
+/// Production path:
+///   vtable offset from shared CounterStrikeSharp gamedata
+///   -> VirtualFunction
+///   -> int SelectItem(CBasePlayerWeapon* weapon)
 ///
-/// This allows GunGameBotAI to use the same centrally-maintained gamedata file
-/// as other plugins instead of shipping a private vtable index/signature copy.
+/// The byte-signature path is intentionally not used. Diagnostic testing showed
+/// that the real vtable call switches the bot weapon immediately, while the old
+/// signature-based wrapper did not.
 /// </summary>
 public sealed class WeaponSwitchNative
 {
     public const string GameDataKey =
         "CCSPlayer_WeaponServices::SelectItem";
 
-    private const int SelectItemFlags = 0;
-
     private bool _initialised;
     private bool _available;
     private bool _disabledAfterManagedFailure;
 
+    private int _selectItemOffset = -1;
     private string _status = "not initialised";
-
-    private MemoryFunctionVoid<IntPtr, IntPtr, int>? _selectItem;
 
     public bool IsAvailable
     {
@@ -47,15 +47,11 @@ public sealed class WeaponSwitchNative
     }
 
     /// <summary>
-    /// Invoke:
-    ///   CCSPlayer_WeaponServices::SelectItem(
-    ///       weaponServices,
-    ///       weapon,
-    ///       0)
+    /// Select an owned weapon through the real WeaponServices vtable method.
     ///
-    /// True means the native call was issued (or the weapon was already active).
-    /// It does not guarantee that Valve AI will keep that weapon selected.
-    /// The caller must verify ActiveWeapon on a later frame/tick.
+    /// True means the requested weapon is ActiveWeapon immediately after the
+    /// call (or it was already active). Valve bot AI can still switch away on a
+    /// later frame; the caller is responsible for maintaining the selection.
     /// </summary>
     public bool TrySelectWeapon(
         CCSPlayerPawn pawn,
@@ -65,7 +61,7 @@ public sealed class WeaponSwitchNative
 
         if (!_available ||
             _disabledAfterManagedFailure ||
-            _selectItem == null)
+            _selectItemOffset < 0)
         {
             return false;
         }
@@ -81,49 +77,61 @@ public sealed class WeaponSwitchNative
             return false;
         }
 
-        CPlayer_WeaponServices? services = pawn.WeaponServices;
-        if (services == null || services.Handle == IntPtr.Zero)
+        CPlayer_WeaponServices? services =
+            pawn.WeaponServices;
+
+        if (services == null ||
+            services.Handle == IntPtr.Zero)
+        {
             return false;
+        }
 
         if (!IsOwnedBy(services, weapon))
             return false;
 
-        // Avoid unnecessary native calls.
-        try
-        {
-            CBasePlayerWeapon? active = services.ActiveWeapon.Value;
-
-            if (active != null &&
-                active.IsValid &&
-                active.Handle == weapon.Handle)
-            {
-                return true;
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        try
-        {
-            _selectItem.Invoke(
-                services.Handle,
-                weapon.Handle,
-                SelectItemFlags);
-
+        if (IsActiveWeapon(services, weapon))
             return true;
+
+        try
+        {
+            // Current Source2 declaration:
+            //
+            //   int CPlayer_WeaponServices::SelectItem(
+            //       CBasePlayerWeapon* weapon);
+            //
+            // Therefore the managed vfunc receives:
+            //   this, weapon
+            // and returns int.
+            var selectItem =
+                VirtualFunction.Create<
+                    nint,
+                    nint,
+                    int>(
+                        services.Handle,
+                        _selectItemOffset);
+
+            _ = selectItem(
+                services.Handle,
+                weapon.Handle);
+
+            // The engine's integer return value is not used as the success
+            // criterion. ActiveWeapon is authoritative for our purpose.
+            return IsActiveWeapon(
+                services,
+                weapon);
         }
         catch (Exception exception)
         {
             // Fail closed for the remainder of this plugin lifetime.
             //
-            // Important: managed try/catch cannot guarantee recovery from a
-            // process-level native crash caused by a stale/wrong signature.
+            // A managed exception can be handled here. As with every native
+            // vfunc call, an invalid/stale vtable offset can still cause a
+            // process-level native crash before managed code can recover.
             _disabledAfterManagedFailure = true;
             _available = false;
             _status =
-                $"disabled after invocation failure: {exception.GetType().Name}";
+                $"disabled after vtable invocation failure: " +
+                $"{exception.GetType().Name}";
 
             return false;
         }
@@ -138,30 +146,48 @@ public sealed class WeaponSwitchNative
 
         try
         {
-            string signature = GameData.GetSignature(GameDataKey);
+            _selectItemOffset =
+                GameData.GetOffset(GameDataKey);
 
-            if (string.IsNullOrWhiteSpace(signature))
+            if (_selectItemOffset < 0)
             {
                 _available = false;
-                _status = "empty SelectItem signature in gamedata";
+                _status =
+                    $"invalid SelectItem vtable offset: " +
+                    $"{_selectItemOffset}";
                 return;
             }
 
-            // The uploaded gamedata marks this function as library=server.
-            // CounterStrikeSharp's signature-based MemoryFunction constructor
-            // searches the server binary by default.
-            _selectItem =
-                new MemoryFunctionVoid<IntPtr, IntPtr, int>(signature);
-
             _available = true;
-            _status = "shared gamedata signature loaded";
+            _status =
+                $"shared gamedata vtable offset={_selectItemOffset}";
         }
         catch (Exception exception)
         {
-            _selectItem = null;
+            _selectItemOffset = -1;
             _available = false;
             _status =
-                $"gamedata unavailable: {exception.GetType().Name}";
+                $"gamedata offset unavailable: " +
+                $"{exception.GetType().Name}";
+        }
+    }
+
+    private static bool IsActiveWeapon(
+        CPlayer_WeaponServices services,
+        CBasePlayerWeapon weapon)
+    {
+        try
+        {
+            CBasePlayerWeapon? active =
+                services.ActiveWeapon.Value;
+
+            return active != null &&
+                   active.IsValid &&
+                   active.Handle == weapon.Handle;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -171,9 +197,11 @@ public sealed class WeaponSwitchNative
     {
         try
         {
-            foreach (CHandle<CBasePlayerWeapon> handle in services.MyWeapons)
+            foreach (CHandle<CBasePlayerWeapon> handle
+                     in services.MyWeapons)
             {
-                CBasePlayerWeapon? candidate = handle.Value;
+                CBasePlayerWeapon? candidate =
+                    handle.Value;
 
                 if (candidate != null &&
                     candidate.IsValid &&

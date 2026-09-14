@@ -89,7 +89,6 @@ public sealed class KnifeRushService
             RejectedCount++;
             _corrections.Action(state.Slot, nameof(KnifeRushService), "knife-rush-roll", "rejected",
                 $"target={enemy.Value.EntityIndex}; chancePercent={Config.KnifeRushChancePercent}");
-            Debug(state, $"Knife Rush rejected for target {enemy.Value.EntityIndex}.");
             return false;
         }
 
@@ -115,7 +114,6 @@ public sealed class KnifeRushService
             return false;
         }
 
-        Debug(state, $"Knife Rush accepted for target {enemy.Value.EntityIndex}.");
         return true;
     }
 
@@ -207,7 +205,6 @@ public sealed class KnifeRushService
                 Debug(state, $"Knife Rush restore was not invoked after {reason}.");
         }
 
-        Debug(state, $"Knife Rush aborted: {reason}.");
     }
 
     public void ResetStatistics()
@@ -295,34 +292,19 @@ public sealed class KnifeRushService
         float now,
         bool mandatory)
     {
-        string? activeBefore = _weaponActivation.GetActiveDesignerName(pawn);
-
+        // Fast path: never issue a native call while the knife is already active.
         if (_weaponActivation.IsKnifeActive(pawn))
         {
-            // This is the important asynchronous confirmation: ActiveWeapon is
-            // actually a knife on a later decision/actuator pass.
-            if (state.KnifeSwitchAttempts > 0)
-            {
-                float elapsed = float.IsNegativeInfinity(state.LastKnifeSwitchRequestAt)
-                    ? 0.0f
-                    : MathF.Max(0.0f, now - state.LastKnifeSwitchRequestAt);
-
-                _corrections.Action(
-                    state.Slot,
-                    nameof(KnifeRushService),
-                    "knife-switch-confirmed",
-                    "active",
-                    $"attempts={state.KnifeSwitchAttempts}; " +
-                    $"active={activeBefore ?? "null"}; " +
-                    $"elapsedSinceLastRequest={elapsed:0.000}s");
-            }
-
-            // A verified ActiveWeapon is the only real success signal. Reset the
-            // retry budget so we can recover again if Valve later switches away.
+            // The retry counter now means CONSECUTIVE real selection failures.
+            // Any verified active knife resets that failure sequence.
             state.KnifeSwitchAttempts = 0;
             state.LastKnifeSwitchRequestAt = float.NegativeInfinity;
             return true;
         }
+
+        string before =
+            _weaponActivation.GetActiveDesignerName(pawn) ??
+            "null";
 
         if (!_weaponActivation.IsBackendAvailable)
         {
@@ -331,60 +313,76 @@ public sealed class KnifeRushService
                 nameof(KnifeRushService),
                 "knife-switch",
                 "backend-unavailable",
-                $"active={activeBefore ?? "null"}");
+                $"active={before}");
 
+            // Mandatory knife level must remain in KnifeLevel mode even when
+            // weapon control is temporarily unavailable. Opportunistic rush can
+            // safely abort.
             return mandatory;
         }
 
-        if (state.KnifeSwitchAttempts >= Config.MaxWeaponSwitchRetries)
+        // Do NOT apply WeaponSwitchRetryIntervalSeconds here.
+        //
+        // Diagnostic testing showed Valve bot AI can restore its gun within
+        // roughly two frames. This method is called from the shared fast
+        // actuator (currently every 2 ticks), so a lost knife must be corrected
+        // immediately on the next actuator pass.
+        state.LastKnifeSwitchRequestAt = now;
+
+        bool selected =
+            _weaponActivation.TryActivateKnife(
+                controller,
+                pawn);
+
+        bool activeNow =
+            _weaponActivation.IsKnifeActive(pawn);
+
+        string after =
+            _weaponActivation.GetActiveDesignerName(pawn) ??
+            "null";
+
+        if (selected && activeNow)
         {
+            // This can be the initial selection or a later correction after
+            // Valve bot AI tried to return the gun. A successful correction
+            // starts a fresh failure budget.
+            state.KnifeSwitchAttempts = 0;
+
             _corrections.Action(
                 state.Slot,
                 nameof(KnifeRushService),
-                "knife-switch",
-                "retry-limit",
-                $"attempts={state.KnifeSwitchAttempts}; active={activeBefore ?? "null"}");
+                "knife-hold-correction",
+                "active",
+                $"before={before}; after={after}; " +
+                $"backend={_weaponActivation.BackendName}");
 
-            return mandatory;
+            return true;
         }
 
-        if (now - state.LastKnifeSwitchRequestAt < Config.WeaponSwitchRetryIntervalSeconds)
-            return true;
+        // Only REAL consecutive failures consume the retry budget.
+        // Successful gun->knife corrections do not accumulate forever.
+        state.KnifeSwitchAttempts++;
 
-        int attempt = state.KnifeSwitchAttempts + 1;
-        state.KnifeSwitchAttempts = attempt;
-        state.LastKnifeSwitchRequestAt = now;
-
-        string before = activeBefore ?? "null";
-        bool invoked = _weaponActivation.TryActivateKnife(controller, pawn);
-
-        // Read ActiveWeapon immediately after the native call. Comparing this
-        // with "before" and with the later knife-switch-confirmed/retry line tells
-        // us whether SelectItem worked synchronously, asynchronously, or was
-        // immediately overridden by Valve bot AI.
-        string immediate =
-            _weaponActivation.GetActiveDesignerName(pawn) ?? "null";
-
-        bool immediateKnife =
-            _weaponActivation.IsKnifeActive(pawn);
+        bool retryLimitReached =
+            state.KnifeSwitchAttempts >=
+            Config.MaxWeaponSwitchRetries;
 
         _corrections.Action(
             state.Slot,
             nameof(KnifeRushService),
-            "knife-switch-attempt",
-            immediateKnife
-                ? "immediate-active"
-                : invoked
-                    ? "invoked-no-immediate-change"
-                    : "rejected",
-            $"attempt={attempt}/{Config.MaxWeaponSwitchRetries}; " +
-            $"before={before}; immediate={immediate}; " +
+            "knife-switch-failure",
+            retryLimitReached
+                ? "retry-limit"
+                : "retry",
+            $"consecutiveFailures={state.KnifeSwitchAttempts}/" +
+            $"{Config.MaxWeaponSwitchRetries}; " +
+            $"before={before}; after={after}; " +
             $"backend={_weaponActivation.BackendName}");
 
-        if (!invoked)
-            return mandatory;
+        if (mandatory)
+            return true;
 
-        return true;
+        return !retryLimitReached;
     }
 
     private bool ResetRejectedEncounterIfEnded(

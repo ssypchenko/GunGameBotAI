@@ -528,7 +528,24 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         BotRuntimeState state = _registry.GetOrCreate(player.Slot);
-        _combatMovement.OnWeaponFire(pawn, state, @event.Weapon, Server.CurrentTime);
+
+        // Special movement controllers own velocity while active.
+        // Counter-strafe from the normal combat service would otherwise fight
+        // Knife Rush steering (observed in debug logs) and stuck recovery.
+        if (state.Mode is
+            BotBehaviorMode.KnifeLevel or
+            BotBehaviorMode.OpportunisticKnifeRush or
+            BotBehaviorMode.StuckRecovery)
+        {
+            return HookResult.Continue;
+        }
+
+        _combatMovement.OnWeaponFire(
+            pawn,
+            state,
+            @event.Weapon,
+            Server.CurrentTime);
+
         return HookResult.Continue;
     }
 

@@ -8,18 +8,26 @@ namespace GunGameBotAI.Native;
 /// Native wrapper around CCSPlayer_WeaponServices::SelectItem.
 ///
 /// Production path:
-///   vtable offset from shared CounterStrikeSharp gamedata
+///   vtable offset from CounterStrikeSharp gamedata
 ///   -> VirtualFunction
-///   -> int SelectItem(CBasePlayerWeapon* weapon)
+///   -> void SelectItem(CBasePlayerWeapon* weapon, int flags)
 ///
-/// The byte-signature path is intentionally not used. Diagnostic testing showed
-/// that the real vtable call switches the bot weapon immediately, while the old
-/// signature-based wrapper did not.
+/// IMPORTANT:
+/// SelectItem requires the additional integer argument.
+/// Calling the vfunc with only (this, weapon) is ABI-unsafe and can result
+/// in undefined native behaviour / SIGSEGV.
 /// </summary>
 public sealed class WeaponSwitchNative
 {
     public const string GameDataKey =
         "CCSPlayer_WeaponServices::SelectItem";
+
+    private const int SelectItemFlags = 0;
+
+    // Sanity guard only. Current SelectItem vtable indices are small.
+    // This does not prove that an offset is correct, but prevents obviously
+    // corrupt values from ever reaching VirtualFunction.CreateVoid().
+    private const int MaxReasonableVtableOffset = 512;
 
     private bool _initialised;
     private bool _available;
@@ -47,11 +55,14 @@ public sealed class WeaponSwitchNative
     }
 
     /// <summary>
-    /// Select an owned weapon through the real WeaponServices vtable method.
+    /// Select an owned weapon through
+    /// CCSPlayer_WeaponServices::SelectItem.
     ///
-    /// True means the requested weapon is ActiveWeapon immediately after the
-    /// call (or it was already active). Valve bot AI can still switch away on a
-    /// later frame; the caller is responsible for maintaining the selection.
+    /// True means the requested weapon is ActiveWeapon immediately after
+    /// the native call, or it was already active.
+    ///
+    /// Valve bot AI may still switch away on a later frame; callers such as
+    /// KnifeRushService are responsible for maintaining the selection.
     /// </summary>
     public bool TrySelectWeapon(
         CCSPlayerPawn pawn,
@@ -89,46 +100,56 @@ public sealed class WeaponSwitchNative
         if (!IsOwnedBy(services, weapon))
             return false;
 
+        // Avoid unnecessary native calls.
         if (IsActiveWeapon(services, weapon))
             return true;
 
         try
         {
-            // Current Source2 declaration:
-            //
-            //   int CPlayer_WeaponServices::SelectItem(
-            //       CBasePlayerWeapon* weapon);
-            //
-            // Therefore the managed vfunc receives:
-            //   this, weapon
-            // and returns int.
+            /*
+             * Native call:
+             *
+             *   CCSPlayer_WeaponServices::SelectItem(
+             *       CBasePlayerWeapon* weapon,
+             *       int flags);
+             *
+             * Managed vfunc therefore receives:
+             *
+             *   this
+             *   weapon
+             *   flags
+             *
+             * The third argument is REQUIRED. Do not remove it.
+             */
             var selectItem =
-                VirtualFunction.Create<
+                VirtualFunction.CreateVoid<
                     nint,
                     nint,
                     int>(
                         services.Handle,
                         _selectItemOffset);
 
-            _ = selectItem(
+            selectItem(
                 services.Handle,
-                weapon.Handle);
+                weapon.Handle,
+                SelectItemFlags);
 
-            // The engine's integer return value is not used as the success
-            // criterion. ActiveWeapon is authoritative for our purpose.
             return IsActiveWeapon(
                 services,
                 weapon);
         }
         catch (Exception exception)
         {
-            // Fail closed for the remainder of this plugin lifetime.
-            //
-            // A managed exception can be handled here. As with every native
-            // vfunc call, an invalid/stale vtable offset can still cause a
-            // process-level native crash before managed code can recover.
+            /*
+             * Managed failures can be handled here.
+             *
+             * A genuine native SIGSEGV caused by a stale/wrong vtable index or
+             * ABI mismatch cannot reliably be caught by C# try/catch, therefore
+             * all validation must happen BEFORE invoking the vfunc.
+             */
             _disabledAfterManagedFailure = true;
             _available = false;
+
             _status =
                 $"disabled after vtable invocation failure: " +
                 $"{exception.GetType().Name}";
@@ -149,16 +170,20 @@ public sealed class WeaponSwitchNative
             _selectItemOffset =
                 GameData.GetOffset(GameDataKey);
 
-            if (_selectItemOffset < 0)
+            if (_selectItemOffset < 0 ||
+                _selectItemOffset > MaxReasonableVtableOffset)
             {
                 _available = false;
+
                 _status =
                     $"invalid SelectItem vtable offset: " +
                     $"{_selectItemOffset}";
+
                 return;
             }
 
             _available = true;
+
             _status =
                 $"shared gamedata vtable offset={_selectItemOffset}";
         }
@@ -166,6 +191,7 @@ public sealed class WeaponSwitchNative
         {
             _selectItemOffset = -1;
             _available = false;
+
             _status =
                 $"gamedata offset unavailable: " +
                 $"{exception.GetType().Name}";
@@ -183,6 +209,7 @@ public sealed class WeaponSwitchNative
 
             return active != null &&
                    active.IsValid &&
+                   active.Handle != IntPtr.Zero &&
                    active.Handle == weapon.Handle;
         }
         catch
@@ -205,6 +232,7 @@ public sealed class WeaponSwitchNative
 
                 if (candidate != null &&
                     candidate.IsValid &&
+                    candidate.Handle != IntPtr.Zero &&
                     candidate.Handle == weapon.Handle)
                 {
                     return true;

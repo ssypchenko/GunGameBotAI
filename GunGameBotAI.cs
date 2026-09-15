@@ -32,6 +32,20 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly KnifeRushService _knifeRush;
     private LadderMapService? _ladderMap;
     private readonly Dictionary<string, float> _lastErrorAt = new();
+    private const float BotSpawnGraceSeconds = 0.40f;
+
+    /// <summary>
+    /// Newly created/spawned bots must not be inspected through CCSBot/pawn native
+    /// state immediately. The Source 2 bot object can exist before all of its
+    /// internal AI state is fully initialised.
+    ///
+    /// We track both UserId and controller Handle so slot reuse cannot accidentally
+    /// inherit the previous bot's grace state.
+    /// </summary>
+    private readonly Dictionary<
+        int,
+        (int? UserId, nint ControllerHandle, float ReadyAt)>
+        _botSpawnGrace = new();
 
     private Timer? _decisionTimer;
     private Timer? _actuatorTimer;
@@ -200,6 +214,74 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _decisionTimer = null;
         _actuatorTimer = null;
     }
+    private void StartBotSpawnGrace(
+    CCSPlayerController controller,
+    float now)
+    {
+        if (controller == null ||
+            !controller.IsValid ||
+            !controller.IsBot ||
+            controller.IsHLTV)
+        {
+            return;
+        }
+
+        int slot = controller.Slot;
+
+        _botSpawnGrace[slot] =
+            (
+                controller.UserId,
+                controller.Handle,
+                now + BotSpawnGraceSeconds
+            );
+
+        /*
+        * A slot entering spawn grace must not retain actuator/runtime state
+        * belonging to its previous pawn or previous life.
+        */
+        _buttonPulses.Cancel(slot);
+        _registry.Remove(slot);
+        _ladderMap?.RemoveSlot(slot);
+    }
+
+    private bool IsBotInSpawnGrace(
+        CCSPlayerController controller,
+        float now)
+    {
+        if (controller == null ||
+            !controller.IsValid ||
+            !controller.IsBot ||
+            controller.IsHLTV)
+        {
+            return false;
+        }
+
+        int slot = controller.Slot;
+        int? userId = controller.UserId;
+        nint controllerHandle = controller.Handle;
+
+        /*
+        * Critical protection:
+        *
+        * Do not rely only on EventPlayerSpawn.
+        *
+        * bot_add/bot_quota can expose the controller to Utilities.GetPlayers()
+        * before EventPlayerSpawn has reached us. Therefore the first observation
+        * of a new controller starts a grace period as well.
+        */
+        if (!_botSpawnGrace.TryGetValue(slot, out var grace) ||
+            grace.UserId != userId ||
+            grace.ControllerHandle != controllerHandle)
+        {
+            StartBotSpawnGrace(
+                controller,
+                now);
+
+            return true;
+        }
+
+        return now < grace.ReadyAt;
+    }
 
     private void DecisionLoop()
     {
@@ -207,23 +289,44 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             return;
 
         float now = Server.CurrentTime;
+
         foreach (CCSPlayerController player in Utilities.GetPlayers())
         {
             if (!player.IsBot || player.IsHLTV)
                 continue;
 
             int slot = player.Slot;
+
             try
             {
-                if (!BotValidation.TryResolveLiveBot(slot, out CCSPlayerController? controller,
-                        out CCSPlayerPawn? pawn, out CCSBot? bot) || controller == null || pawn == null || bot == null)
+                /*
+                * IMPORTANT:
+                * This check MUST happen before TryResolveLiveBot().
+                *
+                * TryResolveLiveBot eventually accesses PlayerPawn and pawn.Bot.
+                * We deliberately avoid touching those objects during the
+                * initialisation grace period.
+                */
+                if (IsBotInSpawnGrace(player, now))
+                    continue;
+
+                if (!BotValidation.TryResolveLiveBot(
+                        slot,
+                        out CCSPlayerController? controller,
+                        out CCSPlayerPawn? pawn,
+                        out CCSBot? bot) ||
+                    controller == null ||
+                    pawn == null ||
+                    bot == null)
                 {
                     _buttonPulses.Cancel(slot);
                     _registry.Remove(slot);
                     continue;
                 }
 
-                BotRuntimeState state = _registry.GetOrCreate(slot);
+                BotRuntimeState state =
+                    _registry.GetOrCreate(slot);
+
                 if (state.HasBeenControlledByPlayerThisRound)
                 {
                     _buttonPulses.Cancel(slot);
@@ -231,7 +334,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     continue;
                 }
 
-                ThinkBot(controller, pawn, bot, state, now);
+                ThinkBot(
+                    controller,
+                    pawn,
+                    bot,
+                    state,
+                    now);
 
                 bool ladderJumpScheduled =
                     _ladderMap?.ObserveAndMaybeScheduleJump(
@@ -240,15 +348,18 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         state,
                         now) == true;
 
-                // Button pulses are actuated from the shared fast loop. Keep
-                // the slot active until every scheduled pulse has been applied
-                // and released, even if normal ThinkBot logic deactivated it.
-                if (ladderJumpScheduled || _buttonPulses.HasPending(slot))
+                if (ladderJumpScheduled ||
+                    _buttonPulses.HasPending(slot))
+                {
                     _registry.ActivateActuator(slot);
+                }
             }
             catch (Exception exception)
             {
-                LogRateLimited($"decision-{slot}", exception, $"Decision failed for bot slot {slot}.");
+                LogRateLimited(
+                    $"decision-{slot}",
+                    exception,
+                    $"Decision failed for bot slot {slot}.");
             }
         }
     }
@@ -341,21 +452,64 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             return;
 
         float now = Server.CurrentTime;
-        IReadOnlyList<int> activeSlots = _registry.ActiveActuatorSlots;
-        for (int index = activeSlots.Count - 1; index >= 0; index--)
+
+        IReadOnlyList<int> activeSlots =
+            _registry.ActiveActuatorSlots;
+
+        for (int index = activeSlots.Count - 1;
+            index >= 0;
+            index--)
         {
             int slot = activeSlots[index];
+
             try
             {
-                if (!BotValidation.TryResolveLiveBot(slot, out CCSPlayerController? controller,
-                        out CCSPlayerPawn? pawn, out CCSBot? bot) || controller == null || pawn == null || bot == null)
+                /*
+                * Check the controller BEFORE TryResolveLiveBot().
+                *
+                * This avoids touching pawn.Bot during the bot's initialisation
+                * grace period.
+                */
+                CCSPlayerController? preliminaryController =
+                    Utilities.GetPlayerFromSlot(slot);
+
+                if (preliminaryController == null ||
+                    !preliminaryController.IsValid ||
+                    !preliminaryController.IsBot ||
+                    preliminaryController.IsHLTV)
                 {
                     _buttonPulses.Cancel(slot);
                     _registry.Remove(slot);
                     continue;
                 }
 
-                if (!_registry.TryGet(slot, out BotRuntimeState? state) || state == null ||
+                if (IsBotInSpawnGrace(
+                        preliminaryController,
+                        now))
+                {
+                    _buttonPulses.Cancel(slot);
+                    _registry.Remove(slot);
+                    continue;
+                }
+
+                if (!BotValidation.TryResolveLiveBot(
+                        slot,
+                        out CCSPlayerController? controller,
+                        out CCSPlayerPawn? pawn,
+                        out CCSBot? bot) ||
+                    controller == null ||
+                    pawn == null ||
+                    bot == null)
+                {
+                    _buttonPulses.Cancel(slot);
+                    _registry.Remove(slot);
+                    continue;
+                }
+
+                if (!_registry.TryGet(
+                        slot,
+                        out BotRuntimeState? state) ||
+                    state == null ||
                     state.HasBeenControlledByPlayerThisRound)
                 {
                     _buttonPulses.Cancel(slot);
@@ -363,16 +517,38 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     continue;
                 }
 
-                EnemySnapshot? enemy = _sensor.ReadEnemy(pawn, bot, state, now);
+                EnemySnapshot? enemy =
+                    _sensor.ReadEnemy(
+                        pawn,
+                        bot,
+                        state,
+                        now);
 
-                // Fast actuator: only short-lived continuous corrections belong here.
-                _ladderAssist.ApplyFast(pawn, bot, state, enemy, now);
-                _knifeRush.ApplyFast(controller, pawn, bot, state, enemy, now);
-                _buttonPulses.Update(slot, pawn);
+                _ladderAssist.ApplyFast(
+                    pawn,
+                    bot,
+                    state,
+                    enemy,
+                    now);
+
+                _knifeRush.ApplyFast(
+                    controller,
+                    pawn,
+                    bot,
+                    state,
+                    enemy,
+                    now);
+
+                _buttonPulses.Update(
+                    slot,
+                    pawn);
             }
             catch (Exception exception)
             {
-                LogRateLimited($"actuator-{slot}", exception, $"Actuator failed for bot slot {slot}.");
+                LogRateLimited(
+                    $"actuator-{slot}",
+                    exception,
+                    $"Actuator failed for bot slot {slot}.");
             }
         }
     }
@@ -509,6 +685,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private void OnClientDisconnect(int playerSlot)
     {
         ReleaseButtonPulse(playerSlot);
+
+        _botSpawnGrace.Remove(playerSlot);
         _ladderMap?.RemoveSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
@@ -519,40 +697,53 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         return HookResult.Continue;
     }
 
-    private HookResult OnPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+    private HookResult OnPlayerSpawn(
+    EventPlayerSpawn @event,
+    GameEventInfo info)
     {
-        if (!_enabled || @event.Userid is not { IsValid: true, IsBot: true } player || player.IsHLTV)
-            return HookResult.Continue;
-
-        int slot = player.Slot;
-        int? userId = player.UserId;
-        BotRuntimeState state = _registry.GetOrCreate(slot);
-        state.ResetForRound();
-        _ladderMap?.RemoveSlot(slot);
-        _buttonPulses.Cancel(slot);
-
-        Server.NextFrame(() =>
+        if (!_enabled ||
+            @event.Userid is not
+            {
+                IsValid: true,
+                IsBot: true
+            } player ||
+            player.IsHLTV)
         {
-            if (!_enabled || userId == null)
-                return;
+            return HookResult.Continue;
+        }
 
-            CCSPlayerController? current = Utilities.GetPlayerFromSlot(slot);
-            if (current == null || !current.IsValid || current.UserId != userId || !current.IsBot || current.IsHLTV)
-                return;
+        /*
+        * Restart the full grace period from the actual spawn event.
+        *
+        * The bot may already have been observed between ClientPutInServer and
+        * EventPlayerSpawn; that earlier grace protects creation.
+        *
+        * This one protects the newly spawned pawn for another 0.40 seconds.
+        */
+        StartBotSpawnGrace(
+            player,
+            Server.CurrentTime);
 
-            if (BotValidation.TryResolveLiveBot(slot, out _, out CCSPlayerPawn? pawn, out _) && pawn != null)
-                UpdateWeaponState(slot, pawn, state);
-        });
-
+        /*
+        * Do NOT call UpdateWeaponState() on NextFrame here.
+        *
+        * DecisionLoop will initialise weapon/runtime state after the grace period
+        * once BotValidation confirms that the pawn and CCSBot are live.
+        */
         return HookResult.Continue;
     }
 
-    private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
+    private HookResult OnPlayerDeath(
+    EventPlayerDeath @event,
+    GameEventInfo info)
     {
         int slot = @event.Userid?.Slot ?? -1;
+
         if (slot >= 0)
         {
             ReleaseButtonPulse(slot);
+
+            _botSpawnGrace.Remove(slot);
             _ladderMap?.RemoveSlot(slot);
             _registry.Remove(slot);
         }
@@ -598,13 +789,23 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         return HookResult.Continue;
     }
 
-    private HookResult OnBotTakeover(EventBotTakeover @event, GameEventInfo info)
+    private HookResult OnBotTakeover(
+    EventBotTakeover @event,
+    GameEventInfo info)
     {
         int slot = @event.Botid?.Slot ?? -1;
-        if (slot >= 0 && _registry.TryGet(slot, out BotRuntimeState? state) && state != null)
+
+        if (slot >= 0 &&
+            _registry.TryGet(
+                slot,
+                out BotRuntimeState? state) &&
+            state != null)
         {
             state.HasBeenControlledByPlayerThisRound = true;
+
             ReleaseButtonPulse(slot);
+
+            _botSpawnGrace.Remove(slot);
             _ladderMap?.RemoveSlot(slot);
             _registry.DeactivateActuator(slot);
         }
@@ -837,6 +1038,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _corrections.Action(-1, nameof(GunGameBotAI), "runtime", enabled ? "enabled" : "disabled", "operator command or configuration");
         _buttonPulses.CancelAll();
         _registry.Clear();
+        _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();
 
         if (!enabled)
@@ -849,6 +1051,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ReleaseAllKnownButtonPulses();
         _buttonPulses.CancelAll();
         _registry.ResetAll();
+        _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();
         _knifeRush.ResetStatistics();
     }

@@ -5,17 +5,17 @@ using GunGameBotAI.Models;
 namespace GunGameBotAI.Services;
 
 /// <summary>
-/// Loads and atomically saves persistent version-2 physical ladder knowledge
+/// Loads and atomically saves persistent version-3 physical ladder knowledge
 /// under the plugin directory. Each map has its own JSON file.
 ///
-/// Version-1 files are deliberately not migrated automatically: the old model
-/// persisted individual mount transitions and therefore cannot be converted
-/// reliably into physical ladders without guessing which records are false or
-/// belong to the same shaft.
+/// Older files are deliberately not migrated automatically. Version 1 stored
+/// individual mount transitions. Version 2 could let fall/problem positions
+/// contaminate learned lower-entry geometry. Re-learning is safer than guessing
+/// which persisted coordinates are valid.
 /// </summary>
 public sealed class LadderMapStore
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     private readonly string _directory;
     private readonly Action<string> _info;
@@ -80,7 +80,7 @@ public sealed class LadderMapStore
 
                 _info(
                     $"Legacy ladder map version {version} detected for '{mapName}'. " +
-                    $"It will NOT be migrated because version 1 stored mount transitions rather than physical ladders. " +
+                    $"It will NOT be migrated because older ladder geometry is not safe to reinterpret automatically. " +
                     $"A legacy backup was kept at {legacyBackup}. " +
                     $"Starting clean version-{CurrentVersion} learning; the active JSON will be replaced only after the first confirmed ladder is saved.");
 

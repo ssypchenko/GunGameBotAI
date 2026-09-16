@@ -3,19 +3,23 @@ using System.Numerics;
 namespace GunGameBotAI.Models;
 
 /// <summary>
-/// Persistent per-map ladder knowledge, version 2.
+/// Persistent per-map ladder knowledge, version 3.
 ///
 /// Version 1 stored individual MOVETYPE_LADDER mount transitions. That produced
 /// duplicate records for the lower/upper portions of one physical ladder and
 /// could persist short false-positive ladder contacts.
 ///
-/// Version 2 stores one physical ladder shaft. Runtime learning sessions merge
-/// by horizontal XY position, while BottomZ/TopZ describe its vertical extent.
+/// Version 2 introduced physical ladder shafts, but allowed failure/fall
+/// positions to contaminate BottomZ/BottomMount and approach data.
+///
+/// Version 3 keeps one physical ladder shaft, but treats the first real
+/// WALK->LADDER mount as immutable evidence for that traversal. Problem/fall
+/// points are diagnostic only and never redefine the lower mount geometry.
 /// Only confirmed ladders are persisted.
 /// </summary>
 public sealed class LadderMapDocument
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
     public string Map { get; set; } = string.Empty;
     public List<PhysicalLadder> Ladders { get; set; } = new();
 }

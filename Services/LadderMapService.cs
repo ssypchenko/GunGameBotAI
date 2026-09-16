@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 2 deliberately separates two responsibilities:
+/// Version 3 deliberately separates two responsibilities:
 ///
 /// 1) Learning:
 ///    WALK -> LADDER starts a short learning session. Brief detach/reattach
@@ -20,9 +20,10 @@ namespace GunGameBotAI.Services;
 ///
 /// 2) Traversal:
 ///    A bot approaching the learned bottom entry gives this service temporary
-///    movement ownership. The service drives a fixed jump point, releases Jump
-///    immediately after MOVETYPE_LADDER is reached, then sustains a bounded
-///    push-into-ladder + upward command until real vertical progress is proven.
+///    behavioural ownership. Valve navigation remains responsible for walking
+///    to the ladder. The service only issues Jump near the learned mount,
+///    releases Jump immediately after MOVETYPE_LADDER is reached, then applies
+///    a short bounded velocity assist until real upward progress is proven.
 /// </summary>
 public sealed class LadderMapService
 {
@@ -392,7 +393,7 @@ public sealed class LadderMapService
 
             if (onLadder)
             {
-                ApplyClimbMovement(
+                ApplyClimbVelocityAssist(
                     pawn,
                     bot,
                     state,
@@ -410,13 +411,9 @@ public sealed class LadderMapService
             if (detachedFor <=
                 Config.LadderSessionDetachGraceSeconds)
             {
-                ApplyApproachMovement(
-                    pawn,
-                    bot,
-                    state,
-                    ladder,
-                    position);
-
+                // Keep ownership so KnifeRush/normal combat movement cannot
+                // interfere, but let Valve navigation/ladder code recover the
+                // brief detach naturally. Do not write CmdForward/Left here.
                 return true;
             }
 
@@ -450,13 +447,9 @@ public sealed class LadderMapService
                 $"attempt={traversal.RemountAttempts}; position={Format(position)}");
         }
 
-        ApplyApproachMovement(
-            pawn,
-            bot,
-            state,
-            ladder,
-            position);
-
+        // Approach/remount deliberately leaves locomotion to Valve. The only
+        // intervention before a real mount is a short Jump pulse near the
+        // learned bottom mount.
         if (ShouldIssueJump(
                 traversal,
                 ladder,
@@ -685,6 +678,11 @@ public sealed class LadderMapService
         float now)
     {
         session.LastOnLadderAt = now;
+
+        // Keep vertical extrema for diagnostics and proof of upward progress,
+        // but NEVER move the shaft anchor after the initial mount. A bot may
+        // remain MOVETYPE_LADDER while falling into nearby broken geometry;
+        // those later XY/Z positions must not redefine the ladder itself.
         session.MinZ =
             MathF.Min(
                 session.MinZ,
@@ -694,20 +692,6 @@ public sealed class LadderMapService
             MathF.Max(
                 session.MaxZ,
                 position.Z);
-
-        session.AnchorSamples++;
-
-        float divisor =
-            MathF.Max(
-                1.0f,
-                session.AnchorSamples);
-
-        session.Anchor = new Vector3(
-            session.Anchor.X +
-                ((position.X - session.Anchor.X) / divisor),
-            session.Anchor.Y +
-                ((position.Y - session.Anchor.Y) / divisor),
-            0.0f);
 
         if (session.ProblemMarked)
             return;
@@ -815,15 +799,15 @@ public sealed class LadderMapService
             session.StartMount.Z -
             session.MinZ;
 
+        // A fall while the engine still reports MOVETYPE_LADDER must never
+        // confirm a ladder. Only real upward progress can promote a candidate.
         bool success =
-            verticalSpan >=
+            upward >=
             Config.LadderLearnConfirmVerticalProgress;
 
         string direction =
             success
-                ? upward >= downward
-                    ? "Up"
-                    : "Down"
+                ? "Up"
                 : "Unknown";
 
         PhysicalLadder? ladder =
@@ -932,14 +916,16 @@ public sealed class LadderMapService
         int newCount =
             oldCount + 1;
 
-        Vector3 oldAnchor =
-            ladder.Anchor.ToVector3();
-
+        // The shaft XY comes from the FIRST real MOVETYPE_LADDER position of
+        // each session. Never average ProblemPoint/fall positions into it.
         Vector3 observedAnchor =
             new(
-                session.Anchor.X,
-                session.Anchor.Y,
+                session.StartMount.X,
+                session.StartMount.Y,
                 0.0f);
+
+        Vector3 oldAnchor =
+            ladder.Anchor.ToVector3();
 
         Vector3 averagedAnchor =
             oldCount <= 0
@@ -959,21 +945,26 @@ public sealed class LadderMapService
         ladder.Observations =
             newCount;
 
+        // Bottom geometry is based on real mount positions, never on MinZ:
+        // a failed bot can remain MOVETYPE_LADDER while falling to Z=0.
         if (oldCount <= 0)
         {
             ladder.BottomZ =
-                session.MinZ;
+                session.StartMount.Z;
 
             ladder.TopZ =
-                session.MaxZ;
+                MathF.Max(
+                    session.StartMount.Z,
+                    session.MaxZ);
         }
         else
         {
             ladder.BottomZ =
                 MathF.Min(
                     ladder.BottomZ,
-                    session.MinZ);
+                    session.StartMount.Z);
 
+            // MaxZ is useful only as upper extent. Falling cannot increase it.
             ladder.TopZ =
                 MathF.Max(
                     ladder.TopZ,
@@ -981,22 +972,19 @@ public sealed class LadderMapService
         }
 
         if (success)
+        {
             ladder.SuccessfulTraversals++;
-
-        if (direction == "Up")
             ladder.UpTraversals++;
-        else if (direction == "Down")
-            ladder.DownTraversals++;
+        }
 
-        bool bottomLikeStart =
-            session.StartMount.Z <=
-            session.MinZ +
-            BottomSampleTolerance;
+        bool usableApproach =
+            HasUsableBottomApproach(
+                session);
 
         bool canTeachBottom =
-            direction == "Up" ||
-            (session.ProblemMarked &&
-             bottomLikeStart);
+            usableApproach &&
+            (direction == "Up" ||
+             session.ProblemMarked);
 
         if (canTeachBottom)
         {
@@ -1015,22 +1003,57 @@ public sealed class LadderMapService
         }
     }
 
-    private void UpdateBottomApproach(
-        PhysicalLadder ladder,
+    private static bool HasUsableBottomApproach(
         LearningSession session)
     {
-        int oldCount =
-            ladder.BottomApproachObservations;
-
-        int newCount =
-            oldCount + 1;
-
         Vector3 approach =
             HorizontalNormalised(
                 session.ApproachDirection);
 
-        if (oldCount <= 0 ||
-            !ladder.HasBottomApproach)
+        if (approach.LengthSquared() <
+            0.25f)
+        {
+            return false;
+        }
+
+        // Exact Entry==Mount with zero travel is the signature seen when a bot
+        // was already stuck in malformed ladder geometry. It is not a usable
+        // entry sample even if a stale velocity happens to exist.
+        float entryToMount =
+            Distance2D(
+                session.StartEntry,
+                session.StartMount);
+
+        return entryToMount >= 1.0f;
+    }
+
+    private void UpdateBottomApproach(
+        PhysicalLadder ladder,
+        LearningSession session)
+    {
+        Vector3 approach =
+            HorizontalNormalised(
+                session.ApproachDirection);
+
+        if (approach.LengthSquared() <
+            0.25f)
+        {
+            return;
+        }
+
+        float observedMountZ =
+            session.StartMount.Z;
+
+        // If a later observation is clearly LOWER than the currently learned
+        // mount, it is better bottom evidence (for example after a top-side
+        // contact was seen first). Replace instead of averaging top and bottom.
+        bool replaceWithLower =
+            !ladder.HasBottomApproach ||
+            observedMountZ <
+                ladder.BottomMount.Z -
+                BottomSampleTolerance;
+
+        if (replaceWithLower)
         {
             ladder.BottomEntry =
                 LadderPoint.FromVector3(
@@ -1043,37 +1066,60 @@ public sealed class LadderMapService
             ladder.ApproachDirection =
                 LadderPoint.FromVector3(
                     approach);
+
+            ladder.BottomApproachObservations = 1;
+            ladder.HasBottomApproach = true;
+            ladder.BottomZ =
+                MathF.Min(
+                    ladder.BottomZ,
+                    observedMountZ);
+
+            return;
         }
-        else
+
+        // A sample far ABOVE the current bottom is an upper-side contact.
+        // It belongs to the same physical ladder but must not contaminate the
+        // lower entry, mount or approach direction.
+        if (observedMountZ >
+            ladder.BottomMount.Z +
+            BottomSampleTolerance)
         {
-            ladder.BottomEntry =
-                LadderPoint.FromVector3(
-                    RunningAverage(
-                        ladder.BottomEntry.ToVector3(),
-                        session.StartEntry,
-                        oldCount,
-                        newCount));
-
-            ladder.BottomMount =
-                LadderPoint.FromVector3(
-                    RunningAverage(
-                        ladder.BottomMount.ToVector3(),
-                        session.StartMount,
-                        oldCount,
-                        newCount));
-
-            Vector3 averagedApproach =
-                RunningAverage(
-                    ladder.ApproachDirection.ToVector3(),
-                    approach,
-                    oldCount,
-                    newCount);
-
-            ladder.ApproachDirection =
-                LadderPoint.FromVector3(
-                    HorizontalNormalised(
-                        averagedApproach));
+            return;
         }
+
+        int oldCount =
+            ladder.BottomApproachObservations;
+
+        int newCount =
+            oldCount + 1;
+
+        ladder.BottomEntry =
+            LadderPoint.FromVector3(
+                RunningAverage(
+                    ladder.BottomEntry.ToVector3(),
+                    session.StartEntry,
+                    oldCount,
+                    newCount));
+
+        ladder.BottomMount =
+            LadderPoint.FromVector3(
+                RunningAverage(
+                    ladder.BottomMount.ToVector3(),
+                    session.StartMount,
+                    oldCount,
+                    newCount));
+
+        Vector3 averagedApproach =
+            RunningAverage(
+                ladder.ApproachDirection.ToVector3(),
+                approach,
+                oldCount,
+                newCount);
+
+        ladder.ApproachDirection =
+            LadderPoint.FromVector3(
+                HorizontalNormalised(
+                    averagedApproach));
 
         ladder.BottomApproachObservations =
             newCount;
@@ -1334,6 +1380,7 @@ public sealed class LadderMapService
             return false;
         }
 
+        // Do not stack a new jump while the previous one is still airborne.
         if (MathF.Abs(velocity.Z) >
             80.0f)
         {
@@ -1356,7 +1403,7 @@ public sealed class LadderMapService
                 ladder.ApproachDirection.ToVector3());
 
         if (approach.LengthSquared() <
-            0.0001f)
+            0.25f)
         {
             return false;
         }
@@ -1378,67 +1425,22 @@ public sealed class LadderMapService
                     toMount,
                     approach));
 
-        Vector3 jumpPoint =
-            new(
-                mount.X -
-                    (approach.X *
-                     Config.LadderTraversalJumpLeadDistance),
-                mount.Y -
-                    (approach.Y *
-                     Config.LadderTraversalJumpLeadDistance),
-                position.Z);
-
-        float distanceToJumpPoint =
-            Distance2D(
-                position,
-                jumpPoint);
-
-        bool passedJumpPoint =
-            alongToMount <
-            Config.LadderTraversalJumpLeadDistance -
+        // v3: wait until Valve navigation naturally brings the bot close to
+        // the learned lower mount. The old v2 code jumped around 40-55 units
+        // away and then tried to drive CmdForward/CmdLeft itself, which froze
+        // the effective approach on the tested map.
+        float maxJumpAlong =
+            Config.LadderTraversalJumpLeadDistance +
             Config.LadderTraversalJumpWindow;
 
-        if (alongToMount <= 2.0f ||
-            perpendicular >
-                Config.LadderTraversalCorridorHalfWidth ||
-            (!passedJumpPoint &&
-             distanceToJumpPoint >
-                Config.LadderTraversalJumpWindow))
-        {
-            return false;
-        }
-
-        return true;
+        return
+            alongToMount > 2.0f &&
+            alongToMount <= maxJumpAlong &&
+            perpendicular <=
+                Config.LadderTraversalCorridorHalfWidth;
     }
 
-    private void ApplyApproachMovement(
-        CCSPlayerPawn pawn,
-        CCSBot bot,
-        BotRuntimeState state,
-        PhysicalLadder ladder,
-        Vector3 position)
-    {
-        PrepareBotForMovement(
-            bot,
-            state);
-
-        Vector3 target =
-            ladder.BottomMount.ToVector3();
-
-        Vector3 desired =
-            new(
-                target.X - position.X,
-                target.Y - position.Y,
-                0.0f);
-
-        ApplyWorldMovement(
-            pawn,
-            desired,
-            Config.LadderTraversalApproachMove,
-            upMove: 0.0f);
-    }
-
-    private void ApplyClimbMovement(
+    private void ApplyClimbVelocityAssist(
         CCSPlayerPawn pawn,
         CCSBot bot,
         BotRuntimeState state,
@@ -1448,108 +1450,100 @@ public sealed class LadderMapService
             bot,
             state);
 
-        // ApproachDirection points from the floor towards the ladder surface.
-        // Reusing it while mounted provides a small horizontal "press" into the
-        // ladder while CmdUpMove supplies the climb.
-        Vector3 intoLadder =
-            HorizontalNormalised(
-                ladder.ApproachDirection.ToVector3());
-
-        ApplyWorldMovement(
-            pawn,
-            intoLadder,
-            Config.LadderTraversalClimbPressMove,
-            Config.LadderTraversalClimbUpMove);
-    }
-
-    private void ApplyWorldMovement(
-        CCSPlayerPawn pawn,
-        Vector3 desiredWorldDirection,
-        float moveMagnitude,
-        float upMove)
-    {
-        if (pawn.MovementServices
-            is not CCSPlayer_MovementServices movement)
+        try
         {
-            return;
-        }
+            var velocity =
+                pawn.AbsVelocity;
 
-        Vector3 desired =
-            HorizontalNormalised(
-                desiredWorldDirection);
+            float oldX = velocity.X;
+            float oldY = velocity.Y;
+            float oldZ = velocity.Z;
 
-        float forwardCommand =
-            moveMagnitude;
+            Vector3 intoLadder =
+                HorizontalNormalised(
+                    ladder.ApproachDirection.ToVector3());
 
-        float sideCommand =
-            0.0f;
-
-        if (desired.LengthSquared() >
-            0.0001f)
-        {
-            bool haveForward =
-                NativeValueReader.TryCopy(
-                    movement.Forward,
-                    out Vector3 forwardBasis);
-
-            bool haveLeft =
-                NativeValueReader.TryCopy(
-                    movement.Left,
-                    out Vector3 leftBasis);
-
-            if (haveForward)
+            // Keep only a SMALL horizontal pressure into the learned ladder
+            // plane. Do not replace Valve's whole horizontal locomotion.
+            if (intoLadder.LengthSquared() >=
+                0.25f &&
+                Config.LadderTraversalClimbPressVelocity >
+                    0.0f)
             {
-                forwardBasis.Z = 0.0f;
+                float targetX =
+                    intoLadder.X *
+                    Config.LadderTraversalClimbPressVelocity;
 
-                if (forwardBasis.LengthSquared() >
-                    0.0001f)
+                float targetY =
+                    intoLadder.Y *
+                    Config.LadderTraversalClimbPressVelocity;
+
+                // Blend instead of snapping. This is enough to keep the hull
+                // touching the ladder without throwing it sideways.
+                velocity.X =
+                    (velocity.X * 0.65f) +
+                    (targetX * 0.35f);
+
+                velocity.Y =
+                    (velocity.Y * 0.65f) +
+                    (targetY * 0.35f);
+
+                float horizontalSpeed =
+                    MathF.Sqrt(
+                        (velocity.X * velocity.X) +
+                        (velocity.Y * velocity.Y));
+
+                if (horizontalSpeed >
+                    Config.LadderTraversalClimbMaxHorizontalVelocity &&
+                    horizontalSpeed > 0.001f)
                 {
-                    forwardBasis =
-                        Vector3.Normalize(
-                            forwardBasis);
+                    float scale =
+                        Config.LadderTraversalClimbMaxHorizontalVelocity /
+                        horizontalSpeed;
 
-                    forwardCommand =
-                        Math.Clamp(
-                            Vector3.Dot(
-                                desired,
-                                forwardBasis) *
-                            moveMagnitude,
-                            -moveMagnitude,
-                            moveMagnitude);
+                    velocity.X *= scale;
+                    velocity.Y *= scale;
                 }
             }
 
-            if (haveLeft)
+            // The tested failure happens after a valid ladder mount but before
+            // safe upward progress. Guarantee only a modest positive Z speed
+            // through that vulnerable first section.
+            if (velocity.Z <
+                Config.LadderTraversalClimbMinVerticalVelocity)
             {
-                leftBasis.Z = 0.0f;
-
-                if (leftBasis.LengthSquared() >
-                    0.0001f)
-                {
-                    leftBasis =
-                        Vector3.Normalize(
-                            leftBasis);
-
-                    sideCommand =
-                        Math.Clamp(
-                            Vector3.Dot(
-                                desired,
-                                leftBasis) *
-                            moveMagnitude,
-                            -moveMagnitude,
-                            moveMagnitude);
-                }
+                velocity.Z =
+                    Config.LadderTraversalClimbMinVerticalVelocity;
             }
+
+            _corrections.Field(
+                state.Slot,
+                nameof(LadderMapService),
+                "AbsVelocity.X",
+                oldX,
+                velocity.X,
+                "apply bounded ladder-shaft pressure after real mount");
+
+            _corrections.Field(
+                state.Slot,
+                nameof(LadderMapService),
+                "AbsVelocity.Y",
+                oldY,
+                velocity.Y,
+                "apply bounded ladder-shaft pressure after real mount");
+
+            _corrections.Field(
+                state.Slot,
+                nameof(LadderMapService),
+                "AbsVelocity.Z",
+                oldZ,
+                velocity.Z,
+                "protect initial upward ladder progress");
         }
-
-        movement.CmdForwardMove =
-            forwardCommand;
-
-        movement.CmdLeftMove =
-            sideCommand;
-
-        movement.CmdUpMove =
-            upMove;
+        catch
+        {
+            // BotValidation on the next pass handles a disappearing pawn.
+        }
     }
 
     private void PrepareBotForMovement(
@@ -2054,8 +2048,6 @@ public sealed class LadderMapService
         public Vector3 ApproachDirection { get; set; }
 
         public Vector3 Anchor { get; set; }
-        public float AnchorSamples { get; set; } = 1.0f;
-
         public float MinZ { get; set; }
         public float MaxZ { get; set; }
 

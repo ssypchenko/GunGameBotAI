@@ -40,9 +40,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Persistent physical ladder learning / traversal
     // ---------------------------------------------------------------------
     //
-    // Version 2 learns one physical ladder shaft by XY and its vertical extent.
-    // Short LADDER -> WALK -> LADDER reattachments remain one learning session.
-    // Only confirmed ladders are persisted.
+    // Version 4 learns one physical ladder shaft by XY and its vertical extent.
+    // Short LADDER -> WALK -> LADDER reattachments remain one learning session
+    // only while the bot stays inside the same shaft corridor. Problem/fall
+    // positions never redefine ladder geometry. Only confirmed ladders persist.
     public bool LadderLearningEnabled { get; set; } = true;
     public bool LadderEntryJumpEnabled { get; set; } = true;
     public bool LadderMapDebug { get; set; } = true;
@@ -65,20 +66,31 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     // Traversal ownership. During Approach/Mounting the plugin DOES NOT write
     // CmdForwardMove/CmdLeftMove: Valve navigation keeps walking to the ladder.
-    // After a real MOVETYPE_LADDER mount, a short velocity assist protects only
-    // the first part of the climb, then control is returned to Valve.
+    // After a real MOVETYPE_LADDER mount, Valve receives a short grace window.
+    // Only if upward progress stalls do we apply bounded movement INPUTS.
+    // Direct AbsVelocity writes are deliberately not used.
     public float LadderTraversalMountTimeoutSeconds { get; set; } = 1.50f;
-    public float LadderTraversalTimeoutSeconds { get; set; } = 4.0f;
-    public float LadderTraversalClimbAssistProgress { get; set; } = 32.0f;
+    public float LadderTraversalTimeoutSeconds { get; set; } = 5.0f;
+    public float LadderTraversalClimbAssistProgress { get; set; } = 24.0f;
+    public float LadderTraversalValveClimbGraceSeconds { get; set; } = 0.35f;
+    public float LadderTraversalClimbStallSeconds { get; set; } = 0.30f;
+    public float LadderTraversalProgressEpsilon { get; set; } = 2.0f;
+    public float LadderTraversalTopExitTolerance { get; set; } = 20.0f;
+    public float LadderTraversalExitMinProgress { get; set; } = 8.0f;
+    public float LadderTraversalExitHorizontalDistance { get; set; } = 16.0f;
+    public float LadderTraversalMountedBelowTolerance { get; set; } = 8.0f;
+    public float LadderTraversalProblemAvoidRadius { get; set; } = 18.0f;
+
+    // Active v4 fallback inputs after a proven climb stall.
+    public float LadderTraversalClimbPressMove { get; set; } = 180.0f;
+    public float LadderTraversalClimbUpMove { get; set; } = 250.0f;
+
+    // Legacy properties kept only so existing config files still deserialize.
+    // They are ignored by LadderMapService v4.
+    public float LadderTraversalApproachMove { get; set; } = 220.0f;
     public float LadderTraversalClimbMinVerticalVelocity { get; set; } = 140.0f;
     public float LadderTraversalClimbPressVelocity { get; set; } = 35.0f;
     public float LadderTraversalClimbMaxHorizontalVelocity { get; set; } = 90.0f;
-
-    // Legacy v2 properties kept for config compatibility. They are no longer
-    // used by LadderMapService v3.
-    public float LadderTraversalApproachMove { get; set; } = 220.0f;
-    public float LadderTraversalClimbPressMove { get; set; } = 150.0f;
-    public float LadderTraversalClimbUpMove { get; set; } = 250.0f;
 
     public int LadderTraversalMaxRemountAttempts { get; set; } = 1;
     public float LadderTraversalRemountDelaySeconds { get; set; } = 0.20f;
@@ -148,6 +160,19 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         if (MathF.Abs(LadderTraversalMountTimeoutSeconds - 1.25f) < 0.001f)
             LadderTraversalMountTimeoutSeconds = 1.50f;
 
+        // Migrate exact v3 defaults to the v4 behaviour.
+        if (MathF.Abs(LadderSessionReattachRadius - 48.0f) < 0.001f)
+            LadderSessionReattachRadius = 24.0f;
+
+        if (MathF.Abs(LadderTraversalTimeoutSeconds - 4.0f) < 0.001f)
+            LadderTraversalTimeoutSeconds = 5.0f;
+
+        if (MathF.Abs(LadderTraversalClimbAssistProgress - 32.0f) < 0.001f)
+            LadderTraversalClimbAssistProgress = 24.0f;
+
+        if (MathF.Abs(LadderTraversalClimbPressMove - 150.0f) < 0.001f)
+            LadderTraversalClimbPressMove = 180.0f;
+
         if (LadderTraversalMaxRemountAttempts == 2)
             LadderTraversalMaxRemountAttempts = 1;
 
@@ -155,7 +180,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderLearnConfirmVerticalProgress = Clamp(LadderLearnConfirmVerticalProgress, 12.0f, 128.0f, 28.0f, nameof(LadderLearnConfirmVerticalProgress), warn);
         LadderLearnProblemConfirmCount = Clamp(LadderLearnProblemConfirmCount, 1, 10, 2, nameof(LadderLearnProblemConfirmCount), warn);
         LadderSessionDetachGraceSeconds = Clamp(LadderSessionDetachGraceSeconds, 0.1f, 2.0f, 0.55f, nameof(LadderSessionDetachGraceSeconds), warn);
-        LadderSessionReattachRadius = Clamp(LadderSessionReattachRadius, 16.0f, 128.0f, 48.0f, nameof(LadderSessionReattachRadius), warn);
+        LadderSessionReattachRadius = Clamp(LadderSessionReattachRadius, 12.0f, 64.0f, 24.0f, nameof(LadderSessionReattachRadius), warn);
 
         LadderTraversalAcquireDistance = Clamp(LadderTraversalAcquireDistance, 32.0f, 180.0f, 80.0f, nameof(LadderTraversalAcquireDistance), warn);
         LadderTraversalEntryMaxVerticalDelta = Clamp(LadderTraversalEntryMaxVerticalDelta, 8.0f, 128.0f, 40.0f, nameof(LadderTraversalEntryMaxVerticalDelta), warn);
@@ -166,16 +191,24 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderEntryJumpPulseTicks = Clamp(LadderEntryJumpPulseTicks, 1, 12, 3, nameof(LadderEntryJumpPulseTicks), warn);
 
         LadderTraversalMountTimeoutSeconds = Clamp(LadderTraversalMountTimeoutSeconds, 0.5f, 4.0f, 1.50f, nameof(LadderTraversalMountTimeoutSeconds), warn);
-        LadderTraversalTimeoutSeconds = Clamp(LadderTraversalTimeoutSeconds, LadderTraversalMountTimeoutSeconds, 10.0f, Math.Max(4.0f, LadderTraversalMountTimeoutSeconds), nameof(LadderTraversalTimeoutSeconds), warn);
-        LadderTraversalClimbAssistProgress = Clamp(LadderTraversalClimbAssistProgress, 12.0f, 96.0f, 32.0f, nameof(LadderTraversalClimbAssistProgress), warn);
+        LadderTraversalTimeoutSeconds = Clamp(LadderTraversalTimeoutSeconds, LadderTraversalMountTimeoutSeconds, 12.0f, Math.Max(5.0f, LadderTraversalMountTimeoutSeconds), nameof(LadderTraversalTimeoutSeconds), warn);
+        LadderTraversalClimbAssistProgress = Clamp(LadderTraversalClimbAssistProgress, 8.0f, 64.0f, 24.0f, nameof(LadderTraversalClimbAssistProgress), warn);
+        LadderTraversalValveClimbGraceSeconds = Clamp(LadderTraversalValveClimbGraceSeconds, 0.10f, 1.50f, 0.35f, nameof(LadderTraversalValveClimbGraceSeconds), warn);
+        LadderTraversalClimbStallSeconds = Clamp(LadderTraversalClimbStallSeconds, 0.10f, 2.0f, 0.30f, nameof(LadderTraversalClimbStallSeconds), warn);
+        LadderTraversalProgressEpsilon = Clamp(LadderTraversalProgressEpsilon, 0.25f, 12.0f, 2.0f, nameof(LadderTraversalProgressEpsilon), warn);
+        LadderTraversalTopExitTolerance = Clamp(LadderTraversalTopExitTolerance, 4.0f, 64.0f, 20.0f, nameof(LadderTraversalTopExitTolerance), warn);
+        LadderTraversalExitMinProgress = Clamp(LadderTraversalExitMinProgress, 2.0f, LadderTraversalClimbAssistProgress, 8.0f, nameof(LadderTraversalExitMinProgress), warn);
+        LadderTraversalExitHorizontalDistance = Clamp(LadderTraversalExitHorizontalDistance, 4.0f, 64.0f, 16.0f, nameof(LadderTraversalExitHorizontalDistance), warn);
+        LadderTraversalMountedBelowTolerance = Clamp(LadderTraversalMountedBelowTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalMountedBelowTolerance), warn);
+        LadderTraversalProblemAvoidRadius = Clamp(LadderTraversalProblemAvoidRadius, 4.0f, 64.0f, 18.0f, nameof(LadderTraversalProblemAvoidRadius), warn);
+        LadderTraversalClimbPressMove = Clamp(LadderTraversalClimbPressMove, 50.0f, 450.0f, 180.0f, nameof(LadderTraversalClimbPressMove), warn);
+        LadderTraversalClimbUpMove = Clamp(LadderTraversalClimbUpMove, 50.0f, 450.0f, 250.0f, nameof(LadderTraversalClimbUpMove), warn);
+
+        // Legacy config values are accepted but ignored by the v4 service.
+        LadderTraversalApproachMove = Clamp(LadderTraversalApproachMove, 50.0f, 450.0f, 220.0f, nameof(LadderTraversalApproachMove), warn);
         LadderTraversalClimbMinVerticalVelocity = Clamp(LadderTraversalClimbMinVerticalVelocity, 60.0f, 260.0f, 140.0f, nameof(LadderTraversalClimbMinVerticalVelocity), warn);
         LadderTraversalClimbPressVelocity = Clamp(LadderTraversalClimbPressVelocity, 0.0f, 120.0f, 35.0f, nameof(LadderTraversalClimbPressVelocity), warn);
         LadderTraversalClimbMaxHorizontalVelocity = Clamp(LadderTraversalClimbMaxHorizontalVelocity, 20.0f, 180.0f, 90.0f, nameof(LadderTraversalClimbMaxHorizontalVelocity), warn);
-
-        // Legacy v2 config values are accepted but ignored by the v3 service.
-        LadderTraversalApproachMove = Clamp(LadderTraversalApproachMove, 50.0f, 450.0f, 220.0f, nameof(LadderTraversalApproachMove), warn);
-        LadderTraversalClimbPressMove = Clamp(LadderTraversalClimbPressMove, 0.0f, 350.0f, 150.0f, nameof(LadderTraversalClimbPressMove), warn);
-        LadderTraversalClimbUpMove = Clamp(LadderTraversalClimbUpMove, 50.0f, 450.0f, 250.0f, nameof(LadderTraversalClimbUpMove), warn);
 
         LadderTraversalMaxRemountAttempts = Clamp(LadderTraversalMaxRemountAttempts, 0, 3, 1, nameof(LadderTraversalMaxRemountAttempts), warn);
         LadderTraversalRemountDelaySeconds = Clamp(LadderTraversalRemountDelaySeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalRemountDelaySeconds), warn);

@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 3 deliberately separates two responsibilities:
+/// Version 4 deliberately separates two responsibilities:
 ///
 /// 1) Learning:
 ///    WALK -> LADDER starts a short learning session. Brief detach/reattach
@@ -22,8 +22,9 @@ namespace GunGameBotAI.Services;
 ///    A bot approaching the learned bottom entry gives this service temporary
 ///    behavioural ownership. Valve navigation remains responsible for walking
 ///    to the ladder. The service only issues Jump near the learned mount,
-///    releases Jump immediately after MOVETYPE_LADDER is reached, then applies
-///    a short bounded velocity assist until real upward progress is proven.
+///    releases Jump immediately after MOVETYPE_LADDER is reached, then gives
+///    Valve ladder movement a grace window. Only a proven climb stall receives
+///    bounded CmdForward/CmdUp input assistance; AbsVelocity is never forced.
 /// </summary>
 public sealed class LadderMapService
 {
@@ -231,9 +232,9 @@ public sealed class LadderMapService
 
                 if (mountedKnown != null &&
                     mountedKnown.HasBottomApproach &&
-                    position.Z <=
-                        mountedKnown.BottomZ +
-                        Config.LadderTraversalClimbAssistProgress)
+                    IsUsableAlreadyMountedPosition(
+                        mountedKnown,
+                        position))
                 {
                     StartTraversalAlreadyMounted(
                         state.Slot,
@@ -304,6 +305,11 @@ public sealed class LadderMapService
 
         if (ladder == null)
         {
+            ReleaseClimbInputAssist(
+                pawn,
+                state,
+                traversal);
+
             FailTraversal(
                 state.Slot,
                 tracker,
@@ -321,6 +327,11 @@ public sealed class LadderMapService
                 pawn,
                 out Vector3 velocity))
         {
+            ReleaseClimbInputAssist(
+                pawn,
+                state,
+                traversal);
+
             FailTraversal(
                 state.Slot,
                 tracker,
@@ -334,6 +345,11 @@ public sealed class LadderMapService
         if (now - traversal.StartedAt >
             Config.LadderTraversalTimeoutSeconds)
         {
+            ReleaseClimbInputAssist(
+                pawn,
+                state,
+                traversal);
+
             FailTraversal(
                 state.Slot,
                 tracker,
@@ -368,10 +384,10 @@ public sealed class LadderMapService
         if (traversal.Stage ==
             TraversalStage.Climb)
         {
-            traversal.MaxClimbZ =
-                MathF.Max(
-                    traversal.MaxClimbZ,
-                    position.Z);
+            UpdateClimbProgress(
+                traversal,
+                position,
+                now);
 
             float progress =
                 traversal.MaxClimbZ -
@@ -380,12 +396,18 @@ public sealed class LadderMapService
             if (progress >=
                 Config.LadderTraversalClimbAssistProgress)
             {
+                ReleaseClimbInputAssist(
+                    pawn,
+                    state,
+                    traversal);
+
                 CompleteTraversal(
                     state.Slot,
                     tracker,
                     ladder,
                     position,
                     progress,
+                    "vertical-progress",
                     now);
 
                 return true;
@@ -393,11 +415,34 @@ public sealed class LadderMapService
 
             if (onLadder)
             {
-                ApplyClimbVelocityAssist(
-                    pawn,
-                    bot,
-                    state,
-                    ladder);
+                bool valveGraceEnded =
+                    now - traversal.MountObservedAt >=
+                    Config.LadderTraversalValveClimbGraceSeconds;
+
+                bool progressStalled =
+                    now - traversal.LastProgressAt >=
+                    Config.LadderTraversalClimbStallSeconds;
+
+                if (!traversal.InputAssistActive &&
+                    valveGraceEnded &&
+                    progressStalled)
+                {
+                    traversal.InputAssistActive = true;
+
+                    _info(
+                        $"CLIMB-ASSIST map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"progressZ={progress:0.###}; stalledFor={(now - traversal.LastProgressAt):0.###}s; " +
+                        $"forward={Config.LadderTraversalClimbPressMove:0.###}; " +
+                        $"up={Config.LadderTraversalClimbUpMove:0.###}");
+                }
+
+                if (traversal.InputAssistActive)
+                {
+                    ApplyClimbInputAssist(
+                        pawn,
+                        bot,
+                        state);
+                }
 
                 return true;
             }
@@ -411,9 +456,66 @@ public sealed class LadderMapService
             if (detachedFor <=
                 Config.LadderSessionDetachGraceSeconds)
             {
-                // Keep ownership so KnifeRush/normal combat movement cannot
-                // interfere, but let Valve navigation/ladder code recover the
-                // brief detach naturally. Do not write CmdForward/Left here.
+                // Never keep our fallback inputs pressed after the engine has
+                // left MOVETYPE_LADDER. Keep behavioural ownership only while
+                // Valve finishes a normal exit or brief detach/reattach.
+                ReleaseClimbInputAssist(
+                    pawn,
+                    state,
+                    traversal);
+
+                return true;
+            }
+
+            ReleaseClimbInputAssist(
+                pawn,
+                state,
+                traversal);
+
+            if (IsSuccessfulClimbExit(
+                    ladder,
+                    traversal,
+                    position,
+                    progress))
+            {
+                CompleteTraversal(
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    position,
+                    progress,
+                    "ladder-exit",
+                    now);
+
+                return true;
+            }
+
+            bool fellBelowMount =
+                position.Z <
+                    ladder.BottomMount.Z -
+                    Config.LadderTraversalMountedBelowTolerance;
+
+            if (fellBelowMount ||
+                IsNearProblemPoint(
+                    ladder,
+                    position))
+            {
+                MarkProblem(
+                    ladder,
+                    position,
+                    fellBelowMount
+                        ? "assisted traversal fell below learned mount"
+                        : "assisted traversal reached learned problem point");
+
+                FailTraversal(
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    fellBelowMount
+                        ? "fell below learned mount"
+                        : "reached learned problem point",
+                    now);
+
                 return true;
             }
 
@@ -436,6 +538,7 @@ public sealed class LadderMapService
             traversal.JumpIssued = false;
             traversal.StageStartedAt = now;
             traversal.RemountAttempts++;
+            traversal.InputAssistActive = false;
 
             MarkProblem(
                 ladder,
@@ -536,17 +639,32 @@ public sealed class LadderMapService
         {
             if (onLadder)
             {
-                if (session.DetachedAt > 0.0f)
-                {
-                    float horizontal =
-                        Distance2D(
-                            position,
-                            session.Anchor);
+                float horizontalFromShaft =
+                    Distance2D(
+                        position,
+                        session.Anchor);
 
+                // CS2 can keep MOVETYPE_LADDER set after the bot has fallen or
+                // been pushed into nearby broken geometry. Never allow that
+                // remote position to stretch the same physical ladder session.
+                if (horizontalFromShaft >
+                    Config.LadderSessionReattachRadius)
+                {
+                    FinalizeLearningSession(
+                        slot,
+                        tracker,
+                        "left shaft while still ladder");
+
+                    session = null;
+                }
+
+                if (session != null &&
+                    session.DetachedAt > 0.0f)
+                {
                     bool sameShaft =
                         now - session.DetachedAt <=
                             Config.LadderSessionDetachGraceSeconds &&
-                        horizontal <=
+                        horizontalFromShaft <=
                             Config.LadderSessionReattachRadius;
 
                     if (!sameShaft)
@@ -679,15 +797,9 @@ public sealed class LadderMapService
     {
         session.LastOnLadderAt = now;
 
-        // Keep vertical extrema for diagnostics and proof of upward progress,
-        // but NEVER move the shaft anchor after the initial mount. A bot may
-        // remain MOVETYPE_LADDER while falling into nearby broken geometry;
-        // those later XY/Z positions must not redefine the ladder itself.
-        session.MinZ =
-            MathF.Min(
-                session.MinZ,
-                position.Z);
-
+        // Geometry is upward-only from the first real mount. A bot can remain
+        // MOVETYPE_LADDER while falling into broken geometry; a lower Z must
+        // never redefine BottomZ or inflate the traversal span.
         session.MaxZ =
             MathF.Max(
                 session.MaxZ,
@@ -787,23 +899,45 @@ public sealed class LadderMapService
         LearningSession session,
         string reason)
     {
-        float verticalSpan =
-            session.MaxZ -
-            session.MinZ;
-
         float upward =
-            session.MaxZ -
-            session.StartMount.Z;
+            MathF.Max(
+                0.0f,
+                session.MaxZ -
+                session.StartMount.Z);
 
-        float downward =
-            session.StartMount.Z -
-            session.MinZ;
-
-        // A fall while the engine still reports MOVETYPE_LADDER must never
-        // confirm a ladder. Only real upward progress can promote a candidate.
         bool success =
             upward >=
             Config.LadderLearnConfirmVerticalProgress;
+
+        bool usableApproach =
+            HasUsableBottomApproach(
+                session);
+
+        // A zero-travel Entry==Mount sample is exactly what the tested broken
+        // floor geometry produced. It may be useful as a problem observation
+        // for an already-known ladder, but it must never create or reshape one.
+        if (!usableApproach)
+        {
+            PhysicalLadder? known =
+                FindKnownByAnchor(
+                    session.Anchor);
+
+            if (known != null &&
+                session.ProblemMarked)
+            {
+                MarkProblem(
+                    known,
+                    session.ProblemPoint,
+                    "ignored unusable learning sample reached problem point");
+            }
+
+            Debug(
+                $"LEARN ignored map={_document.Map}; slot={slot}; reason={reason}; " +
+                $"entry={Format(session.StartEntry)}; mount={Format(session.StartMount)}; " +
+                $"approach={Format(session.ApproachDirection)}; upward={upward:0.###}");
+
+            return;
+        }
 
         string direction =
             success
@@ -833,11 +967,14 @@ public sealed class LadderMapService
                     Anchor =
                         LadderPoint.FromVector3(
                             new Vector3(
-                                session.Anchor.X,
-                                session.Anchor.Y,
+                                session.StartMount.X,
+                                session.StartMount.Y,
                                 0.0f)),
-                    BottomZ = session.MinZ,
-                    TopZ = session.MaxZ
+                    BottomZ = session.StartMount.Z,
+                    TopZ =
+                        MathF.Max(
+                            session.StartMount.Z,
+                            session.MaxZ)
                 };
 
             _candidates.Add(ladder);
@@ -849,11 +986,6 @@ public sealed class LadderMapService
             success,
             direction);
 
-        // Persist only after evidence that is useful for the actual feature:
-        // a real upward climb, or the same lower-entry problem observed more
-        // than once. A downward/falling MOVETYPE_LADDER span by itself is not
-        // sufficient because malformed map geometry can briefly report ladder
-        // movement while a bot is dropping.
         bool promote =
             !persistent &&
             ((success && direction == "Up") ||
@@ -889,14 +1021,14 @@ public sealed class LadderMapService
             Debug(
                 $"LEARN candidate map={_document.Map}; slot={slot}; " +
                 $"reason={reason}; anchor={Format(ladder!.Anchor.ToVector3())}; " +
-                $"span={verticalSpan:0.###}; observations={ladder.Observations}; " +
+                $"upward={upward:0.###}; observations={ladder.Observations}; " +
                 $"problems={ladder.ProblemCount}");
         }
         else
         {
             Debug(
                 $"LEARN update map={_document.Map}; slot={slot}; id={ladder!.Id}; " +
-                $"reason={reason}; direction={direction}; span={verticalSpan:0.###}; " +
+                $"reason={reason}; direction={direction}; upward={upward:0.###}; " +
                 $"observations={ladder.Observations}; problems={ladder.ProblemCount}");
         }
 
@@ -916,8 +1048,6 @@ public sealed class LadderMapService
         int newCount =
             oldCount + 1;
 
-        // The shaft XY comes from the FIRST real MOVETYPE_LADDER position of
-        // each session. Never average ProblemPoint/fall positions into it.
         Vector3 observedAnchor =
             new(
                 session.StartMount.X,
@@ -945,8 +1075,9 @@ public sealed class LadderMapService
         ladder.Observations =
             newCount;
 
-        // Bottom geometry is based on real mount positions, never on MinZ:
-        // a failed bot can remain MOVETYPE_LADDER while falling to Z=0.
+        // Only the first real WALK->LADDER mount of a usable approach can
+        // affect physical geometry. ProblemPoint and later falling Z values
+        // are never consulted here.
         if (oldCount <= 0)
         {
             ladder.BottomZ =
@@ -964,7 +1095,6 @@ public sealed class LadderMapService
                     ladder.BottomZ,
                     session.StartMount.Z);
 
-            // MaxZ is useful only as upper extent. Falling cannot increase it.
             ladder.TopZ =
                 MathF.Max(
                     ladder.TopZ,
@@ -977,14 +1107,9 @@ public sealed class LadderMapService
             ladder.UpTraversals++;
         }
 
-        bool usableApproach =
-            HasUsableBottomApproach(
-                session);
-
         bool canTeachBottom =
-            usableApproach &&
-            (direction == "Up" ||
-             session.ProblemMarked);
+            direction == "Up" ||
+            session.ProblemMarked;
 
         if (canTeachBottom)
         {
@@ -1177,6 +1302,8 @@ public sealed class LadderMapService
                 LastOnLadderAt = now,
                 ClimbStartZ = position.Z,
                 MaxClimbZ = position.Z,
+                LastProgressZ = position.Z,
+                LastProgressAt = now,
                 LastJumpAt = float.NegativeInfinity
             };
 
@@ -1212,6 +1339,11 @@ public sealed class LadderMapService
         if (now - traversal.StartedAt >
             Config.LadderTraversalTimeoutSeconds)
         {
+            ReleaseClimbInputAssist(
+                pawn,
+                state,
+                traversal);
+
             FailTraversal(
                 state.Slot,
                 tracker,
@@ -1222,42 +1354,48 @@ public sealed class LadderMapService
             return;
         }
 
-        if (onLadder)
+        if (!onLadder)
+            return;
+
+        traversal.LastOnLadderAt = now;
+
+        if (traversal.Stage !=
+            TraversalStage.Climb)
         {
-            traversal.LastOnLadderAt = now;
+            EnterClimb(
+                pawn,
+                state.Slot,
+                tracker,
+                ladder,
+                position,
+                now);
+        }
 
-            if (traversal.Stage !=
-                TraversalStage.Climb)
-            {
-                EnterClimb(
-                    pawn,
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    position,
-                    now);
-            }
+        UpdateClimbProgress(
+            traversal,
+            position,
+            now);
 
-            traversal.MaxClimbZ =
-                MathF.Max(
-                    traversal.MaxClimbZ,
-                    position.Z);
+        float progress =
+            traversal.MaxClimbZ -
+            traversal.ClimbStartZ;
 
-            float progress =
-                traversal.MaxClimbZ -
-                traversal.ClimbStartZ;
+        if (progress >=
+            Config.LadderTraversalClimbAssistProgress)
+        {
+            ReleaseClimbInputAssist(
+                pawn,
+                state,
+                traversal);
 
-            if (progress >=
-                Config.LadderTraversalClimbAssistProgress)
-            {
-                CompleteTraversal(
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    position,
-                    progress,
-                    now);
-            }
+            CompleteTraversal(
+                state.Slot,
+                tracker,
+                ladder,
+                position,
+                progress,
+                "vertical-progress",
+                now);
         }
     }
 
@@ -1290,6 +1428,9 @@ public sealed class LadderMapService
         traversal.LastOnLadderAt = now;
         traversal.ClimbStartZ = position.Z;
         traversal.MaxClimbZ = position.Z;
+        traversal.LastProgressZ = position.Z;
+        traversal.LastProgressAt = now;
+        traversal.InputAssistActive = false;
         traversal.JumpIssued = true;
 
         _info(
@@ -1304,6 +1445,7 @@ public sealed class LadderMapService
         PhysicalLadder ladder,
         Vector3 position,
         float progress,
+        string reason,
         float now)
     {
         ladder.AssistedTraversals++;
@@ -1313,7 +1455,7 @@ public sealed class LadderMapService
 
         _info(
             $"TRAVERSAL-SUCCESS map={_document.Map}; slot={slot}; id={ladder.Id}; " +
-            $"progressZ={progress:0.###}; position={Format(position)}; " +
+            $"reason={reason}; progressZ={progress:0.###}; position={Format(position)}; " +
             $"elapsed={(now - tracker.Traversal!.StartedAt):0.###}s");
 
         tracker.Traversal = null;
@@ -1425,7 +1567,7 @@ public sealed class LadderMapService
                     toMount,
                     approach));
 
-        // v3: wait until Valve navigation naturally brings the bot close to
+        // v4: wait until Valve navigation naturally brings the bot close to
         // the learned lower mount. The old v2 code jumped around 40-55 units
         // away and then tried to drive CmdForward/CmdLeft itself, which froze
         // the effective approach on the tested map.
@@ -1440,110 +1582,233 @@ public sealed class LadderMapService
                 Config.LadderTraversalCorridorHalfWidth;
     }
 
-    private void ApplyClimbVelocityAssist(
+    private void UpdateClimbProgress(
+        TraversalSession traversal,
+        Vector3 position,
+        float now)
+    {
+        traversal.MaxClimbZ =
+            MathF.Max(
+                traversal.MaxClimbZ,
+                position.Z);
+
+        if (position.Z >=
+            traversal.LastProgressZ +
+            Config.LadderTraversalProgressEpsilon)
+        {
+            traversal.LastProgressZ = position.Z;
+            traversal.LastProgressAt = now;
+        }
+    }
+
+    private void ApplyClimbInputAssist(
         CCSPlayerPawn pawn,
         CCSBot bot,
-        BotRuntimeState state,
-        PhysicalLadder ladder)
+        BotRuntimeState state)
     {
         PrepareBotForMovement(
             bot,
             state);
 
-        try
+        if (pawn.MovementServices is not
+            CCSPlayer_MovementServices movement)
         {
-            var velocity =
-                pawn.AbsVelocity;
-
-            float oldX = velocity.X;
-            float oldY = velocity.Y;
-            float oldZ = velocity.Z;
-
-            Vector3 intoLadder =
-                HorizontalNormalised(
-                    ladder.ApproachDirection.ToVector3());
-
-            // Keep only a SMALL horizontal pressure into the learned ladder
-            // plane. Do not replace Valve's whole horizontal locomotion.
-            if (intoLadder.LengthSquared() >=
-                0.25f &&
-                Config.LadderTraversalClimbPressVelocity >
-                    0.0f)
-            {
-                float targetX =
-                    intoLadder.X *
-                    Config.LadderTraversalClimbPressVelocity;
-
-                float targetY =
-                    intoLadder.Y *
-                    Config.LadderTraversalClimbPressVelocity;
-
-                // Blend instead of snapping. This is enough to keep the hull
-                // touching the ladder without throwing it sideways.
-                velocity.X =
-                    (velocity.X * 0.65f) +
-                    (targetX * 0.35f);
-
-                velocity.Y =
-                    (velocity.Y * 0.65f) +
-                    (targetY * 0.35f);
-
-                float horizontalSpeed =
-                    MathF.Sqrt(
-                        (velocity.X * velocity.X) +
-                        (velocity.Y * velocity.Y));
-
-                if (horizontalSpeed >
-                    Config.LadderTraversalClimbMaxHorizontalVelocity &&
-                    horizontalSpeed > 0.001f)
-                {
-                    float scale =
-                        Config.LadderTraversalClimbMaxHorizontalVelocity /
-                        horizontalSpeed;
-
-                    velocity.X *= scale;
-                    velocity.Y *= scale;
-                }
-            }
-
-            // The tested failure happens after a valid ladder mount but before
-            // safe upward progress. Guarantee only a modest positive Z speed
-            // through that vulnerable first section.
-            if (velocity.Z <
-                Config.LadderTraversalClimbMinVerticalVelocity)
-            {
-                velocity.Z =
-                    Config.LadderTraversalClimbMinVerticalVelocity;
-            }
-
-            _corrections.Field(
-                state.Slot,
-                nameof(LadderMapService),
-                "AbsVelocity.X",
-                oldX,
-                velocity.X,
-                "apply bounded ladder-shaft pressure after real mount");
-
-            _corrections.Field(
-                state.Slot,
-                nameof(LadderMapService),
-                "AbsVelocity.Y",
-                oldY,
-                velocity.Y,
-                "apply bounded ladder-shaft pressure after real mount");
-
-            _corrections.Field(
-                state.Slot,
-                nameof(LadderMapService),
-                "AbsVelocity.Z",
-                oldZ,
-                velocity.Z,
-                "protect initial upward ladder progress");
+            return;
         }
-        catch
+
+        SetMovementField(
+            state,
+            nameof(movement.CmdForwardMove),
+            movement.CmdForwardMove,
+            Config.LadderTraversalClimbPressMove,
+            value => movement.CmdForwardMove = value,
+            "assist stalled ladder climb with forward input");
+
+        SetMovementField(
+            state,
+            nameof(movement.CmdLeftMove),
+            movement.CmdLeftMove,
+            0.0f,
+            value => movement.CmdLeftMove = value,
+            "remove lateral input during stalled ladder climb");
+
+        SetMovementField(
+            state,
+            nameof(movement.CmdUpMove),
+            movement.CmdUpMove,
+            Config.LadderTraversalClimbUpMove,
+            value => movement.CmdUpMove = value,
+            "assist stalled ladder climb with upward input");
+    }
+
+    private void ReleaseClimbInputAssist(
+        CCSPlayerPawn pawn,
+        BotRuntimeState state,
+        TraversalSession traversal)
+    {
+        if (!traversal.InputAssistActive)
+            return;
+
+        if (pawn.MovementServices is
+            CCSPlayer_MovementServices movement)
         {
-            // BotValidation on the next pass handles a disappearing pawn.
+            SetMovementField(
+                state,
+                nameof(movement.CmdForwardMove),
+                movement.CmdForwardMove,
+                0.0f,
+                value => movement.CmdForwardMove = value,
+                "release ladder climb forward input");
+
+            SetMovementField(
+                state,
+                nameof(movement.CmdLeftMove),
+                movement.CmdLeftMove,
+                0.0f,
+                value => movement.CmdLeftMove = value,
+                "release ladder climb lateral input");
+
+            SetMovementField(
+                state,
+                nameof(movement.CmdUpMove),
+                movement.CmdUpMove,
+                0.0f,
+                value => movement.CmdUpMove = value,
+                "release ladder climb upward input");
         }
+
+        traversal.InputAssistActive = false;
+    }
+
+    private void SetMovementField(
+        BotRuntimeState state,
+        string fieldName,
+        float oldValue,
+        float newValue,
+        Action<float> setter,
+        string reason)
+    {
+        if (!float.IsFinite(newValue) ||
+            MathF.Abs(oldValue - newValue) < 0.001f)
+        {
+            return;
+        }
+
+        setter(newValue);
+
+        _corrections.Field(
+            state.Slot,
+            nameof(LadderMapService),
+            fieldName,
+            oldValue,
+            newValue,
+            reason);
+    }
+
+    private bool IsSuccessfulClimbExit(
+        PhysicalLadder ladder,
+        TraversalSession traversal,
+        Vector3 position,
+        float progress)
+    {
+        if (IsNearProblemPoint(
+                ladder,
+                position))
+        {
+            return false;
+        }
+
+        // A real upper exit should preserve most of the achieved height. A
+        // falling bot can briefly leave MOVETYPE_LADDER too, but its current Z
+        // quickly drops far below the maximum observed climb height.
+        float heightRetentionTolerance =
+            MathF.Max(
+                4.0f,
+                Config.LadderTraversalMountedBelowTolerance);
+
+        if (position.Z <
+            traversal.MaxClimbZ -
+            heightRetentionTolerance)
+        {
+            return false;
+        }
+
+        float horizontalFromShaft =
+            Distance2D(
+                position,
+                ladder.Anchor.ToVector3());
+
+        bool movedAwayFromShaft =
+            horizontalFromShaft >=
+            Config.LadderTraversalExitHorizontalDistance;
+
+        bool enoughProgress =
+            progress >=
+            Config.LadderTraversalExitMinProgress;
+
+        bool haveUsefulTop =
+            ladder.TopZ >
+            ladder.BottomMount.Z +
+            Config.LadderTraversalExitMinProgress;
+
+        bool nearKnownTop =
+            haveUsefulTop &&
+            (traversal.MaxClimbZ >=
+                 ladder.TopZ -
+                 Config.LadderTraversalTopExitTolerance ||
+             traversal.ClimbStartZ >=
+                 ladder.TopZ -
+                 Config.LadderTraversalTopExitTolerance);
+
+        // A mount already near a learned top can leave the ladder with very
+        // little additional Z or XY travel. Otherwise require both meaningful
+        // upward progress and movement away from the shaft before calling a
+        // detach a successful exit.
+        return nearKnownTop ||
+               (enoughProgress &&
+                movedAwayFromShaft);
+    }
+
+    private bool IsUsableAlreadyMountedPosition(
+        PhysicalLadder ladder,
+        Vector3 position)
+    {
+        Vector3 mount =
+            ladder.BottomMount.ToVector3();
+
+        if (position.Z <
+            mount.Z -
+            Config.LadderTraversalMountedBelowTolerance)
+        {
+            return false;
+        }
+
+        if (position.Z >
+            mount.Z +
+            Config.LadderTraversalClimbAssistProgress)
+        {
+            return false;
+        }
+
+        return !IsNearProblemPoint(
+            ladder,
+            position);
+    }
+
+    private bool IsNearProblemPoint(
+        PhysicalLadder ladder,
+        Vector3 position)
+    {
+        if (!ladder.Problematic ||
+            ladder.ProblemPoint == null)
+        {
+            return false;
+        }
+
+        return Distance3D(
+                   position,
+                   ladder.ProblemPoint.ToVector3()) <=
+               Config.LadderTraversalProblemAvoidRadius;
     }
 
     private void PrepareBotForMovement(
@@ -1986,6 +2251,13 @@ public sealed class LadderMapService
             (y * y));
     }
 
+    private static float Distance3D(
+        Vector3 first,
+        Vector3 second)
+    {
+        return (first - second).Length();
+    }
+
     private static float Cross2D(
         Vector3 first,
         Vector3 second)
@@ -2083,5 +2355,9 @@ public sealed class LadderMapService
 
         public float ClimbStartZ { get; set; }
         public float MaxClimbZ { get; set; }
+        public float LastProgressZ { get; set; }
+        public float LastProgressAt { get; set; } =
+            float.NegativeInfinity;
+        public bool InputAssistActive { get; set; }
     }
 }

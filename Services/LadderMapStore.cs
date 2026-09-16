@@ -5,17 +5,18 @@ using GunGameBotAI.Models;
 namespace GunGameBotAI.Services;
 
 /// <summary>
-/// Loads and atomically saves persistent version-3 physical ladder knowledge
+/// Loads and atomically saves persistent version-4 physical ladder knowledge
 /// under the plugin directory. Each map has its own JSON file.
 ///
 /// Older files are deliberately not migrated automatically. Version 1 stored
-/// individual mount transitions. Version 2 could let fall/problem positions
-/// contaminate learned lower-entry geometry. Re-learning is safer than guessing
-/// which persisted coordinates are valid.
+/// individual mount transitions. Version 2 could let fall/problem positions contaminate learned lower-entry
+/// geometry. Version 3 still allowed later malformed ladder sessions to expand
+/// persistent geometry and used direct velocity assistance after mount.
+/// Re-learning is safer than guessing which persisted coordinates are valid.
 /// </summary>
 public sealed class LadderMapStore
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     private readonly string _directory;
     private readonly Action<string> _info;

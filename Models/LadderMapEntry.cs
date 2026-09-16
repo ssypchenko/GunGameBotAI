@@ -3,45 +3,54 @@ using System.Numerics;
 namespace GunGameBotAI.Models;
 
 /// <summary>
-/// Persistent per-map ladder knowledge.
+/// Persistent per-map ladder knowledge, version 2.
 ///
-/// An entry represents one mount point rather than an entire ladder entity.
-/// The lower and upper ends of the same ladder can therefore be learned as
-/// separate entries and handled differently.
+/// Version 1 stored individual MOVETYPE_LADDER mount transitions. That produced
+/// duplicate records for the lower/upper portions of one physical ladder and
+/// could persist short false-positive ladder contacts.
+///
+/// Version 2 stores one physical ladder shaft. Runtime learning sessions merge
+/// by horizontal XY position, while BottomZ/TopZ describe its vertical extent.
+/// Only confirmed ladders are persisted.
 /// </summary>
 public sealed class LadderMapDocument
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public string Map { get; set; } = string.Empty;
-    public List<LadderMapEntry> Entries { get; set; } = new();
+    public List<PhysicalLadder> Ladders { get; set; } = new();
 }
 
-public sealed class LadderMapEntry
+public sealed class PhysicalLadder
 {
     public int Id { get; set; }
 
     /// <summary>
-    /// Average WALK position immediately before the bot mounted the ladder.
+    /// Average XY position of the ladder shaft. Z is intentionally ignored.
     /// </summary>
-    public LadderPoint Entry { get; set; } = new();
+    public LadderPoint Anchor { get; set; } = new();
+
+    public float BottomZ { get; set; }
+    public float TopZ { get; set; }
 
     /// <summary>
-    /// Average first position observed with MOVETYPE_LADDER.
+    /// True once an upward traversal or repeated bottom failure gave us a
+    /// reliable lower entry and approach direction.
     /// </summary>
-    public LadderPoint Mount { get; set; } = new();
+    public bool HasBottomApproach { get; set; }
 
-    /// <summary>
-    /// Average normalised horizontal direction used when approaching the mount.
-    /// </summary>
+    public LadderPoint BottomEntry { get; set; } = new();
+    public LadderPoint BottomMount { get; set; } = new();
     public LadderPoint ApproachDirection { get; set; } = new();
+    public int BottomApproachObservations { get; set; }
 
     public int Observations { get; set; }
+    public int SuccessfulTraversals { get; set; }
+    public int UpTraversals { get; set; }
+    public int DownTraversals { get; set; }
 
-    /// <summary>
-    /// Up, Down, Mixed or Unknown. This is learned from the first meaningful
-    /// vertical velocity after mounting.
-    /// </summary>
-    public string TravelDirection { get; set; } = "Unknown";
+    public int AssistedTraversals { get; set; }
+    public int AssistedSuccesses { get; set; }
+    public int AssistedFailures { get; set; }
 
     public bool Problematic { get; set; }
     public int ProblemCount { get; set; }

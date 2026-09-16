@@ -6,5 +6,6 @@ public enum BotBehaviorMode
     KnifeLevel,
     GrenadeLevel,
     OpportunisticKnifeRush,
+    LadderTraversal,
     StuckRecovery
 }

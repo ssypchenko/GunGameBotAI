@@ -36,21 +36,48 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderAssistForwardMove { get; set; } = 200.0f;
     public float LadderAssistSideMove { get; set; } = 80.0f;
 
-    // Persistent per-map ladder learning. WALK -> LADDER transitions are the
-    // authoritative learning signal; LadderNormal/GoalPosition guesses are not.
+    // ---------------------------------------------------------------------
+    // Persistent physical ladder learning / traversal
+    // ---------------------------------------------------------------------
+    //
+    // Version 2 learns one physical ladder shaft by XY and its vertical extent.
+    // Short LADDER -> WALK -> LADDER reattachments remain one learning session.
+    // Only confirmed ladders are persisted.
     public bool LadderLearningEnabled { get; set; } = true;
     public bool LadderEntryJumpEnabled { get; set; } = true;
-    public bool LadderEntryJumpDescendingEnabled { get; set; } = false;
     public bool LadderMapDebug { get; set; } = true;
-    public float LadderLearnClusterRadius { get; set; } = 32.0f;
-    public float LadderEntryJumpDistance { get; set; } = 85.0f;
-    public float LadderEntryMaxVerticalDelta { get; set; } = 48.0f;
-    public float LadderEntryApproachDot { get; set; } = 0.35f;
-    public float LadderEntryJumpCooldownSeconds { get; set; } = 0.75f;
+
+    // Learning / confirmation.
+    public float LadderLearnHorizontalClusterRadius { get; set; } = 28.0f;
+    public float LadderLearnConfirmVerticalProgress { get; set; } = 28.0f;
+    public int LadderLearnProblemConfirmCount { get; set; } = 2;
+    public float LadderSessionDetachGraceSeconds { get; set; } = 0.55f;
+    public float LadderSessionReattachRadius { get; set; } = 48.0f;
+
+    // Known-ladder acquisition and fixed jump point.
+    public float LadderTraversalAcquireDistance { get; set; } = 120.0f;
+    public float LadderTraversalEntryMaxVerticalDelta { get; set; } = 40.0f;
+    public float LadderTraversalApproachDot { get; set; } = 0.35f;
+    public float LadderTraversalCorridorHalfWidth { get; set; } = 30.0f;
+    public float LadderTraversalJumpLeadDistance { get; set; } = 55.0f;
+    public float LadderTraversalJumpWindow { get; set; } = 10.0f;
     public int LadderEntryJumpPulseTicks { get; set; } = 3;
+
+    // Traversal ownership. The plugin owns movement only long enough to get a
+    // reliable mount and real upward Z progress, then returns control to Valve.
+    public float LadderTraversalMountTimeoutSeconds { get; set; } = 1.25f;
+    public float LadderTraversalTimeoutSeconds { get; set; } = 4.0f;
+    public float LadderTraversalClimbAssistProgress { get; set; } = 32.0f;
+    public float LadderTraversalApproachMove { get; set; } = 220.0f;
+    public float LadderTraversalClimbPressMove { get; set; } = 150.0f;
+    public float LadderTraversalClimbUpMove { get; set; } = 250.0f;
+    public int LadderTraversalMaxRemountAttempts { get; set; } = 2;
+    public float LadderTraversalRemountDelaySeconds { get; set; } = 0.20f;
+
+    // Problem classification for a physical ladder/session.
     public float LadderProblemSeconds { get; set; } = 0.75f;
     public float LadderProblemSpeed { get; set; } = 8.0f;
-    public float LadderProblemNearMountDistance { get; set; } = 64.0f;
+    public float LadderProblemVerticalWindow { get; set; } = 48.0f;
 
     public bool CombatStrafeEnabled { get; set; } = true;
     public bool CounterStrafeEnabled { get; set; } = true;
@@ -94,15 +121,32 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderAssistForwardMove = Clamp(LadderAssistForwardMove, 50.0f, 450.0f, 200.0f, nameof(LadderAssistForwardMove), warn);
         LadderAssistSideMove = Clamp(LadderAssistSideMove, 0.0f, 250.0f, 80.0f, nameof(LadderAssistSideMove), warn);
 
-        LadderLearnClusterRadius = Clamp(LadderLearnClusterRadius, 8.0f, 128.0f, 32.0f, nameof(LadderLearnClusterRadius), warn);
-        LadderEntryJumpDistance = Clamp(LadderEntryJumpDistance, 24.0f, 200.0f, 85.0f, nameof(LadderEntryJumpDistance), warn);
-        LadderEntryMaxVerticalDelta = Clamp(LadderEntryMaxVerticalDelta, 8.0f, 128.0f, 48.0f, nameof(LadderEntryMaxVerticalDelta), warn);
-        LadderEntryApproachDot = Clamp(LadderEntryApproachDot, -1.0f, 1.0f, 0.35f, nameof(LadderEntryApproachDot), warn);
-        LadderEntryJumpCooldownSeconds = Clamp(LadderEntryJumpCooldownSeconds, 0.1f, 5.0f, 0.75f, nameof(LadderEntryJumpCooldownSeconds), warn);
+        LadderLearnHorizontalClusterRadius = Clamp(LadderLearnHorizontalClusterRadius, 8.0f, 96.0f, 28.0f, nameof(LadderLearnHorizontalClusterRadius), warn);
+        LadderLearnConfirmVerticalProgress = Clamp(LadderLearnConfirmVerticalProgress, 12.0f, 128.0f, 28.0f, nameof(LadderLearnConfirmVerticalProgress), warn);
+        LadderLearnProblemConfirmCount = Clamp(LadderLearnProblemConfirmCount, 1, 10, 2, nameof(LadderLearnProblemConfirmCount), warn);
+        LadderSessionDetachGraceSeconds = Clamp(LadderSessionDetachGraceSeconds, 0.1f, 2.0f, 0.55f, nameof(LadderSessionDetachGraceSeconds), warn);
+        LadderSessionReattachRadius = Clamp(LadderSessionReattachRadius, 16.0f, 128.0f, 48.0f, nameof(LadderSessionReattachRadius), warn);
+
+        LadderTraversalAcquireDistance = Clamp(LadderTraversalAcquireDistance, 40.0f, 250.0f, 120.0f, nameof(LadderTraversalAcquireDistance), warn);
+        LadderTraversalEntryMaxVerticalDelta = Clamp(LadderTraversalEntryMaxVerticalDelta, 8.0f, 128.0f, 40.0f, nameof(LadderTraversalEntryMaxVerticalDelta), warn);
+        LadderTraversalApproachDot = Clamp(LadderTraversalApproachDot, -1.0f, 1.0f, 0.35f, nameof(LadderTraversalApproachDot), warn);
+        LadderTraversalCorridorHalfWidth = Clamp(LadderTraversalCorridorHalfWidth, 8.0f, 96.0f, 30.0f, nameof(LadderTraversalCorridorHalfWidth), warn);
+        LadderTraversalJumpLeadDistance = Clamp(LadderTraversalJumpLeadDistance, 20.0f, 120.0f, 55.0f, nameof(LadderTraversalJumpLeadDistance), warn);
+        LadderTraversalJumpWindow = Clamp(LadderTraversalJumpWindow, 4.0f, 48.0f, 10.0f, nameof(LadderTraversalJumpWindow), warn);
         LadderEntryJumpPulseTicks = Clamp(LadderEntryJumpPulseTicks, 1, 12, 3, nameof(LadderEntryJumpPulseTicks), warn);
+
+        LadderTraversalMountTimeoutSeconds = Clamp(LadderTraversalMountTimeoutSeconds, 0.3f, 4.0f, 1.25f, nameof(LadderTraversalMountTimeoutSeconds), warn);
+        LadderTraversalTimeoutSeconds = Clamp(LadderTraversalTimeoutSeconds, LadderTraversalMountTimeoutSeconds, 10.0f, Math.Max(4.0f, LadderTraversalMountTimeoutSeconds), nameof(LadderTraversalTimeoutSeconds), warn);
+        LadderTraversalClimbAssistProgress = Clamp(LadderTraversalClimbAssistProgress, 12.0f, 128.0f, 32.0f, nameof(LadderTraversalClimbAssistProgress), warn);
+        LadderTraversalApproachMove = Clamp(LadderTraversalApproachMove, 50.0f, 450.0f, 220.0f, nameof(LadderTraversalApproachMove), warn);
+        LadderTraversalClimbPressMove = Clamp(LadderTraversalClimbPressMove, 0.0f, 350.0f, 150.0f, nameof(LadderTraversalClimbPressMove), warn);
+        LadderTraversalClimbUpMove = Clamp(LadderTraversalClimbUpMove, 50.0f, 450.0f, 250.0f, nameof(LadderTraversalClimbUpMove), warn);
+        LadderTraversalMaxRemountAttempts = Clamp(LadderTraversalMaxRemountAttempts, 0, 5, 2, nameof(LadderTraversalMaxRemountAttempts), warn);
+        LadderTraversalRemountDelaySeconds = Clamp(LadderTraversalRemountDelaySeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalRemountDelaySeconds), warn);
+
         LadderProblemSeconds = Clamp(LadderProblemSeconds, 0.25f, 5.0f, 0.75f, nameof(LadderProblemSeconds), warn);
         LadderProblemSpeed = Clamp(LadderProblemSpeed, 0.0f, 50.0f, 8.0f, nameof(LadderProblemSpeed), warn);
-        LadderProblemNearMountDistance = Clamp(LadderProblemNearMountDistance, 8.0f, 160.0f, 64.0f, nameof(LadderProblemNearMountDistance), warn);
+        LadderProblemVerticalWindow = Clamp(LadderProblemVerticalWindow, 12.0f, 160.0f, 48.0f, nameof(LadderProblemVerticalWindow), warn);
 
         KnifeRushChancePercent = Clamp(KnifeRushChancePercent, 0, 100, 50, nameof(KnifeRushChancePercent), warn);
         KnifeRushTriggerDistance = Clamp(KnifeRushTriggerDistance, 100.0f, 1000.0f, 400.0f, nameof(KnifeRushTriggerDistance), warn);

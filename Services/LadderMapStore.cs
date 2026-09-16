@@ -1,14 +1,22 @@
+using System.Numerics;
 using System.Text.Json;
 using GunGameBotAI.Models;
 
 namespace GunGameBotAI.Services;
 
 /// <summary>
-/// Loads and atomically saves persistent ladder knowledge under the plugin
-/// directory. Each map has its own JSON file.
+/// Loads and atomically saves persistent version-2 physical ladder knowledge
+/// under the plugin directory. Each map has its own JSON file.
+///
+/// Version-1 files are deliberately not migrated automatically: the old model
+/// persisted individual mount transitions and therefore cannot be converted
+/// reliably into physical ladders without guessing which records are false or
+/// belong to the same shaft.
 /// </summary>
 public sealed class LadderMapStore
 {
+    public const int CurrentVersion = 2;
+
     private readonly string _directory;
     private readonly Action<string> _info;
     private readonly Action<Exception, string> _warning;
@@ -46,29 +54,64 @@ public sealed class LadderMapStore
 
             if (!File.Exists(path))
             {
-                _info($"No ladder map exists yet for '{mapName}'. A new map will be learned at {path}.");
+                _info(
+                    $"No ladder map exists yet for '{mapName}'. " +
+                    $"A new version-{CurrentVersion} physical ladder map will be learned at {path}.");
+
                 return NewDocument(mapName);
             }
 
             string json = File.ReadAllText(path);
+
+            using JsonDocument probe = JsonDocument.Parse(json);
+            int version =
+                probe.RootElement.TryGetProperty("Version", out JsonElement versionElement) &&
+                versionElement.TryGetInt32(out int parsedVersion)
+                    ? parsedVersion
+                    : 1;
+
+            if (version < CurrentVersion)
+            {
+                string legacyBackup =
+                    path + $".v{version}.bak";
+
+                if (!File.Exists(legacyBackup))
+                    File.Copy(path, legacyBackup, overwrite: false);
+
+                _info(
+                    $"Legacy ladder map version {version} detected for '{mapName}'. " +
+                    $"It will NOT be migrated because version 1 stored mount transitions rather than physical ladders. " +
+                    $"A legacy backup was kept at {legacyBackup}. " +
+                    $"Starting clean version-{CurrentVersion} learning; the active JSON will be replaced only after the first confirmed ladder is saved.");
+
+                return NewDocument(mapName);
+            }
+
             LadderMapDocument? document =
-                JsonSerializer.Deserialize<LadderMapDocument>(json, _jsonOptions);
+                JsonSerializer.Deserialize<LadderMapDocument>(
+                    json,
+                    _jsonOptions);
 
             if (document == null)
-                throw new InvalidDataException("The ladder map JSON deserialised to null.");
+                throw new InvalidDataException(
+                    "The ladder map JSON deserialised to null.");
 
             document.Map = mapName;
-            document.Entries ??= new List<LadderMapEntry>();
+            document.Ladders ??= new List<PhysicalLadder>();
+
             Normalise(document);
 
-            _info($"Loaded ladder map '{mapName}' with {document.Entries.Count} entries from {path}.");
+            _info(
+                $"Loaded ladder map '{mapName}' with {document.Ladders.Count} physical ladders from {path}.");
+
             return document;
         }
         catch (Exception exception)
         {
             _warning(
                 exception,
-                $"Failed to load ladder map '{mapName}' from {path}. Starting with an empty in-memory map; the existing file is left untouched until a later successful save.");
+                $"Failed to load ladder map '{mapName}' from {path}. " +
+                $"Starting with an empty in-memory map; the existing file is left untouched until a later successful save.");
 
             return NewDocument(mapName);
         }
@@ -85,13 +128,23 @@ public sealed class LadderMapStore
             Directory.CreateDirectory(_directory);
             Normalise(document);
 
-            string json = JsonSerializer.Serialize(document, _jsonOptions);
-            File.WriteAllText(temporaryPath, json);
+            string json =
+                JsonSerializer.Serialize(
+                    document,
+                    _jsonOptions);
+
+            File.WriteAllText(
+                temporaryPath,
+                json);
 
             if (File.Exists(path))
                 File.Copy(path, backupPath, overwrite: true);
 
-            File.Move(temporaryPath, path, overwrite: true);
+            File.Move(
+                temporaryPath,
+                path,
+                overwrite: true);
+
             return true;
         }
         catch (Exception exception)
@@ -106,7 +159,10 @@ public sealed class LadderMapStore
                 // Best-effort cleanup only.
             }
 
-            _warning(exception, $"Failed to save ladder map '{document.Map}' to {path}.");
+            _warning(
+                exception,
+                $"Failed to save ladder map '{document.Map}' to {path}.");
+
             return false;
         }
     }
@@ -115,57 +171,125 @@ public sealed class LadderMapStore
     {
         return new LadderMapDocument
         {
-            Version = 1,
+            Version = CurrentVersion,
             Map = mapName,
-            Entries = new List<LadderMapEntry>()
+            Ladders = new List<PhysicalLadder>()
         };
     }
 
     private static void Normalise(LadderMapDocument document)
     {
-        document.Version = Math.Max(1, document.Version);
+        document.Version = CurrentVersion;
+        document.Ladders ??= new List<PhysicalLadder>();
 
         int nextId = 1;
         HashSet<int> usedIds = new();
 
-        foreach (LadderMapEntry entry in document.Entries)
+        foreach (PhysicalLadder ladder in document.Ladders)
         {
-            if (entry.Id <= 0 || !usedIds.Add(entry.Id))
+            if (ladder.Id <= 0 ||
+                !usedIds.Add(ladder.Id))
             {
                 while (usedIds.Contains(nextId))
                     nextId++;
 
-                entry.Id = nextId;
-                usedIds.Add(entry.Id);
+                ladder.Id = nextId;
+                usedIds.Add(ladder.Id);
             }
 
-            nextId = Math.Max(nextId, entry.Id + 1);
-            entry.Observations = Math.Max(1, entry.Observations);
-            entry.ProblemCount = Math.Max(0, entry.ProblemCount);
-            entry.Problematic = entry.Problematic || entry.ProblemCount > 0;
+            nextId =
+                Math.Max(
+                    nextId,
+                    ladder.Id + 1);
 
-            if (string.IsNullOrWhiteSpace(entry.TravelDirection))
-                entry.TravelDirection = "Unknown";
+            ladder.Observations =
+                Math.Max(
+                    1,
+                    ladder.Observations);
+
+            ladder.BottomApproachObservations =
+                Math.Max(
+                    0,
+                    ladder.BottomApproachObservations);
+
+            ladder.SuccessfulTraversals =
+                Math.Max(
+                    0,
+                    ladder.SuccessfulTraversals);
+
+            ladder.UpTraversals =
+                Math.Max(
+                    0,
+                    ladder.UpTraversals);
+
+            ladder.DownTraversals =
+                Math.Max(
+                    0,
+                    ladder.DownTraversals);
+
+            ladder.AssistedTraversals =
+                Math.Max(
+                    0,
+                    ladder.AssistedTraversals);
+
+            ladder.AssistedSuccesses =
+                Math.Max(
+                    0,
+                    ladder.AssistedSuccesses);
+
+            ladder.AssistedFailures =
+                Math.Max(
+                    0,
+                    ladder.AssistedFailures);
+
+            ladder.ProblemCount =
+                Math.Max(
+                    0,
+                    ladder.ProblemCount);
+
+            ladder.Problematic =
+                ladder.Problematic ||
+                ladder.ProblemCount > 0;
+
+            if (ladder.TopZ < ladder.BottomZ)
+                (ladder.BottomZ, ladder.TopZ) =
+                    (ladder.TopZ, ladder.BottomZ);
+
+            Vector3 anchor =
+                ladder.Anchor.ToVector3();
+
+            ladder.Anchor =
+                LadderPoint.FromVector3(
+                    new Vector3(
+                        anchor.X,
+                        anchor.Y,
+                        0.0f));
         }
     }
 
-    private static string SanitiseMapName(string mapName)
+    private static string SanitiseMapName(
+        string mapName)
     {
         if (string.IsNullOrWhiteSpace(mapName))
             return "unknown_map";
 
-        Span<char> buffer = stackalloc char[mapName.Length];
+        Span<char> buffer =
+            stackalloc char[mapName.Length];
+
         int length = 0;
 
         foreach (char value in mapName)
         {
             buffer[length++] =
-                char.IsLetterOrDigit(value) || value is '-' or '_' or '.'
+                char.IsLetterOrDigit(value) ||
+                value is '-' or '_' or '.'
                     ? value
                     : '_';
         }
 
-        string result = new(buffer[..length]);
+        string result =
+            new(buffer[..length]);
+
         return string.IsNullOrWhiteSpace(result)
             ? "unknown_map"
             : result;

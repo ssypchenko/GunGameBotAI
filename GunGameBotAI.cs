@@ -71,7 +71,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.1.0";
+    public override string ModuleVersion => "0.2.0";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -334,6 +334,42 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     continue;
                 }
 
+                bool ladderTraversalActive =
+                    _ladderMap?.ObserveAndMaybeStartTraversal(
+                         pawn,
+                         bot,
+                         state,
+                         now) == true;
+
+                if (ladderTraversalActive)
+                {
+                    // Learned ladder traversal owns movement before Knife Rush,
+                    // LadderAssist, StuckRecovery or normal combat movement.
+                    // This prevents velocity/input conflicts during the critical
+                    // jump -> mount -> initial climb sequence.
+                    if (_knifeRush.IsActive(state))
+                    {
+                        _knifeRush.Abort(
+                            controller,
+                            pawn,
+                            state,
+                            now,
+                            "LADDER_TRAVERSAL",
+                            startCooldown: true);
+                    }
+
+                    state.ResetLadderAssist();
+                    state.ResetMovementSamples();
+
+                    SetMode(
+                        state,
+                        BotBehaviorMode.LadderTraversal,
+                        "learned physical ladder traversal owns movement");
+
+                    _registry.ActivateActuator(slot);
+                    continue;
+                }
+
                 ThinkBot(
                     controller,
                     pawn,
@@ -341,15 +377,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     state,
                     now);
 
-                bool ladderJumpScheduled =
-                    _ladderMap?.ObserveAndMaybeScheduleJump(
-                        pawn,
-                        bot,
-                        state,
-                        now) == true;
-
-                if (ladderJumpScheduled ||
-                    _buttonPulses.HasPending(slot))
+                if (_buttonPulses.HasPending(slot))
                 {
                     _registry.ActivateActuator(slot);
                 }
@@ -524,20 +552,33 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         state,
                         now);
 
-                _ladderAssist.ApplyFast(
-                    pawn,
-                    bot,
-                    state,
-                    enemy,
-                    now);
+                // Fast actuator ownership is exclusive. A learned physical
+                // ladder traversal must not fight Knife Rush or the reactive
+                // LadderAssistService during jump/mount/climb.
+                bool ladderTraversalOwned =
+                    _ladderMap?.ApplyFast(
+                        pawn,
+                        bot,
+                        state,
+                        now) == true;
 
-                _knifeRush.ApplyFast(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    enemy,
-                    now);
+                if (!ladderTraversalOwned)
+                {
+                    _ladderAssist.ApplyFast(
+                        pawn,
+                        bot,
+                        state,
+                        enemy,
+                        now);
+
+                    _knifeRush.ApplyFast(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        enemy,
+                        now);
+                }
 
                 _buttonPulses.Update(
                     slot,
@@ -767,6 +808,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (state.Mode is
             BotBehaviorMode.KnifeLevel or
             BotBehaviorMode.OpportunisticKnifeRush or
+            BotBehaviorMode.LadderTraversal or
             BotBehaviorMode.StuckRecovery)
         {
             return HookResult.Continue;
@@ -857,7 +899,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         PrintStatus(command);
     }
 
-    [ConsoleCommand("css_ggbotai_ladders", "Show learned ladder entries for the current map.")]
+    [ConsoleCommand("css_ggbotai_ladders", "Show learned physical ladders for the current map.")]
     [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnLaddersCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -876,10 +918,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         _ladderMap.ReloadCurrentMap();
         command.ReplyToCommand(
-            $"[GunGameBotAI] Reloaded ladder map '{_ladderMap.CurrentMap}'; entries={_ladderMap.EntryCount}.");
+            $"[GunGameBotAI] Reloaded ladder map '{_ladderMap.CurrentMap}'; physicalLadders={_ladderMap.LadderCount}.");
     }
 
-    [ConsoleCommand("css_ggbotai_ladder_jump", "Enable or disable proactive jumps at learned ladder entries.")]
+    [ConsoleCommand("css_ggbotai_ladder_jump", "Enable or disable proactive learned-ladder traversal.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnLadderJumpCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -892,7 +934,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         Config.LadderEntryJumpEnabled = enabled;
         PersistConfig(command);
         command.ReplyToCommand(
-            $"[GunGameBotAI] learned ladder-entry jump={(enabled ? "enabled" : "disabled")}.");
+            $"[GunGameBotAI] learned ladder traversal={(enabled ? "enabled" : "disabled")}.");
     }
 
     [ConsoleCommand("css_ggbotai_ladder_learning", "Enable or disable persistent ladder learning.")]
@@ -1098,7 +1140,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] decisionTimer={_decisionTimer != null}; actuatorTimer={_actuatorTimer != null}; decision={Config.DecisionIntervalSeconds:0.###}s; fastTicks={Config.FastActuatorEveryTicks}; backend={_weaponActivation.BackendName}; backendAvailable={_weaponActivation.IsBackendAvailable}.");
         command.ReplyToCommand(
-            $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; entries={_ladderMap?.EntryCount ?? 0}; learning={Config.LadderLearningEnabled}; entryJump={Config.LadderEntryJumpEnabled}; descendingJump={Config.LadderEntryJumpDescendingEnabled}.");
+            $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
+            $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +
+            $"learning={Config.LadderLearningEnabled}; traversal={Config.LadderEntryJumpEnabled}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
 
@@ -1111,25 +1155,41 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private void PrintLadderMap(CommandInfo command)
     {
-        if (_ladderMap == null || string.IsNullOrWhiteSpace(_ladderMap.CurrentMap))
+        if (_ladderMap == null ||
+            string.IsNullOrWhiteSpace(
+                _ladderMap.CurrentMap))
         {
-            command.ReplyToCommand("[GunGameBotAI] No ladder map is currently loaded.");
+            command.ReplyToCommand(
+                "[GunGameBotAI] No ladder map is currently loaded.");
             return;
         }
 
         command.ReplyToCommand(
-            $"[GunGameBotAI] ladderMap={_ladderMap.CurrentMap}; entries={_ladderMap.EntryCount}; path={_ladderMap.CurrentPath}");
+            $"[GunGameBotAI] ladderMap={_ladderMap.CurrentMap}; " +
+            $"physicalLadders={_ladderMap.LadderCount}; " +
+            $"candidates={_ladderMap.CandidateCount}; path={_ladderMap.CurrentPath}");
 
-        foreach (LadderMapEntry entry in _ladderMap.Entries)
+        foreach (PhysicalLadder ladder
+                 in _ladderMap.Ladders)
         {
-            System.Numerics.Vector3 mount = entry.Mount.ToVector3();
-            System.Numerics.Vector3 approach = entry.ApproachDirection.ToVector3();
+            System.Numerics.Vector3 anchor =
+                ladder.Anchor.ToVector3();
+
+            System.Numerics.Vector3 mount =
+                ladder.BottomMount.ToVector3();
+
+            System.Numerics.Vector3 approach =
+                ladder.ApproachDirection.ToVector3();
 
             command.ReplyToCommand(
-                $"[GunGameBotAI] ladder id={entry.Id}; mount=({mount.X:0.###},{mount.Y:0.###},{mount.Z:0.###}); " +
-                $"approach=({approach.X:0.###},{approach.Y:0.###},{approach.Z:0.###}); " +
-                $"direction={entry.TravelDirection}; observations={entry.Observations}; " +
-                $"problematic={entry.Problematic}; problems={entry.ProblemCount}.");
+                $"[GunGameBotAI] ladder id={ladder.Id}; " +
+                $"anchor=({anchor.X:0.###},{anchor.Y:0.###}); " +
+                $"z={ladder.BottomZ:0.###}..{ladder.TopZ:0.###}; " +
+                $"bottomMount=({mount.X:0.###},{mount.Y:0.###},{mount.Z:0.###}); " +
+                $"approach=({approach.X:0.###},{approach.Y:0.###}); " +
+                $"bottomKnown={ladder.HasBottomApproach}; observations={ladder.Observations}; " +
+                $"successes={ladder.SuccessfulTraversals}; problems={ladder.ProblemCount}; " +
+                $"assisted={ladder.AssistedSuccesses}/{ladder.AssistedTraversals}.");
         }
     }
 

@@ -10,21 +10,21 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 4 deliberately separates two responsibilities:
+/// Version 5 combines three responsibilities:
 ///
-/// 1) Learning:
-///    WALK -> LADDER starts a short learning session. Brief detach/reattach
-///    transitions are kept in the same session. Sessions are clustered by XY,
-///    not 3D distance, so the bottom and top of one physical ladder remain one
-///    persistent object. False/short contacts stay only in RAM until confirmed.
+/// 1) Automatic bot learning from successful traversals only. Bot failures are
+///    diagnostic statistics and never certify or reshape geometry.
 ///
-/// 2) Traversal:
-///    A bot approaching the learned bottom entry gives this service temporary
-///    behavioural ownership. Valve navigation remains responsible for walking
-///    to the ladder. The service only issues Jump near the learned mount,
-///    releases Jump immediately after MOVETYPE_LADDER is reached, then gives
-///    Valve ladder movement a grace window. Only a proven climb stall receives
-///    bounded CmdForward/CmdUp input assistance; AbsVelocity is never forced.
+/// 2) High-confidence manual teaching. When configured conditions are met
+///    (by default: no bots and exactly one live human), successful human ladder
+///    traversals are recorded as immutable certified geometry plus a sampled
+///    reference path.
+///
+/// 3) Proactive bot traversal. Valve navigation owns the approach. The plugin
+///    issues a learned entry jump, validates that MOVETYPE_LADDER belongs to the
+///    intended physical ladder, observes Valve climb first, and only on a proven
+///    stall applies bounded world-direction input derived from LadderNormal and
+///    the certified reference path. AbsVelocity is never forced.
 /// </summary>
 public sealed class LadderMapService
 {
@@ -44,6 +44,16 @@ public sealed class LadderMapService
     private LadderMapDocument _document = new();
     private bool _dirty;
 
+    private GunGameBotAIConfig _config = new();
+
+    // Manual teaching uses a self-scheduling NextFrame observer so it remains
+    // available even when the bot-AI runtime is disabled and no bots exist.
+    private int _manualLoopGeneration;
+    private bool _manualLoopScheduled;
+    private int _manualTeacherSlot = -1;
+    private readonly ManualHumanTracker _manualHuman = new();
+    private float _lastManualEligibilityLogAt = float.NegativeInfinity;
+
     public LadderMapService(
         LadderMapStore store,
         ButtonPulseService buttonPulses,
@@ -58,7 +68,15 @@ public sealed class LadderMapService
         _debug = debug;
     }
 
-    public GunGameBotAIConfig Config { get; set; } = new();
+    public GunGameBotAIConfig Config
+    {
+        get => _config;
+        set
+        {
+            _config = value ?? new GunGameBotAIConfig();
+            RefreshManualTeachingLoop();
+        }
+    }
 
     public string CurrentMap => _document.Map;
     public int LadderCount => _document.Ladders.Count;
@@ -80,6 +98,8 @@ public sealed class LadderMapService
 
         _document = _store.Load(mapName);
         _dirty = false;
+        ResetManualTeachingState("map-start");
+        RefreshManualTeachingLoop();
 
         if (!Config.LadderMapDebug)
             return;
@@ -92,12 +112,15 @@ public sealed class LadderMapService
                 $"bottomMount={Format(ladder.BottomMount.ToVector3())}; " +
                 $"approach={Format(ladder.ApproachDirection.ToVector3())}; " +
                 $"observations={ladder.Observations}; successes={ladder.SuccessfulTraversals}; " +
-                $"problematic={ladder.Problematic}; problems={ladder.ProblemCount}");
+                $"manual={ladder.ManualCertified}; manualObs={ladder.ManualObservations}; " +
+                $"pathSamples={ladder.ReferencePath.Count}; problems={ladder.ProblemCount}");
         }
     }
 
     public void OnMapEnd()
     {
+        StopManualTeachingLoop();
+        ResetManualTeachingState("map-end");
         FinalizeAllLearningSessions("map-end");
         SaveIfDirty();
 
@@ -109,6 +132,8 @@ public sealed class LadderMapService
 
     public void Shutdown()
     {
+        StopManualTeachingLoop();
+        ResetManualTeachingState("shutdown");
         FinalizeAllLearningSessions("shutdown");
         SaveIfDirty();
 
@@ -125,6 +150,10 @@ public sealed class LadderMapService
     {
         FinalizeAllLearningSessions("runtime-reset");
         _trackers.Clear();
+
+        // Runtime enable/disable and round resets must not destroy already saved
+        // manual geometry, but an in-flight human sample is safer to restart.
+        ResetManualTeachingSession("runtime-reset");
     }
 
     public void RemoveSlot(int slot)
@@ -155,6 +184,716 @@ public sealed class LadderMapService
 
         _document = _store.Load(mapName);
         _dirty = false;
+        ResetManualTeachingState("reload");
+        RefreshManualTeachingLoop();
+    }
+
+    // ---------------------------------------------------------------------
+    // Manual human teaching
+    // ---------------------------------------------------------------------
+
+    private void RefreshManualTeachingLoop()
+    {
+        _manualLoopGeneration++;
+        _manualLoopScheduled = false;
+
+        if (!Config.LadderManualTeachingEnabled ||
+            string.IsNullOrWhiteSpace(_document.Map))
+        {
+            return;
+        }
+
+        ScheduleManualTeachingFrame(_manualLoopGeneration);
+    }
+
+    private void StopManualTeachingLoop()
+    {
+        _manualLoopGeneration++;
+        _manualLoopScheduled = false;
+    }
+
+    private void ScheduleManualTeachingFrame(int generation)
+    {
+        if (_manualLoopScheduled ||
+            generation != _manualLoopGeneration ||
+            !Config.LadderManualTeachingEnabled ||
+            string.IsNullOrWhiteSpace(_document.Map))
+        {
+            return;
+        }
+
+        _manualLoopScheduled = true;
+
+        Server.NextFrame(() =>
+        {
+            _manualLoopScheduled = false;
+
+            if (generation != _manualLoopGeneration ||
+                !Config.LadderManualTeachingEnabled ||
+                string.IsNullOrWhiteSpace(_document.Map))
+            {
+                return;
+            }
+
+            try
+            {
+                ObserveManualTeachingFrame(Server.CurrentTime);
+            }
+            catch (Exception exception)
+            {
+                Debug(
+                    $"MANUAL observer error: {exception.GetType().Name}: {exception.Message}");
+            }
+
+            ScheduleManualTeachingFrame(generation);
+        });
+    }
+
+    private void ObserveManualTeachingFrame(float now)
+    {
+        if (!TryResolveManualTeacher(
+                out CCSPlayerController? controller,
+                out CCSPlayerPawn? pawn,
+                out string unavailableReason) ||
+            controller == null ||
+            pawn == null)
+        {
+            if (_manualTeacherSlot >= 0 ||
+                _manualHuman.Session != null)
+            {
+                ResetManualTeachingState(unavailableReason);
+            }
+
+            if (Config.LadderMapDebug &&
+                now - _lastManualEligibilityLogAt >= 10.0f &&
+                unavailableReason is not "no-live-human")
+            {
+                _lastManualEligibilityLogAt = now;
+                Debug($"MANUAL idle reason={unavailableReason}");
+            }
+
+            return;
+        }
+
+        if (_manualTeacherSlot != controller.Slot)
+        {
+            ResetManualTeachingState("teacher-changed");
+            _manualTeacherSlot = controller.Slot;
+            _info(
+                $"MANUAL ready map={_document.Map}; slot={controller.Slot}; " +
+                "successful human ladder traversals will be certified automatically.");
+        }
+
+        if (now - _manualHuman.LastObservedAt <
+            Config.LadderManualSampleIntervalSeconds)
+        {
+            return;
+        }
+
+        _manualHuman.LastObservedAt = now;
+
+        if (!NativeValueReader.TryGetOrigin(pawn, out Vector3 position) ||
+            !NativeValueReader.TryGetVelocity(pawn, out Vector3 velocity))
+        {
+            return;
+        }
+
+        bool onLadder =
+            pawn.MoveType == MoveType_t.MOVETYPE_LADDER;
+
+        bool wasOnLadder =
+            _manualHuman.HasSample &&
+            _manualHuman.PreviousOnLadder;
+
+        ManualTeachingSession? session =
+            _manualHuman.Session;
+
+        if (session != null)
+        {
+            if (onLadder)
+            {
+                if (session.DetachedAt > 0.0f)
+                {
+                    float detachedFor = now - session.DetachedAt;
+                    float distanceFromLast =
+                        Distance2D(position, session.LastLadderPosition);
+
+                    if (detachedFor <= Config.LadderManualDetachGraceSeconds &&
+                        distanceFromLast <= Config.LadderSessionReattachRadius)
+                    {
+                        session.DetachedAt = 0.0f;
+                        Debug(
+                            $"MANUAL reattach slot={controller.Slot}; position={Format(position)}");
+                    }
+                    else
+                    {
+                        FinalizeManualTeachingSession(
+                            controller.Slot,
+                            "reattached elsewhere");
+
+                        session = null;
+                    }
+                }
+
+                if (session != null)
+                {
+                    AddManualPathSample(
+                        pawn,
+                        session,
+                        position,
+                        velocity,
+                        now,
+                        force: false);
+                }
+            }
+            else
+            {
+                if (wasOnLadder &&
+                    session.DetachedAt <= 0.0f)
+                {
+                    session.DetachedAt = now;
+                    session.ExitCandidate = position;
+                }
+                // Keep the first off-ladder position as the reference exit.
+                // Updating it for the whole detach grace window would record a
+                // point tens of units away after the player has already run on.
+
+                if (session.DetachedAt > 0.0f &&
+                    now - session.DetachedAt >
+                        Config.LadderManualDetachGraceSeconds)
+                {
+                    FinalizeManualTeachingSession(
+                        controller.Slot,
+                        "normal ladder exit");
+
+                    session = null;
+                }
+            }
+        }
+
+        if (_manualHuman.Session == null &&
+            onLadder &&
+            !wasOnLadder)
+        {
+            StartManualTeachingSession(
+                controller.Slot,
+                pawn,
+                position,
+                velocity,
+                now);
+        }
+
+        _manualHuman.HasSample = true;
+        _manualHuman.PreviousOnLadder = onLadder;
+        _manualHuman.PreviousPosition = position;
+        _manualHuman.PreviousVelocity = velocity;
+        _manualHuman.PreviousSampleAt = now;
+    }
+
+    private bool TryResolveManualTeacher(
+        out CCSPlayerController? controller,
+        out CCSPlayerPawn? pawn,
+        out string unavailableReason)
+    {
+        controller = null;
+        pawn = null;
+        unavailableReason = "no-live-human";
+
+        List<CCSPlayerController> liveHumans = new();
+        bool botPresent = false;
+
+        foreach (CCSPlayerController player in Utilities.GetPlayers())
+        {
+            if (player == null ||
+                !player.IsValid ||
+                player.Connected != PlayerConnectedState.Connected ||
+                player.IsHLTV)
+            {
+                continue;
+            }
+
+            if (player.IsBot)
+            {
+                botPresent = true;
+                continue;
+            }
+
+            if (!player.PawnIsAlive)
+                continue;
+
+            CCSPlayerPawn? humanPawn =
+                player.PlayerPawn.Value;
+
+            if (humanPawn == null ||
+                !humanPawn.IsValid ||
+                humanPawn.LifeState != (byte)LifeState_t.LIFE_ALIVE ||
+                humanPawn.Health <= 0)
+            {
+                continue;
+            }
+
+            liveHumans.Add(player);
+        }
+
+        if (Config.LadderManualTeachingRequireNoBots &&
+            botPresent)
+        {
+            unavailableReason = "bots-present";
+            return false;
+        }
+
+        CCSPlayerController? selected = null;
+
+        if (Config.LadderManualTeacherSlot >= 0)
+        {
+            selected = liveHumans.FirstOrDefault(
+                value => value.Slot == Config.LadderManualTeacherSlot);
+
+            if (selected == null)
+            {
+                unavailableReason = "configured-teacher-not-live";
+                return false;
+            }
+        }
+        else
+        {
+            if (liveHumans.Count != 1)
+            {
+                unavailableReason = liveHumans.Count == 0
+                    ? "no-live-human"
+                    : "multiple-live-humans";
+
+                return false;
+            }
+
+            selected = liveHumans[0];
+        }
+
+        CCSPlayerPawn? selectedPawn =
+            selected.PlayerPawn.Value;
+
+        if (selectedPawn == null ||
+            !selectedPawn.IsValid)
+        {
+            unavailableReason = "teacher-pawn-unavailable";
+            return false;
+        }
+
+        controller = selected;
+        pawn = selectedPawn;
+        unavailableReason = string.Empty;
+        return true;
+    }
+
+    private void StartManualTeachingSession(
+        int slot,
+        CCSPlayerPawn pawn,
+        Vector3 mountPosition,
+        Vector3 mountVelocity,
+        float now)
+    {
+        Vector3 entry = mountPosition;
+        Vector3 approach = HorizontalNormalised(mountVelocity);
+
+        if (_manualHuman.HasSample &&
+            !_manualHuman.PreviousOnLadder &&
+            now - _manualHuman.PreviousSampleAt <= 0.30f)
+        {
+            entry = _manualHuman.PreviousPosition;
+
+            Vector3 fromPrevious =
+                HorizontalNormalised(
+                    mountPosition - _manualHuman.PreviousPosition);
+
+            if (fromPrevious.LengthSquared() > 0.0001f)
+                approach = fromPrevious;
+        }
+
+        ManualTeachingSession session = new()
+        {
+            StartedAt = now,
+            StartEntry = entry,
+            StartMount = mountPosition,
+            ApproachDirection = approach,
+            MaxZ = mountPosition.Z,
+            LastLadderPosition = mountPosition,
+            ExitCandidate = mountPosition
+        };
+
+        _manualHuman.Session = session;
+
+        AddManualPathSample(
+            pawn,
+            session,
+            mountPosition,
+            mountVelocity,
+            now,
+            force: true);
+
+        _info(
+            $"MANUAL session-start map={_document.Map}; slot={slot}; " +
+            $"entry={Format(entry)}; mount={Format(mountPosition)}; " +
+            $"approach={Format(approach)}");
+    }
+
+    private void AddManualPathSample(
+        CCSPlayerPawn pawn,
+        ManualTeachingSession session,
+        Vector3 position,
+        Vector3 velocity,
+        float now,
+        bool force)
+    {
+        session.MaxZ = MathF.Max(session.MaxZ, position.Z);
+        session.LastLadderPosition = position;
+
+        bool shouldAdd = force ||
+                         session.Path.Count == 0;
+
+        if (!shouldAdd)
+        {
+            Vector3 last =
+                session.Path[^1].Position.ToVector3();
+
+            shouldAdd =
+                MathF.Abs(position.Z - last.Z) >=
+                    Config.LadderManualPathSampleVerticalStep ||
+                Distance2D(position, last) >=
+                    Config.LadderManualPathSampleHorizontalStep ||
+                now - session.LastPathSampleAt >= 0.25f;
+        }
+
+        if (!shouldAdd)
+            return;
+
+        session.Path.Add(
+            CaptureManualPathSample(
+                pawn,
+                position,
+                velocity));
+
+        session.LastPathSampleAt = now;
+
+        if (session.Path.Count >
+            Config.LadderManualMaxReferenceSamples * 2)
+        {
+            session.Path =
+                DownsamplePath(
+                    session.Path,
+                    Config.LadderManualMaxReferenceSamples);
+        }
+    }
+
+    private static LadderPathSample CaptureManualPathSample(
+        CCSPlayerPawn pawn,
+        Vector3 position,
+        Vector3 velocity)
+    {
+        Vector3 ladderNormal = default;
+        float forwardMove = 0.0f;
+        float leftMove = 0.0f;
+        float upMove = 0.0f;
+
+        try
+        {
+            if (pawn.MovementServices is CCSPlayer_MovementServices movement)
+            {
+                if (movement.LadderNormal != null)
+                {
+                    NativeValueReader.TryCopy(
+                        movement.LadderNormal,
+                        out ladderNormal);
+                }
+
+                forwardMove = movement.CmdForwardMove;
+                leftMove = movement.CmdLeftMove;
+                upMove = movement.CmdUpMove;
+            }
+        }
+        catch
+        {
+            ladderNormal = default;
+            forwardMove = 0.0f;
+            leftMove = 0.0f;
+            upMove = 0.0f;
+        }
+
+        return new LadderPathSample
+        {
+            Position = LadderPoint.FromVector3(position),
+            Velocity = LadderPoint.FromVector3(velocity),
+            LadderNormal = LadderPoint.FromVector3(ladderNormal),
+            ForwardMove = forwardMove,
+            LeftMove = leftMove,
+            UpMove = upMove
+        };
+    }
+
+    private void FinalizeManualTeachingSession(
+        int slot,
+        string reason)
+    {
+        ManualTeachingSession? session =
+            _manualHuman.Session;
+
+        if (session == null)
+            return;
+
+        _manualHuman.Session = null;
+
+        float upward =
+            MathF.Max(
+                0.0f,
+                session.MaxZ - session.StartMount.Z);
+
+        float entryToMount =
+            Distance2D(
+                session.StartEntry,
+                session.StartMount);
+
+        if (upward < Config.LadderManualMinVerticalProgress ||
+            session.Path.Count < 2 ||
+            entryToMount < 1.0f ||
+            HorizontalNormalised(session.ApproachDirection).LengthSquared() < 0.25f)
+        {
+            _info(
+                $"MANUAL ignored map={_document.Map}; slot={slot}; reason={reason}; " +
+                $"upward={upward:0.###}; samples={session.Path.Count}; entryToMount={entryToMount:0.###}; " +
+                $"entry={Format(session.StartEntry)}; mount={Format(session.StartMount)}");
+
+            return;
+        }
+
+        ApplyManualTraversal(
+            slot,
+            session,
+            reason,
+            upward);
+    }
+
+    private void ApplyManualTraversal(
+        int slot,
+        ManualTeachingSession session,
+        string reason,
+        float upward)
+    {
+        Vector3 observedAnchor =
+            AveragePathAnchor(session.Path);
+
+        PhysicalLadder? ladder =
+            FindKnownForManualMount(
+                session.StartMount);
+
+        if (ladder == null)
+        {
+            PhysicalLadder? candidate =
+                FindCandidateByAnchor(session.StartMount);
+
+            if (candidate != null)
+                _candidates.Remove(candidate);
+
+            ladder = new PhysicalLadder
+            {
+                Id = NextLadderId(),
+                Anchor = LadderPoint.FromVector3(observedAnchor)
+            };
+
+            _document.Ladders.Add(ladder);
+        }
+
+        int oldManualCount = ladder.ManualObservations;
+        int newManualCount = oldManualCount + 1;
+
+        Vector3 approach =
+            HorizontalNormalised(session.ApproachDirection);
+
+        if (oldManualCount <= 0)
+        {
+            ladder.Anchor = LadderPoint.FromVector3(observedAnchor);
+            ladder.BottomEntry = LadderPoint.FromVector3(session.StartEntry);
+            ladder.BottomMount = LadderPoint.FromVector3(session.StartMount);
+            ladder.ApproachDirection = LadderPoint.FromVector3(approach);
+            ladder.ManualExit = LadderPoint.FromVector3(session.ExitCandidate);
+        }
+        else
+        {
+            ladder.Anchor = LadderPoint.FromVector3(
+                RunningAverage(
+                    ladder.Anchor.ToVector3(),
+                    observedAnchor,
+                    oldManualCount,
+                    newManualCount));
+
+            ladder.BottomEntry = LadderPoint.FromVector3(
+                RunningAverage(
+                    ladder.BottomEntry.ToVector3(),
+                    session.StartEntry,
+                    oldManualCount,
+                    newManualCount));
+
+            ladder.BottomMount = LadderPoint.FromVector3(
+                RunningAverage(
+                    ladder.BottomMount.ToVector3(),
+                    session.StartMount,
+                    oldManualCount,
+                    newManualCount));
+
+            Vector3 averagedApproach =
+                RunningAverage(
+                    ladder.ApproachDirection.ToVector3(),
+                    approach,
+                    oldManualCount,
+                    newManualCount);
+
+            ladder.ApproachDirection = LadderPoint.FromVector3(
+                HorizontalNormalised(averagedApproach));
+
+            if (ladder.ManualExit != null)
+            {
+                ladder.ManualExit = LadderPoint.FromVector3(
+                    RunningAverage(
+                        ladder.ManualExit.ToVector3(),
+                        session.ExitCandidate,
+                        oldManualCount,
+                        newManualCount));
+            }
+            else
+            {
+                ladder.ManualExit =
+                    LadderPoint.FromVector3(session.ExitCandidate);
+            }
+        }
+
+        Vector3 anchor = ladder.Anchor.ToVector3();
+        anchor.Z = 0.0f;
+        ladder.Anchor = LadderPoint.FromVector3(anchor);
+
+        ladder.ManualCertified = true;
+        ladder.ManualObservations = newManualCount;
+        ladder.HasBottomApproach = true;
+        ladder.BottomApproachObservations =
+            Math.Max(ladder.BottomApproachObservations, newManualCount);
+
+        ladder.BottomZ = oldManualCount <= 0
+            ? session.StartMount.Z
+            : MathF.Min(ladder.BottomZ, session.StartMount.Z);
+
+        ladder.TopZ = oldManualCount <= 0
+            ? session.MaxZ
+            : MathF.Max(ladder.TopZ, session.MaxZ);
+
+        ladder.ReferencePath =
+            DownsamplePath(
+                session.Path,
+                Config.LadderManualMaxReferenceSamples);
+
+        ladder.Observations++;
+        ladder.SuccessfulTraversals++;
+        ladder.UpTraversals++;
+
+        // Old auto-learning problem labels must not poison trusted human data.
+        ladder.Problematic = false;
+        ladder.ProblemCount = 0;
+        ladder.ProblemPoint = null;
+
+        MarkDirtyAndSave();
+
+        _info(
+            $"MANUAL certified map={_document.Map}; slot={slot}; id={ladder.Id}; " +
+            $"reason={reason}; manualObs={ladder.ManualObservations}; " +
+            $"upward={upward:0.###}; pathSamples={ladder.ReferencePath.Count}; " +
+            $"entry={Format(ladder.BottomEntry.ToVector3())}; " +
+            $"mount={Format(ladder.BottomMount.ToVector3())}; " +
+            $"exit={Format(ladder.ManualExit?.ToVector3() ?? session.ExitCandidate)}");
+    }
+
+    private void ResetManualTeachingState(string reason)
+    {
+        ResetManualTeachingSession(reason);
+        _manualTeacherSlot = -1;
+        _manualHuman.HasSample = false;
+        _manualHuman.PreviousOnLadder = false;
+        _manualHuman.PreviousPosition = default;
+        _manualHuman.PreviousVelocity = default;
+        _manualHuman.PreviousSampleAt = float.NegativeInfinity;
+        _manualHuman.LastObservedAt = float.NegativeInfinity;
+    }
+
+    private void ResetManualTeachingSession(string reason)
+    {
+        if (_manualHuman.Session != null)
+        {
+            Debug(
+                $"MANUAL session-abort reason={reason}; " +
+                $"mount={Format(_manualHuman.Session.StartMount)}");
+        }
+
+        _manualHuman.Session = null;
+    }
+
+    private static Vector3 AveragePathAnchor(
+        IReadOnlyList<LadderPathSample> path)
+    {
+        if (path.Count == 0)
+            return default;
+
+        Vector3 sum = default;
+
+        foreach (LadderPathSample sample in path)
+        {
+            Vector3 value = sample.Position.ToVector3();
+            sum.X += value.X;
+            sum.Y += value.Y;
+        }
+
+        return new Vector3(
+            sum.X / path.Count,
+            sum.Y / path.Count,
+            0.0f);
+    }
+
+    private static List<LadderPathSample> DownsamplePath(
+        IReadOnlyList<LadderPathSample> source,
+        int maximum)
+    {
+        if (source.Count <= maximum)
+            return source.Select(ClonePathSample).ToList();
+
+        List<LadderPathSample> result = new(maximum);
+
+        for (int index = 0; index < maximum; index++)
+        {
+            float fraction = maximum <= 1
+                ? 0.0f
+                : index / (float)(maximum - 1);
+
+            int sourceIndex =
+                (int)MathF.Round(
+                    fraction * (source.Count - 1));
+
+            sourceIndex = Math.Clamp(
+                sourceIndex,
+                0,
+                source.Count - 1);
+
+            result.Add(ClonePathSample(source[sourceIndex]));
+        }
+
+        return result;
+    }
+
+    private static LadderPathSample ClonePathSample(
+        LadderPathSample sample)
+    {
+        return new LadderPathSample
+        {
+            Position = LadderPoint.FromVector3(sample.Position.ToVector3()),
+            Velocity = LadderPoint.FromVector3(sample.Velocity.ToVector3()),
+            LadderNormal = LadderPoint.FromVector3(sample.LadderNormal.ToVector3()),
+            ForwardMove = sample.ForwardMove,
+            LeftMove = sample.LeftMove,
+            UpMove = sample.UpMove
+        };
     }
 
     public bool IsTraversalActive(int slot)
@@ -227,8 +966,9 @@ public sealed class LadderMapService
                 !tracker.SuppressTraversalUntilLadderExit)
             {
                 PhysicalLadder? mountedKnown =
-                    FindKnownByAnchor(
-                        position);
+                    FindKnownAtPosition(
+                        position,
+                        out _);
 
                 if (mountedKnown != null &&
                     mountedKnown.HasBottomApproach &&
@@ -371,6 +1111,27 @@ public sealed class LadderMapService
             if (traversal.Stage !=
                 TraversalStage.Climb)
             {
+                if (!IsMountCompatibleWithTarget(
+                        ladder,
+                        position,
+                        out float mountDeviation))
+                {
+                    _buttonPulses.Release(state.Slot, pawn);
+
+                    _info(
+                        $"MOUNT-REJECT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"deviation={mountDeviation:0.###}; position={Format(position)}; reason=different-ladder");
+
+                    FailTraversal(
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        "mounted different ladder",
+                        now);
+
+                    return true;
+                }
+
                 EnterClimb(
                     pawn,
                     state.Slot,
@@ -394,27 +1155,65 @@ public sealed class LadderMapService
                 traversal.ClimbStartZ;
 
             if (progress >=
-                Config.LadderTraversalClimbAssistProgress)
+                    Config.LadderTraversalClimbAssistProgress &&
+                !traversal.SafeProgressReached)
             {
+                traversal.SafeProgressReached = true;
+
                 ReleaseClimbInputAssist(
                     pawn,
                     state,
                     traversal);
 
-                CompleteTraversal(
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    position,
-                    progress,
-                    "vertical-progress",
-                    now);
-
-                return true;
+                _info(
+                    $"CLIMB-SAFE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"progressZ={progress:0.###}; position={Format(position)}");
             }
 
             if (onLadder)
             {
+                float referenceDeviation =
+                    GetTargetPathDeviation(
+                        ladder,
+                        position);
+
+                if (ladder.ManualCertified &&
+                    referenceDeviation >
+                        Config.LadderTraversalReferenceHardDeviation)
+                {
+                    ReleaseClimbInputAssist(
+                        pawn,
+                        state,
+                        traversal);
+
+                    FailTraversal(
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        $"left certified reference path (deviation={referenceDeviation:0.###})",
+                        now);
+
+                    return true;
+                }
+
+                // As soon as the bot resumes genuine upward movement, stop our
+                // fallback input and let Valve ladder AI take over again.
+                if (traversal.InputAssistActive &&
+                    traversal.LastProgressAt > traversal.InputAssistStartedAt &&
+                    position.Z >=
+                        traversal.InputAssistStartZ +
+                        Config.LadderTraversalProgressEpsilon)
+                {
+                    ReleaseClimbInputAssist(
+                        pawn,
+                        state,
+                        traversal);
+
+                    Debug(
+                        $"CLIMB-ASSIST release slot={state.Slot}; id={ladder.Id}; " +
+                        $"progress resumed; pathDeviation={referenceDeviation:0.###}");
+                }
+
                 bool valveGraceEnded =
                     now - traversal.MountObservedAt >=
                     Config.LadderTraversalValveClimbGraceSeconds;
@@ -428,12 +1227,13 @@ public sealed class LadderMapService
                     progressStalled)
                 {
                     traversal.InputAssistActive = true;
+                    traversal.InputAssistStartedAt = now;
+                    traversal.InputAssistStartZ = position.Z;
 
                     _info(
                         $"CLIMB-ASSIST map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                         $"progressZ={progress:0.###}; stalledFor={(now - traversal.LastProgressAt):0.###}s; " +
-                        $"forward={Config.LadderTraversalClimbPressMove:0.###}; " +
-                        $"up={Config.LadderTraversalClimbUpMove:0.###}");
+                        $"pathDeviation={referenceDeviation:0.###}");
                 }
 
                 if (traversal.InputAssistActive)
@@ -441,7 +1241,11 @@ public sealed class LadderMapService
                     ApplyClimbInputAssist(
                         pawn,
                         bot,
-                        state);
+                        state,
+                        ladder,
+                        position,
+                        traversal,
+                        now);
                 }
 
                 return true;
@@ -495,25 +1299,36 @@ public sealed class LadderMapService
                     ladder.BottomMount.Z -
                     Config.LadderTraversalMountedBelowTolerance;
 
-            if (fellBelowMount ||
-                IsNearProblemPoint(
-                    ladder,
-                    position))
+            if (fellBelowMount)
             {
                 MarkProblem(
                     ladder,
                     position,
-                    fellBelowMount
-                        ? "assisted traversal fell below learned mount"
-                        : "assisted traversal reached learned problem point");
+                    "assisted traversal fell below learned mount");
 
                 FailTraversal(
                     state.Slot,
                     tracker,
                     ladder,
-                    fellBelowMount
-                        ? "fell below learned mount"
-                        : "reached learned problem point",
+                    "fell below learned mount",
+                    now);
+
+                return true;
+            }
+
+            float detachedDeviation =
+                GetTargetPathDeviation(
+                    ladder,
+                    position);
+
+            if (detachedDeviation >
+                Config.LadderTraversalReferenceHardDeviation)
+            {
+                FailTraversal(
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    $"detached away from target ladder (deviation={detachedDeviation:0.###})",
                     now);
 
                 return true;
@@ -920,9 +1735,10 @@ public sealed class LadderMapService
         {
             PhysicalLadder? known =
                 FindKnownByAnchor(
-                    session.Anchor);
+                    session.StartMount);
 
             if (known != null &&
+                !known.ManualCertified &&
                 session.ProblemMarked)
             {
                 MarkProblem(
@@ -946,14 +1762,14 @@ public sealed class LadderMapService
 
         PhysicalLadder? ladder =
             FindKnownByAnchor(
-                session.Anchor);
+                session.StartMount);
 
         bool persistent =
             ladder != null;
 
         ladder ??=
             FindCandidateByAnchor(
-                session.Anchor);
+                session.StartMount);
 
         bool createdCandidate =
             ladder == null;
@@ -988,12 +1804,8 @@ public sealed class LadderMapService
 
         bool promote =
             !persistent &&
-            ((success && direction == "Up") ||
-             (ladder!.ProblemCount >=
-                  Config.LadderLearnProblemConfirmCount &&
-              ladder.Observations >=
-                  Config.LadderLearnProblemConfirmCount &&
-              ladder.HasBottomApproach));
+            success &&
+            direction == "Up";
 
         if (promote)
         {
@@ -1042,11 +1854,47 @@ public sealed class LadderMapService
         bool success,
         string direction)
     {
-        int oldCount =
-            ladder.Observations;
+        if (ladder.ManualCertified)
+        {
+            // Human-certified geometry is authoritative. Automatic bot samples
+            // may contribute success statistics but never reshape it.
+            ladder.Observations++;
 
-        int newCount =
-            oldCount + 1;
+            if (success)
+            {
+                ladder.SuccessfulTraversals++;
+                ladder.UpTraversals++;
+            }
+
+            return;
+        }
+
+        ladder.Observations++;
+
+        // Version 5 deliberately separates geometry evidence from failure
+        // evidence. A failed/low-motion bot contact may be useful diagnostic
+        // data, but it must never move Anchor, BottomMount, BottomZ, TopZ or
+        // ApproachDirection. If this is still an unconfirmed candidate, the
+        // first later SUCCESS will replace the provisional geometry below.
+        if (!success)
+        {
+            if (session.ProblemMarked)
+            {
+                MarkProblem(
+                    ladder,
+                    session.ProblemPoint,
+                    "automatic learning failure",
+                    saveImmediately: false);
+            }
+
+            return;
+        }
+
+        int oldSuccessCount =
+            ladder.SuccessfulTraversals;
+
+        int newSuccessCount =
+            oldSuccessCount + 1;
 
         Vector3 observedAnchor =
             new(
@@ -1054,17 +1902,14 @@ public sealed class LadderMapService
                 session.StartMount.Y,
                 0.0f);
 
-        Vector3 oldAnchor =
-            ladder.Anchor.ToVector3();
-
         Vector3 averagedAnchor =
-            oldCount <= 0
+            oldSuccessCount <= 0
                 ? observedAnchor
                 : RunningAverage(
-                    oldAnchor,
+                    ladder.Anchor.ToVector3(),
                     observedAnchor,
-                    oldCount,
-                    newCount);
+                    oldSuccessCount,
+                    newSuccessCount);
 
         averagedAnchor.Z = 0.0f;
 
@@ -1072,13 +1917,8 @@ public sealed class LadderMapService
             LadderPoint.FromVector3(
                 averagedAnchor);
 
-        ladder.Observations =
-            newCount;
-
-        // Only the first real WALK->LADDER mount of a usable approach can
-        // affect physical geometry. ProblemPoint and later falling Z values
-        // are never consulted here.
-        if (oldCount <= 0)
+        // Only successful upward traversals define physical geometry.
+        if (oldSuccessCount <= 0)
         {
             ladder.BottomZ =
                 session.StartMount.Z;
@@ -1101,31 +1941,16 @@ public sealed class LadderMapService
                     session.MaxZ);
         }
 
-        if (success)
-        {
-            ladder.SuccessfulTraversals++;
-            ladder.UpTraversals++;
-        }
+        ladder.SuccessfulTraversals =
+            newSuccessCount;
 
-        bool canTeachBottom =
-            direction == "Up" ||
-            session.ProblemMarked;
+        ladder.UpTraversals++;
 
-        if (canTeachBottom)
-        {
-            UpdateBottomApproach(
-                ladder,
-                session);
-        }
-
-        if (session.ProblemMarked)
-        {
-            MarkProblem(
-                ladder,
-                session.ProblemPoint,
-                "learning session low-motion failure",
-                saveImmediately: false);
-        }
+        // A successful upward traversal is the only automatic source allowed
+        // to teach the lower entry/mount and approach direction in version 5.
+        UpdateBottomApproach(
+            ladder,
+            session);
     }
 
     private static bool HasUsableBottomApproach(
@@ -1362,6 +2187,27 @@ public sealed class LadderMapService
         if (traversal.Stage !=
             TraversalStage.Climb)
         {
+            if (!IsMountCompatibleWithTarget(
+                    ladder,
+                    position,
+                    out float mountDeviation))
+            {
+                _buttonPulses.Release(state.Slot, pawn);
+
+                _info(
+                    $"MOUNT-REJECT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"deviation={mountDeviation:0.###}; position={Format(position)}; source=slow-loop");
+
+                FailTraversal(
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    "mounted different ladder",
+                    now);
+
+                return;
+            }
+
             EnterClimb(
                 pawn,
                 state.Slot,
@@ -1381,21 +2227,19 @@ public sealed class LadderMapService
             traversal.ClimbStartZ;
 
         if (progress >=
-            Config.LadderTraversalClimbAssistProgress)
+                Config.LadderTraversalClimbAssistProgress &&
+            !traversal.SafeProgressReached)
         {
+            traversal.SafeProgressReached = true;
+
             ReleaseClimbInputAssist(
                 pawn,
                 state,
                 traversal);
 
-            CompleteTraversal(
-                state.Slot,
-                tracker,
-                ladder,
-                position,
-                progress,
-                "vertical-progress",
-                now);
+            _info(
+                $"CLIMB-SAFE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                $"progressZ={progress:0.###}; position={Format(position)}; source=slow-loop");
         }
     }
 
@@ -1431,11 +2275,20 @@ public sealed class LadderMapService
         traversal.LastProgressZ = position.Z;
         traversal.LastProgressAt = now;
         traversal.InputAssistActive = false;
+        traversal.InputAssistStartedAt = float.NegativeInfinity;
+        traversal.InputAssistStartZ = position.Z;
+        traversal.SafeProgressReached = false;
         traversal.JumpIssued = true;
+
+        float referenceDeviation =
+            GetTargetPathDeviation(
+                ladder,
+                position);
 
         _info(
             $"MOUNT map={_document.Map}; slot={slot}; id={ladder.Id}; " +
-            $"position={Format(position)}; jumpReleased=true; " +
+            $"position={Format(position)}; deviation={referenceDeviation:0.###}; " +
+            $"manual={ladder.ManualCertified}; jumpReleased=true; " +
             $"remount={traversal.RemountAttempts}");
     }
 
@@ -1604,7 +2457,11 @@ public sealed class LadderMapService
     private void ApplyClimbInputAssist(
         CCSPlayerPawn pawn,
         CCSBot bot,
-        BotRuntimeState state)
+        BotRuntimeState state,
+        PhysicalLadder ladder,
+        Vector3 position,
+        TraversalSession traversal,
+        float now)
     {
         PrepareBotForMovement(
             bot,
@@ -1616,21 +2473,139 @@ public sealed class LadderMapService
             return;
         }
 
+        bool haveReference =
+            TryGetReferenceAtZ(
+                ladder,
+                position.Z,
+                out Vector3 referencePosition,
+                out Vector3 referenceNormal);
+
+        Vector3 ladderNormal = default;
+        bool haveLadderNormal =
+            TryGetMovementLadderNormal(
+                movement,
+                out ladderNormal);
+
+        if (!haveLadderNormal &&
+            referenceNormal.LengthSquared() > 0.0001f)
+        {
+            ladderNormal = referenceNormal;
+            haveLadderNormal = true;
+        }
+
+        Vector3 intoLadder = default;
+        if (haveLadderNormal)
+        {
+            intoLadder =
+                HorizontalNormalised(
+                    new Vector3(
+                        -ladderNormal.X,
+                        -ladderNormal.Y,
+                        0.0f));
+        }
+
+        Vector3 referenceCorrection = default;
+
+        if (haveReference)
+        {
+            referenceCorrection =
+                HorizontalNormalised(
+                    new Vector3(
+                        referencePosition.X - position.X,
+                        referencePosition.Y - position.Y,
+                        0.0f));
+        }
+        else
+        {
+            Vector3 anchor =
+                ladder.Anchor.ToVector3();
+
+            referenceCorrection =
+                HorizontalNormalised(
+                    new Vector3(
+                        anchor.X - position.X,
+                        anchor.Y - position.Y,
+                        0.0f));
+        }
+
+        Vector3 desired =
+            (intoLadder * Config.LadderTraversalClimbIntoWeight) +
+            (referenceCorrection * Config.LadderTraversalReferenceWeight);
+
+        desired =
+            HorizontalNormalised(desired);
+
+        bool haveForward =
+            NativeValueReader.TryCopy(
+                movement.Forward,
+                out Vector3 forwardBasis);
+
+        bool haveLeft =
+            NativeValueReader.TryCopy(
+                movement.Left,
+                out Vector3 leftBasis);
+
+        if (haveForward)
+        {
+            forwardBasis =
+                HorizontalNormalised(forwardBasis);
+
+            if (forwardBasis.LengthSquared() < 0.0001f)
+                haveForward = false;
+        }
+
+        if (haveLeft)
+        {
+            leftBasis =
+                HorizontalNormalised(leftBasis);
+
+            if (leftBasis.LengthSquared() < 0.0001f)
+                haveLeft = false;
+        }
+
+        float forwardCommand =
+            Config.LadderTraversalClimbPressMove;
+
+        float sideCommand = 0.0f;
+
+        if (desired.LengthSquared() > 0.0001f &&
+            haveForward)
+        {
+            forwardCommand =
+                Math.Clamp(
+                    Vector3.Dot(desired, forwardBasis) *
+                    Config.LadderTraversalClimbPressMove,
+                    -Config.LadderTraversalClimbPressMove,
+                    Config.LadderTraversalClimbPressMove);
+        }
+
+        if (desired.LengthSquared() > 0.0001f &&
+            haveLeft &&
+            Config.LadderTraversalClimbSideMove > 0.0f)
+        {
+            sideCommand =
+                Math.Clamp(
+                    Vector3.Dot(desired, leftBasis) *
+                    Config.LadderTraversalClimbSideMove,
+                    -Config.LadderTraversalClimbSideMove,
+                    Config.LadderTraversalClimbSideMove);
+        }
+
         SetMovementField(
             state,
             nameof(movement.CmdForwardMove),
             movement.CmdForwardMove,
-            Config.LadderTraversalClimbPressMove,
+            forwardCommand,
             value => movement.CmdForwardMove = value,
-            "assist stalled ladder climb with forward input");
+            "assist stalled ladder climb towards ladder surface/reference path");
 
         SetMovementField(
             state,
             nameof(movement.CmdLeftMove),
             movement.CmdLeftMove,
-            0.0f,
+            sideCommand,
             value => movement.CmdLeftMove = value,
-            "remove lateral input during stalled ladder climb");
+            "correct stalled ladder climb towards reference path");
 
         SetMovementField(
             state,
@@ -1639,6 +2614,125 @@ public sealed class LadderMapService
             Config.LadderTraversalClimbUpMove,
             value => movement.CmdUpMove = value,
             "assist stalled ladder climb with upward input");
+
+        if (Config.LadderMapDebug &&
+            now - traversal.LastAssistDiagnosticAt >= 0.50f)
+        {
+            traversal.LastAssistDiagnosticAt = now;
+
+            float pathDeviation =
+                haveReference
+                    ? Distance2D(position, referencePosition)
+                    : GetTargetPathDeviation(ladder, position);
+
+            Debug(
+                $"CLIMB-ASSIST-DIR slot={state.Slot}; id={ladder.Id}; " +
+                $"normal={Format(ladderNormal)}; reference={Format(referencePosition)}; " +
+                $"pathDeviation={pathDeviation:0.###}; desired={Format(desired)}; " +
+                $"cmdForward={forwardCommand:0.###}; cmdLeft={sideCommand:0.###}; " +
+                $"cmdUp={Config.LadderTraversalClimbUpMove:0.###}");
+        }
+    }
+
+    private static bool TryGetMovementLadderNormal(
+        CCSPlayer_MovementServices movement,
+        out Vector3 normal)
+    {
+        normal = default;
+
+        try
+        {
+            if (movement.LadderNormal == null ||
+                !NativeValueReader.TryCopy(
+                    movement.LadderNormal,
+                    out normal))
+            {
+                normal = default;
+                return false;
+            }
+
+            return normal.LengthSquared() > 0.0001f;
+        }
+        catch
+        {
+            normal = default;
+            return false;
+        }
+    }
+
+    private bool TryGetReferenceAtZ(
+        PhysicalLadder ladder,
+        float z,
+        out Vector3 position,
+        out Vector3 ladderNormal)
+    {
+        position = default;
+        ladderNormal = default;
+
+        if (ladder.ReferencePath == null ||
+            ladder.ReferencePath.Count == 0)
+        {
+            return false;
+        }
+
+        LadderPathSample? nearest = null;
+        float bestZ = float.PositiveInfinity;
+
+        foreach (LadderPathSample sample in ladder.ReferencePath)
+        {
+            Vector3 samplePosition =
+                sample.Position.ToVector3();
+
+            float delta =
+                MathF.Abs(samplePosition.Z - z);
+
+            if (delta < bestZ)
+            {
+                bestZ = delta;
+                nearest = sample;
+            }
+        }
+
+        if (nearest == null)
+            return false;
+
+        position = nearest.Position.ToVector3();
+        ladderNormal = nearest.LadderNormal.ToVector3();
+        return true;
+    }
+
+    private float GetTargetPathDeviation(
+        PhysicalLadder ladder,
+        Vector3 position)
+    {
+        if (TryGetReferenceAtZ(
+                ladder,
+                position.Z,
+                out Vector3 referencePosition,
+                out _))
+        {
+            return Distance2D(
+                position,
+                referencePosition);
+        }
+
+        return Distance2D(
+            position,
+            ladder.Anchor.ToVector3());
+    }
+
+    private bool IsMountCompatibleWithTarget(
+        PhysicalLadder ladder,
+        Vector3 position,
+        out float deviation)
+    {
+        deviation =
+            GetTargetPathDeviation(
+                ladder,
+                position);
+
+        return deviation <=
+               Config.LadderTraversalMountValidationRadius;
     }
 
     private void ReleaseClimbInputAssist(
@@ -1711,13 +2805,6 @@ public sealed class LadderMapService
         Vector3 position,
         float progress)
     {
-        if (IsNearProblemPoint(
-                ladder,
-                position))
-        {
-            return false;
-        }
-
         // A real upper exit should preserve most of the achieved height. A
         // falling bot can briefly leave MOVETYPE_LADDER too, but its current Z
         // quickly drops far below the maximum observed climb height.
@@ -1765,7 +2852,8 @@ public sealed class LadderMapService
         // upward progress and movement away from the shaft before calling a
         // detach a successful exit.
         return nearKnownTop ||
-               (enoughProgress &&
+               (traversal.SafeProgressReached &&
+                enoughProgress &&
                 movedAwayFromShaft);
     }
 
@@ -1790,25 +2878,7 @@ public sealed class LadderMapService
             return false;
         }
 
-        return !IsNearProblemPoint(
-            ladder,
-            position);
-    }
-
-    private bool IsNearProblemPoint(
-        PhysicalLadder ladder,
-        Vector3 position)
-    {
-        if (!ladder.Problematic ||
-            ladder.ProblemPoint == null)
-        {
-            return false;
-        }
-
-        return Distance3D(
-                   position,
-                   ladder.ProblemPoint.ToVector3()) <=
-               Config.LadderTraversalProblemAvoidRadius;
+        return true;
     }
 
     private void PrepareBotForMovement(
@@ -2050,6 +3120,67 @@ public sealed class LadderMapService
             position);
     }
 
+    private PhysicalLadder? FindKnownForManualMount(
+        Vector3 mountPosition)
+    {
+        PhysicalLadder? selected = null;
+        float best = float.PositiveInfinity;
+
+        foreach (PhysicalLadder ladder in _document.Ladders)
+        {
+            Vector3 comparison =
+                ladder.HasBottomApproach
+                    ? ladder.BottomMount.ToVector3()
+                    : ladder.Anchor.ToVector3();
+
+            float distance =
+                Distance2D(
+                    mountPosition,
+                    comparison);
+
+            if (distance <= Config.LadderTraversalMountValidationRadius &&
+                distance < best)
+            {
+                selected = ladder;
+                best = distance;
+            }
+        }
+
+        return selected;
+    }
+
+    private PhysicalLadder? FindKnownAtPosition(
+        Vector3 position,
+        out float selectedDeviation)
+    {
+        PhysicalLadder? selected = null;
+        selectedDeviation = float.PositiveInfinity;
+
+        foreach (PhysicalLadder ladder in _document.Ladders)
+        {
+            if (!ladder.HasBottomApproach)
+                continue;
+
+            if (!IsUsableAlreadyMountedPosition(ladder, position))
+                continue;
+
+            float deviation =
+                GetTargetPathDeviation(
+                    ladder,
+                    position);
+
+            if (deviation <=
+                    Config.LadderTraversalMountValidationRadius &&
+                deviation < selectedDeviation)
+            {
+                selected = ladder;
+                selectedDeviation = deviation;
+            }
+        }
+
+        return selected;
+    }
+
     private PhysicalLadder? FindCandidateByAnchor(
         Vector3 position)
     {
@@ -2075,6 +3206,28 @@ public sealed class LadderMapService
                 Distance2D(
                     position,
                     ladder.Anchor.ToVector3());
+
+            if (ladder.ManualCertified)
+            {
+                distance = MathF.Min(
+                    distance,
+                    Distance2D(
+                        position,
+                        ladder.BottomMount.ToVector3()));
+
+                if (TryGetReferenceAtZ(
+                        ladder,
+                        position.Z,
+                        out Vector3 referencePosition,
+                        out _))
+                {
+                    distance = MathF.Min(
+                        distance,
+                        Distance2D(
+                            position,
+                            referencePosition));
+                }
+            }
 
             if (distance <=
                     Config.LadderLearnHorizontalClusterRadius &&
@@ -2251,13 +3404,6 @@ public sealed class LadderMapService
             (y * y));
     }
 
-    private static float Distance3D(
-        Vector3 first,
-        Vector3 second)
-    {
-        return (first - second).Length();
-    }
-
     private static float Cross2D(
         Vector3 first,
         Vector3 second)
@@ -2333,6 +3479,31 @@ public sealed class LadderMapService
         public Vector3 ProblemPoint { get; set; }
     }
 
+    private sealed class ManualHumanTracker
+    {
+        public bool HasSample { get; set; }
+        public bool PreviousOnLadder { get; set; }
+        public Vector3 PreviousPosition { get; set; }
+        public Vector3 PreviousVelocity { get; set; }
+        public float PreviousSampleAt { get; set; } = float.NegativeInfinity;
+        public float LastObservedAt { get; set; } = float.NegativeInfinity;
+        public ManualTeachingSession? Session { get; set; }
+    }
+
+    private sealed class ManualTeachingSession
+    {
+        public float StartedAt { get; set; }
+        public Vector3 StartEntry { get; set; }
+        public Vector3 StartMount { get; set; }
+        public Vector3 ApproachDirection { get; set; }
+        public float MaxZ { get; set; }
+        public Vector3 LastLadderPosition { get; set; }
+        public float DetachedAt { get; set; }
+        public Vector3 ExitCandidate { get; set; }
+        public float LastPathSampleAt { get; set; } = float.NegativeInfinity;
+        public List<LadderPathSample> Path { get; set; } = new();
+    }
+
     private sealed class TraversalSession
     {
         public int LadderId { get; set; }
@@ -2358,6 +3529,10 @@ public sealed class LadderMapService
         public float LastProgressZ { get; set; }
         public float LastProgressAt { get; set; } =
             float.NegativeInfinity;
+        public bool SafeProgressReached { get; set; }
         public bool InputAssistActive { get; set; }
+        public float InputAssistStartedAt { get; set; } = float.NegativeInfinity;
+        public float InputAssistStartZ { get; set; }
+        public float LastAssistDiagnosticAt { get; set; } = float.NegativeInfinity;
     }
 }

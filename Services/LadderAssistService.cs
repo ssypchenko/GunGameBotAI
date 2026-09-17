@@ -35,9 +35,8 @@ public sealed class LadderAssistService
             return;
         }
 
-        bool onOrNearLadder =
-            pawn.MoveType == MoveType_t.MOVETYPE_LADDER ||
-            HasLadderNormal(pawn);
+        bool onLadder =
+            pawn.MoveType == MoveType_t.MOVETYPE_LADDER;
 
         float progress2D =
             NativeValueReader.Distance2D(position, state.LadderAssistStartPosition);
@@ -48,12 +47,15 @@ public sealed class LadderAssistService
         float verticalProgress =
             MathF.Abs(position.Z - state.LadderAssistStartPosition.Z);
 
-        // Vertical movement is meaningful progress on a ladder, even when XY barely changes.
+        // Vertical movement is meaningful progress only while the pawn is
+        // actually on MOVETYPE_LADDER. A stale LadderNormal can persist after
+        // leaving a ladder; counting a reactive jump's vertical arc as progress
+        // would reset the attempt counter and create an endless jump loop.
         float ladderProgressThreshold = MathF.Min(
             Config.StuckMinProgress,
             MathF.Max(16.0f, Config.LadderAssistVerticalThreshold));
 
-        bool progressed = onOrNearLadder
+        bool progressed = onLadder
             ? progress3D >= ladderProgressThreshold ||
               verticalProgress >= ladderProgressThreshold
             : progress2D >= Config.StuckMinProgress;
@@ -96,7 +98,22 @@ public sealed class LadderAssistService
 
         bool onLadder = pawn.MoveType == MoveType_t.MOVETYPE_LADDER;
         bool hasLadderNormal = TryGetLadderNormal(pawn, out _);
-        bool nearLadder = onLadder || hasLadderNormal;
+        bool likelyLadderEntry =
+            !onLadder &&
+            bot.IsStuck &&
+            IsLikelyLadderEntry(bot, position, enemy);
+
+        // m_vecLadderNormal can remain non-zero briefly after the pawn has left
+        // MOVETYPE_LADDER. Never use that stale value by itself as permission to
+        // start an off-ladder recovery, otherwise the service can bunny-hop a
+        // perfectly mobile bot forever. Off-ladder recovery requires both the
+        // engine's stuck flag and a plausible ladder-entry goal.
+        if (!onLadder && !likelyLadderEntry)
+            return false;
+
+        bool nearLadder =
+            onLadder ||
+            (hasLadderNormal && likelyLadderEntry);
 
         float speed2D = MathF.Sqrt(
             (velocity.X * velocity.X) +
@@ -104,23 +121,14 @@ public sealed class LadderAssistService
 
         float speed3D = velocity.Length();
 
-        // A healthy vertical climb can have almost zero XY speed.
-        bool stalled = bot.IsStuck ||
-                       (onLadder
-                           ? speed3D <= 10.0f
-                           : speed2D <= 10.0f);
+        // A healthy vertical climb can have almost zero XY speed. While already
+        // on the ladder, intervene only when the bot is actually stalled.
+        bool stalled =
+            bot.IsStuck ||
+            (onLadder && speed3D <= 10.0f);
 
-        if (!stalled &&
-            (!nearLadder || MathF.Abs(velocity.Z) > 10.0f))
-        {
+        if (!stalled)
             return false;
-        }
-
-        if (!nearLadder &&
-            (!bot.IsStuck || !IsLikelyLadderEntry(bot, position, enemy)))
-        {
-            return false;
-        }
 
         if (now - state.LastLadderAssistAt < Config.LadderAssistCooldownSeconds)
             return false;
@@ -157,8 +165,11 @@ public sealed class LadderAssistService
             onLadder,
             isFastPass: false);
 
-        if (!onLadder)
+        if (!onLadder && state.LadderAssistAttempts == 0)
         {
+            // One conservative jump per stuck episode is enough for the generic
+            // fallback. The learned LadderMapService owns intentional repeated
+            // jump/mount logic for known physical ladders.
             int jumpPulseTicks = Math.Max(
                 3,
                 Config.FastActuatorEveryTicks + 1);

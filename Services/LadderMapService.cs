@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 5 combines three responsibilities:
+/// Version 5.1 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -31,6 +31,15 @@ public sealed class LadderMapService
     private const float MinimumApproachSpeed2D = 20.0f;
     private const float PreviousSampleMaxAge = 0.35f;
     private const float BottomSampleTolerance = 14.0f;
+
+    // Manual teaching samples the human every server frame in normal operation.
+    // Keep a short off-ladder history so BottomEntry is a useful point before
+    // the mount rather than merely the last frame 0.1-0.5 units from the ladder.
+    private const float ManualApproachHistorySeconds = 0.75f;
+    private const float ManualApproachEntryTargetDistance = 18.0f;
+    private const float ManualApproachEntryMaxDistance = 48.0f;
+    private const float ManualApproachMaxVerticalDelta = 16.0f;
+    private const float ManualPrimaryReplaceEpsilon = 0.5f;
 
     private readonly LadderMapStore _store;
     private readonly ButtonPulseService _buttonPulses;
@@ -305,6 +314,19 @@ public sealed class LadderMapService
             _manualHuman.HasSample &&
             _manualHuman.PreviousOnLadder;
 
+        // Preserve a short approach history only while we are genuinely on the
+        // ground before a new manual traversal. It lets us recover a stable
+        // BottomEntry/ApproachDirection even when the final WALK sample and the
+        // first LADDER sample are almost identical.
+        if (!onLadder &&
+            _manualHuman.Session == null)
+        {
+            RecordManualApproachSample(
+                position,
+                velocity,
+                now);
+        }
+
         ManualTeachingSession? session =
             _manualHuman.Session;
 
@@ -493,21 +515,44 @@ public sealed class LadderMapService
         float now)
     {
         Vector3 entry = mountPosition;
-        Vector3 approach = HorizontalNormalised(mountVelocity);
+        Vector3 approach = default;
 
-        if (_manualHuman.HasSample &&
+        if (TrySelectManualApproachEntry(
+                mountPosition,
+                now,
+                out ManualApproachSample? approachSample) &&
+            approachSample != null)
+        {
+            entry = approachSample.Position;
+            approach =
+                HorizontalNormalised(
+                    mountPosition - entry);
+
+            if (approach.LengthSquared() < 0.25f)
+                approach = HorizontalNormalised(approachSample.Velocity);
+        }
+
+        // Fallback for very slow/short approaches where history did not contain
+        // a point far enough from the mount.
+        if (approach.LengthSquared() < 0.25f &&
+            _manualHuman.HasSample &&
             !_manualHuman.PreviousOnLadder &&
             now - _manualHuman.PreviousSampleAt <= 0.30f)
         {
             entry = _manualHuman.PreviousPosition;
-
-            Vector3 fromPrevious =
+            approach =
                 HorizontalNormalised(
-                    mountPosition - _manualHuman.PreviousPosition);
+                    mountPosition -
+                    _manualHuman.PreviousPosition);
 
-            if (fromPrevious.LengthSquared() > 0.0001f)
-                approach = fromPrevious;
+            if (approach.LengthSquared() < 0.25f)
+                approach =
+                    HorizontalNormalised(
+                        _manualHuman.PreviousVelocity);
         }
+
+        if (approach.LengthSquared() < 0.25f)
+            approach = HorizontalNormalised(mountVelocity);
 
         ManualTeachingSession session = new()
         {
@@ -522,6 +567,10 @@ public sealed class LadderMapService
 
         _manualHuman.Session = session;
 
+        // The approach history belongs to the just-started traversal. Do not let
+        // the upper exit of this ladder become an entry sample for the same one.
+        _manualHuman.ApproachHistory.Clear();
+
         AddManualPathSample(
             pawn,
             session,
@@ -533,7 +582,119 @@ public sealed class LadderMapService
         _info(
             $"MANUAL session-start map={_document.Map}; slot={slot}; " +
             $"entry={Format(entry)}; mount={Format(mountPosition)}; " +
+            $"entryToMount={Distance2D(entry, mountPosition):0.###}; " +
             $"approach={Format(approach)}");
+    }
+
+    private void RecordManualApproachSample(
+        Vector3 position,
+        Vector3 velocity,
+        float now)
+    {
+        _manualHuman.ApproachHistory.Add(
+            new ManualApproachSample
+            {
+                Position = position,
+                Velocity = velocity,
+                At = now
+            });
+
+        float oldestAllowed =
+            now -
+            ManualApproachHistorySeconds;
+
+        _manualHuman.ApproachHistory.RemoveAll(
+            sample =>
+                sample.At < oldestAllowed);
+
+        // This is only a sub-second history; cap it defensively in case a server
+        // reports unusual frame timing.
+        if (_manualHuman.ApproachHistory.Count > 128)
+        {
+            _manualHuman.ApproachHistory.RemoveRange(
+                0,
+                _manualHuman.ApproachHistory.Count - 128);
+        }
+    }
+
+    private bool TrySelectManualApproachEntry(
+        Vector3 mountPosition,
+        float now,
+        out ManualApproachSample? selected)
+    {
+        selected = null;
+        float bestScore = float.PositiveInfinity;
+
+        foreach (ManualApproachSample sample
+                 in _manualHuman.ApproachHistory)
+        {
+            float age =
+                now -
+                sample.At;
+
+            if (age < 0.0f ||
+                age > ManualApproachHistorySeconds)
+            {
+                continue;
+            }
+
+            if (MathF.Abs(
+                    sample.Position.Z -
+                    mountPosition.Z) >
+                ManualApproachMaxVerticalDelta)
+            {
+                continue;
+            }
+
+            float distance =
+                Distance2D(
+                    sample.Position,
+                    mountPosition);
+
+            if (distance < 0.25f ||
+                distance >
+                    ManualApproachEntryMaxDistance)
+            {
+                continue;
+            }
+
+            // Prefer a clearly separated ground entry (about 18 units before
+            // mount), but accept a shorter natural approach if that is all the
+            // map geometry provides.
+            Vector3 towardMount =
+                HorizontalNormalised(
+                    mountPosition -
+                    sample.Position);
+
+            Vector3 sampleDirection =
+                HorizontalNormalised(
+                    sample.Velocity);
+
+            if (sampleDirection.LengthSquared() >= 0.25f &&
+                Vector3.Dot(
+                    sampleDirection,
+                    towardMount) < 0.25f)
+            {
+                continue;
+            }
+
+            float score =
+                MathF.Abs(
+                    distance -
+                    ManualApproachEntryTargetDistance) +
+                (age * 3.0f);
+
+            if (distance < 2.0f)
+                score += 12.0f;
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                selected = sample;
+            }
+        }
+
+        return selected != null;
     }
 
     private void AddManualPathSample(
@@ -651,14 +812,21 @@ public sealed class LadderMapService
                 session.StartEntry,
                 session.StartMount);
 
-        if (upward < Config.LadderManualMinVerticalProgress ||
-            session.Path.Count < 2 ||
-            entryToMount < 1.0f ||
-            HorizontalNormalised(session.ApproachDirection).LengthSquared() < 0.25f)
+        // Manual certification is intentionally different from bot learning.
+        // A human can enter a ladder with Entry≈Mount and still demonstrate a
+        // perfectly valid physical ladder. The trusted evidence is a substantial
+        // upward LADDER traversal followed by a normal upper exit.
+        bool normalExit =
+            reason == "normal ladder exit";
+
+        if (!normalExit ||
+            upward < Config.LadderManualMinVerticalProgress ||
+            session.Path.Count < 2)
         {
             _info(
                 $"MANUAL ignored map={_document.Map}; slot={slot}; reason={reason}; " +
-                $"upward={upward:0.###}; samples={session.Path.Count}; entryToMount={entryToMount:0.###}; " +
+                $"upward={upward:0.###}; samples={session.Path.Count}; " +
+                $"entryToMount={entryToMount:0.###}; " +
                 $"entry={Format(session.StartEntry)}; mount={Format(session.StartMount)}");
 
             return;
@@ -668,14 +836,16 @@ public sealed class LadderMapService
             slot,
             session,
             reason,
-            upward);
+            upward,
+            entryToMount);
     }
 
     private void ApplyManualTraversal(
         int slot,
         ManualTeachingSession session,
         string reason,
-        float upward)
+        float upward,
+        float entryToMount)
     {
         Vector3 observedAnchor =
             AveragePathAnchor(session.Path);
@@ -701,91 +871,140 @@ public sealed class LadderMapService
             _document.Ladders.Add(ladder);
         }
 
-        int oldManualCount = ladder.ManualObservations;
-        int newManualCount = oldManualCount + 1;
+        int oldManualCount =
+            ladder.ManualObservations;
+
+        int newManualCount =
+            oldManualCount + 1;
 
         Vector3 approach =
-            HorizontalNormalised(session.ApproachDirection);
+            HorizontalNormalised(
+                session.ApproachDirection);
 
-        if (oldManualCount <= 0)
+        bool usableApproach =
+            approach.LengthSquared() >=
+            0.25f;
+
+        bool hadTrustedPrimary =
+            ladder.ManualCertified &&
+            oldManualCount > 0 &&
+            ladder.ReferencePath != null &&
+            ladder.ReferencePath.Count > 0;
+
+        float oldPrimaryMountZ =
+            hadTrustedPrimary
+                ? ladder.BottomMount.Z
+                : float.PositiveInfinity;
+
+        // Never create synthetic geometry by averaging a bottom mount with a
+        // higher jump/partial entry. The lowest successful manual mount wins and
+        // its complete path remains the primary human reference.
+        bool replacePrimary =
+            !hadTrustedPrimary ||
+            session.StartMount.Z <
+                oldPrimaryMountZ -
+                ManualPrimaryReplaceEpsilon;
+
+        string primaryAction;
+
+        if (replacePrimary)
         {
-            ladder.Anchor = LadderPoint.FromVector3(observedAnchor);
-            ladder.BottomEntry = LadderPoint.FromVector3(session.StartEntry);
-            ladder.BottomMount = LadderPoint.FromVector3(session.StartMount);
-            ladder.ApproachDirection = LadderPoint.FromVector3(approach);
-            ladder.ManualExit = LadderPoint.FromVector3(session.ExitCandidate);
-        }
-        else
-        {
-            ladder.Anchor = LadderPoint.FromVector3(
-                RunningAverage(
-                    ladder.Anchor.ToVector3(),
-                    observedAnchor,
-                    oldManualCount,
-                    newManualCount));
+            ladder.Anchor =
+                LadderPoint.FromVector3(
+                    observedAnchor);
 
-            ladder.BottomEntry = LadderPoint.FromVector3(
-                RunningAverage(
-                    ladder.BottomEntry.ToVector3(),
-                    session.StartEntry,
-                    oldManualCount,
-                    newManualCount));
+            ladder.BottomEntry =
+                LadderPoint.FromVector3(
+                    session.StartEntry);
 
-            ladder.BottomMount = LadderPoint.FromVector3(
-                RunningAverage(
-                    ladder.BottomMount.ToVector3(),
-                    session.StartMount,
-                    oldManualCount,
-                    newManualCount));
+            ladder.BottomMount =
+                LadderPoint.FromVector3(
+                    session.StartMount);
 
-            Vector3 averagedApproach =
-                RunningAverage(
-                    ladder.ApproachDirection.ToVector3(),
-                    approach,
-                    oldManualCount,
-                    newManualCount);
-
-            ladder.ApproachDirection = LadderPoint.FromVector3(
-                HorizontalNormalised(averagedApproach));
-
-            if (ladder.ManualExit != null)
+            if (usableApproach)
             {
-                ladder.ManualExit = LadderPoint.FromVector3(
-                    RunningAverage(
-                        ladder.ManualExit.ToVector3(),
-                        session.ExitCandidate,
-                        oldManualCount,
-                        newManualCount));
+                ladder.ApproachDirection =
+                    LadderPoint.FromVector3(
+                        approach);
+
+                ladder.HasBottomApproach = true;
+                ladder.BottomApproachObservations = 1;
             }
             else
             {
-                ladder.ManualExit =
-                    LadderPoint.FromVector3(session.ExitCandidate);
+                ladder.HasBottomApproach = false;
+                ladder.BottomApproachObservations = 0;
             }
+
+            ladder.ManualExit =
+                LadderPoint.FromVector3(
+                    session.ExitCandidate);
+
+            ladder.ReferencePath =
+                DownsamplePath(
+                    session.Path,
+                    Config.LadderManualMaxReferenceSamples);
+
+            ladder.BottomZ =
+                session.StartMount.Z;
+
+            ladder.TopZ =
+                session.MaxZ;
+
+            primaryAction =
+                hadTrustedPrimary
+                    ? "replaced-with-lower"
+                    : "created";
+        }
+        else
+        {
+            // A repeat from the same height or a higher/jump entry is still a
+            // valid successful observation, but it must never reshape the
+            // trusted bottom mount or replace the primary reference path.
+            ladder.TopZ =
+                MathF.Max(
+                    ladder.TopZ,
+                    session.MaxZ);
+
+            if (!ladder.HasBottomApproach &&
+                usableApproach &&
+                MathF.Abs(
+                    session.StartMount.Z -
+                    ladder.BottomMount.Z) <=
+                    BottomSampleTolerance)
+            {
+                ladder.BottomEntry =
+                    LadderPoint.FromVector3(
+                        session.StartEntry);
+
+                ladder.ApproachDirection =
+                    LadderPoint.FromVector3(
+                        approach);
+
+                ladder.HasBottomApproach = true;
+                ladder.BottomApproachObservations = 1;
+            }
+
+            primaryAction =
+                session.StartMount.Z >
+                    oldPrimaryMountZ +
+                    BottomSampleTolerance
+                    ? "kept-lower-primary-higher-entry-observed"
+                    : "kept-existing-primary";
         }
 
-        Vector3 anchor = ladder.Anchor.ToVector3();
+        Vector3 anchor =
+            ladder.Anchor.ToVector3();
+
         anchor.Z = 0.0f;
-        ladder.Anchor = LadderPoint.FromVector3(anchor);
+
+        ladder.Anchor =
+            LadderPoint.FromVector3(
+                anchor);
 
         ladder.ManualCertified = true;
-        ladder.ManualObservations = newManualCount;
-        ladder.HasBottomApproach = true;
-        ladder.BottomApproachObservations =
-            Math.Max(ladder.BottomApproachObservations, newManualCount);
-
-        ladder.BottomZ = oldManualCount <= 0
-            ? session.StartMount.Z
-            : MathF.Min(ladder.BottomZ, session.StartMount.Z);
-
-        ladder.TopZ = oldManualCount <= 0
-            ? session.MaxZ
-            : MathF.Max(ladder.TopZ, session.MaxZ);
-
-        ladder.ReferencePath =
-            DownsamplePath(
-                session.Path,
-                Config.LadderManualMaxReferenceSamples);
+        ladder.ManualObservations =
+            newManualCount;
 
         ladder.Observations++;
         ladder.SuccessfulTraversals++;
@@ -801,7 +1020,10 @@ public sealed class LadderMapService
         _info(
             $"MANUAL certified map={_document.Map}; slot={slot}; id={ladder.Id}; " +
             $"reason={reason}; manualObs={ladder.ManualObservations}; " +
-            $"upward={upward:0.###}; pathSamples={ladder.ReferencePath.Count}; " +
+            $"primary={primaryAction}; upward={upward:0.###}; " +
+            $"entryToMount={entryToMount:0.###}; " +
+            $"pathSamples={ladder.ReferencePath?.Count ?? 0}; " +
+            $"approachKnown={ladder.HasBottomApproach}; " +
             $"entry={Format(ladder.BottomEntry.ToVector3())}; " +
             $"mount={Format(ladder.BottomMount.ToVector3())}; " +
             $"exit={Format(ladder.ManualExit?.ToVector3() ?? session.ExitCandidate)}");
@@ -817,6 +1039,7 @@ public sealed class LadderMapService
         _manualHuman.PreviousVelocity = default;
         _manualHuman.PreviousSampleAt = float.NegativeInfinity;
         _manualHuman.LastObservedAt = float.NegativeInfinity;
+        _manualHuman.ApproachHistory.Clear();
     }
 
     private void ResetManualTeachingSession(string reason)
@@ -3487,7 +3710,15 @@ public sealed class LadderMapService
         public Vector3 PreviousVelocity { get; set; }
         public float PreviousSampleAt { get; set; } = float.NegativeInfinity;
         public float LastObservedAt { get; set; } = float.NegativeInfinity;
+        public List<ManualApproachSample> ApproachHistory { get; } = new();
         public ManualTeachingSession? Session { get; set; }
+    }
+
+    private sealed class ManualApproachSample
+    {
+        public Vector3 Position { get; set; }
+        public Vector3 Velocity { get; set; }
+        public float At { get; set; }
     }
 
     private sealed class ManualTeachingSession

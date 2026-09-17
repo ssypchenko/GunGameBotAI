@@ -40,10 +40,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Persistent physical ladder learning / traversal
     // ---------------------------------------------------------------------
     //
-    // Version 5 keeps automatic bot learning, but adds a high-confidence manual
-    // teaching mode. When there are no bots and exactly one live human player,
-    // that player's successful ladder traversals are recorded as certified
-    // geometry/reference paths. Bot learning never reshapes manual geometry.
+    // Version 5.1 keeps automatic bot learning, but manual teaching is now
+    // explicitly optimised for one normal human climb from the physical bottom
+    // to the top. The observer samples every server frame in normal operation,
+    // accepts Entry≈Mount, and keeps the lowest successful manual mount/path as
+    // the primary trusted geometry. Bot learning never reshapes manual geometry.
     public bool LadderLearningEnabled { get; set; } = true;
     public bool LadderEntryJumpEnabled { get; set; } = true;
     public bool LadderMapDebug { get; set; } = true;
@@ -54,7 +55,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool LadderManualTeachingEnabled { get; set; } = true;
     public bool LadderManualTeachingRequireNoBots { get; set; } = true;
     public int LadderManualTeacherSlot { get; set; } = -1; // -1 = auto-select sole live human.
-    public float LadderManualSampleIntervalSeconds { get; set; } = 0.05f;
+    public float LadderManualSampleIntervalSeconds { get; set; } = 0.01f;
     public float LadderManualMinVerticalProgress { get; set; } = 24.0f;
     public float LadderManualPathSampleVerticalStep { get; set; } = 4.0f;
     public float LadderManualPathSampleHorizontalStep { get; set; } = 4.0f;
@@ -163,7 +164,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderAssistSideMove = Clamp(LadderAssistSideMove, 0.0f, 250.0f, 80.0f, nameof(LadderAssistSideMove), warn);
 
         LadderManualTeacherSlot = Clamp(LadderManualTeacherSlot, -1, 63, -1, nameof(LadderManualTeacherSlot), warn);
-        LadderManualSampleIntervalSeconds = Clamp(LadderManualSampleIntervalSeconds, 0.02f, 0.50f, 0.05f, nameof(LadderManualSampleIntervalSeconds), warn);
+
+        // v5 sampled manual teaching every 0.05 s. At a normal ladder climb speed
+        // around 180-210 units/s that can miss the first 8-10 vertical units and
+        // store BottomMount too high. Migrate the exact old default to near-frame
+        // sampling; the NextFrame loop still bounds the real call frequency.
+        if (MathF.Abs(LadderManualSampleIntervalSeconds - 0.05f) < 0.001f)
+            LadderManualSampleIntervalSeconds = 0.01f;
+
+        LadderManualSampleIntervalSeconds = Clamp(LadderManualSampleIntervalSeconds, 0.005f, 0.50f, 0.01f, nameof(LadderManualSampleIntervalSeconds), warn);
         LadderManualMinVerticalProgress = Clamp(LadderManualMinVerticalProgress, 8.0f, 256.0f, 24.0f, nameof(LadderManualMinVerticalProgress), warn);
         LadderManualPathSampleVerticalStep = Clamp(LadderManualPathSampleVerticalStep, 1.0f, 32.0f, 4.0f, nameof(LadderManualPathSampleVerticalStep), warn);
         LadderManualPathSampleHorizontalStep = Clamp(LadderManualPathSampleHorizontalStep, 1.0f, 32.0f, 4.0f, nameof(LadderManualPathSampleHorizontalStep), warn);

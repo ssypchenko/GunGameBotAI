@@ -138,9 +138,6 @@ public sealed class KnifeRushService
         EnemySnapshot? enemy,
         float now)
     {
-        if (state.Mode == BotBehaviorMode.StuckRecovery)
-            return;
-
         bool mandatoryKnife = state.Mode == BotBehaviorMode.KnifeLevel;
         if (!mandatoryKnife && !IsActive(state))
             return;

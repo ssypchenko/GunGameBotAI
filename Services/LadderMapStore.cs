@@ -262,10 +262,17 @@ public sealed class LadderMapStore
             ladder.ReferencePath ??=
                 new List<LadderPathSample>();
 
-            if (ladder.ManualCertified &&
-                ladder.ManualObservations <= 0)
+            if (ladder.ManualCertified)
             {
-                ladder.ManualObservations = 1;
+                if (ladder.ManualObservations <= 0)
+                    ladder.ManualObservations = 1;
+
+                // Old bot-recovery experiments could mark a trusted human
+                // ladder as problematic after a fall into broken geometry.
+                // Those flags are diagnostic noise, not geometry evidence.
+                ladder.Problematic = false;
+                ladder.ProblemCount = 0;
+                ladder.ProblemPoint = null;
             }
 
             if (ladder.TopZ < ladder.BottomZ)

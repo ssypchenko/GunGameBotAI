@@ -1,5 +1,3 @@
-using System.Numerics;
-
 namespace GunGameBotAI.Models;
 
 /// <summary>
@@ -58,51 +56,6 @@ public sealed class BotRuntimeState
     public float KnifeRushNextZigZagAt { get; set; }
 
     // ---------------------------------------------------------------------
-    // Ladder Assist
-    // ---------------------------------------------------------------------
-
-    public int LadderAssistAttempts { get; set; }
-    public float LastLadderAssistAt { get; set; } = float.NegativeInfinity;
-
-    /// <summary>
-    /// Position from which progress for the current ladder-assist attempt is
-    /// measured.
-    /// </summary>
-    public Vector3 LadderAssistStartPosition { get; set; }
-
-    public bool HasLadderAssistSample { get; set; }
-
-    /// <summary>
-    /// Explicit short-lived fast-actuator state.
-    ///
-    /// Current LadderAssistService can still use HasLadderAssistSample and
-    /// LastLadderAssistAt for backwards compatibility, but these fields allow
-    /// ladder decision state and progress sampling to remain separate.
-    /// </summary>
-    public bool LadderAssistActive { get; set; }
-    public float LadderAssistUntil { get; set; }
-    public Vector3 LadderAssistGoal { get; set; }
-
-    public float LadderAssistDesiredForward { get; set; }
-    public float LadderAssistDesiredSide { get; set; }
-    public float LadderAssistDesiredUp { get; set; }
-
-    public bool LadderAssistWasOnLadder { get; set; }
-
-    // ---------------------------------------------------------------------
-    // Stuck recovery
-    // ---------------------------------------------------------------------
-
-    public int StuckRecoveryAttempt { get; set; }
-
-    public float StuckStartedAt { get; set; }
-    public Vector3 StuckStartPosition { get; set; }
-    public float StuckLastSampleAt { get; set; }
-    public float StuckMaxSpeed { get; set; }
-    public Vector3 StuckLastPosition { get; set; }
-    public bool HasStuckSample { get; set; }
-
-    // ---------------------------------------------------------------------
     // Idle / combat movement
     // ---------------------------------------------------------------------
 
@@ -138,12 +91,6 @@ public sealed class BotRuntimeState
 
         ClearEnemyEncounter();
         ResetKnifeRushRuntime(clearCooldown: true);
-
-        ResetLadderAssist();
-
-        StuckRecoveryAttempt = 0;
-        ResetMovementSamples();
-
         ResetIdleAndCombatState();
         ResetWeaponState();
 
@@ -196,59 +143,11 @@ public sealed class BotRuntimeState
     /// <summary>
     /// Ends the current encounter and clears Knife Rush execution state while
     /// intentionally preserving KnifeRushCooldownUntil.
-    ///
-    /// Existing callers use this when an encounter ends or a rush is aborted.
     /// </summary>
     public void ClearKnifeRushEncounter()
     {
         ClearEnemyEncounter();
         ResetKnifeRushRuntime(clearCooldown: false);
-    }
-
-    public void ResetMovementSamples()
-    {
-        StuckStartedAt = 0.0f;
-        StuckStartPosition = default;
-        StuckLastSampleAt = 0.0f;
-        StuckMaxSpeed = 0.0f;
-        StuckLastPosition = default;
-        HasStuckSample = false;
-    }
-
-    public void ResetLadderAssist()
-    {
-        LadderAssistAttempts = 0;
-        LastLadderAssistAt = float.NegativeInfinity;
-        LadderAssistStartPosition = default;
-        HasLadderAssistSample = false;
-
-        LadderAssistActive = false;
-        LadderAssistUntil = float.NegativeInfinity;
-        LadderAssistGoal = default;
-
-        LadderAssistDesiredForward = 0.0f;
-        LadderAssistDesiredSide = 0.0f;
-        LadderAssistDesiredUp = 0.0f;
-
-        LadderAssistWasOnLadder = false;
-    }
-
-    /// <summary>
-    /// Stops only the fast ladder actuator while preserving attempt/progress
-    /// history. Useful when the bounded actuator window expires but the slow
-    /// decision loop still needs to judge whether the attempt made progress.
-    /// </summary>
-    public void StopLadderActuator()
-    {
-        LadderAssistActive = false;
-        LadderAssistUntil = float.NegativeInfinity;
-        LadderAssistGoal = default;
-
-        LadderAssistDesiredForward = 0.0f;
-        LadderAssistDesiredSide = 0.0f;
-        LadderAssistDesiredUp = 0.0f;
-
-        LadderAssistWasOnLadder = false;
     }
 
     public void ResetIdleAndCombatState()

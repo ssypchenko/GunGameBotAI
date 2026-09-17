@@ -21,10 +21,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly CorrectionLogger _corrections;
     private readonly BotRegistry _registry = new();
     private readonly ButtonPulseService _buttonPulses;
-    private readonly LadderAssistService _ladderAssist;
     private readonly BotSensorService _sensor = new();
     private readonly AggressionService _aggression;
-    private readonly StuckRecoveryService _stuckRecovery;
     private readonly IdleRecoveryService _idleRecovery;
     private readonly CombatMovementService _combatMovement;
     private readonly GrenadeLevelService _grenadeLevel;
@@ -57,12 +55,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     public GunGameBotAI()
     {
-        _corrections = new CorrectionLogger(() => Config.Debug,
+        _corrections = new CorrectionLogger(
+            () => Config.Debug && Config.VerboseCorrectionDebug,
             message => Logger.LogInformation("[GunGameBotAI][DEBUG] {Message}", message));
         _buttonPulses = new ButtonPulseService(_corrections);
-        _ladderAssist = new LadderAssistService(_buttonPulses, _corrections);
         _aggression = new AggressionService(_corrections);
-        _stuckRecovery = new StuckRecoveryService(_corrections);
         _idleRecovery = new IdleRecoveryService(_corrections);
         _combatMovement = new CombatMovementService(_corrections);
         _grenadeLevel = new GrenadeLevelService(_corrections);
@@ -71,7 +68,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.2.0";
+    public override string ModuleVersion => "0.3.0";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -343,10 +340,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 if (ladderTraversalActive)
                 {
-                    // Learned ladder traversal owns movement before Knife Rush,
-                    // LadderAssist, StuckRecovery or normal combat movement.
-                    // This prevents velocity/input conflicts during the critical
-                    // jump -> mount -> initial climb sequence.
+                    // Learned ladder traversal owns movement before Knife Rush
+                    // or normal combat movement. This keeps the one-shot entry
+                    // jump and mount observation free from movement conflicts.
                     if (_knifeRush.IsActive(state))
                     {
                         _knifeRush.Abort(
@@ -358,8 +354,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                             startCooldown: true);
                     }
 
-                    state.ResetLadderAssist();
-                    state.ResetMovementSamples();
 
                     SetMode(
                         state,
@@ -399,79 +393,112 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         BotRuntimeState state,
         float now)
     {
-        EnemySnapshot? enemy = _sensor.ReadEnemy(pawn, bot, state, now);
-        UpdateWeaponState(controller.Slot, pawn, state);
-        _aggression.Apply(controller.Slot, bot, now);
+        EnemySnapshot? enemy =
+            _sensor.ReadEnemy(
+                pawn,
+                bot,
+                state,
+                now);
 
-        bool rushWasActive = _knifeRush.IsActive(state);
-        _ladderAssist.ObserveProgress(pawn, state);
-        if (_ladderAssist.TryHandle(pawn, bot, state, enemy, now, out bool repeatedLadderAttempt))
-        {
-            if (rushWasActive && repeatedLadderAttempt)
-                _knifeRush.Abort(controller, pawn, state, now, "LADDER_ASSIST_REPEATED", startCooldown: true);
+        UpdateWeaponState(
+            controller.Slot,
+            pawn,
+            state);
 
-            SetMode(state, _knifeRush.IsActive(state) ? BotBehaviorMode.StuckRecovery : BotBehaviorMode.NormalGunGame,
-                repeatedLadderAttempt ? "repeated ladder assist" : "ladder assist");
-            _registry.ActivateActuator(state.Slot);
-            return;
-        }
+        _aggression.Apply(
+            controller.Slot,
+            bot,
+            now);
 
-        if (_stuckRecovery.TryHandle(pawn, bot, state, now, out bool repeatedStuckAttempt))
-        {
-            if (rushWasActive && repeatedStuckAttempt)
-                _knifeRush.Abort(controller, pawn, state, now, "STUCK_RECOVERY_REPEATED", startCooldown: true);
-
-            SetMode(state, _knifeRush.IsActive(state) ? BotBehaviorMode.StuckRecovery : BotBehaviorMode.NormalGunGame,
-                repeatedStuckAttempt ? "repeated stuck recovery" : "stuck recovery");
-            if (_knifeRush.IsActive(state))
-                _registry.ActivateActuator(state.Slot);
-            else
-                _registry.DeactivateActuator(state.Slot);
-            return;
-        }
-
-        _idleRecovery.TryRepath(pawn, bot, state, now);
-
-        bool mandatoryKnife = state.LevelWeaponClass == WeaponClass.Knife;
-        bool grenadeLevel = state.LevelWeaponClass == WeaponClass.Grenade;
-        if (grenadeLevel && !_knifeRush.Config.KnifeRushAllowOnGrenadeLevel && _knifeRush.IsActive(state))
-            _knifeRush.Abort(controller, pawn, state, now, "GRENADE_LEVEL", startCooldown: true);
-
-        bool specialMode = _knifeRush.ApplyDecision(
-            controller,
+        // Keep the generic recovery surface deliberately small. The retired
+        // LadderAssist/StuckRecovery services repeatedly fought Valve bot AI and
+        // never recovered a bot that had fallen into broken ladder geometry.
+        _idleRecovery.TryRepath(
             pawn,
             bot,
             state,
-            enemy,
-            now,
-            mandatoryKnife,
-            grenadeLevel);
+            now);
+
+        bool mandatoryKnife =
+            state.LevelWeaponClass == WeaponClass.Knife;
+
+        bool grenadeLevel =
+            state.LevelWeaponClass == WeaponClass.Grenade;
+
+        if (grenadeLevel &&
+            !_knifeRush.Config.KnifeRushAllowOnGrenadeLevel &&
+            _knifeRush.IsActive(state))
+        {
+            _knifeRush.Abort(
+                controller,
+                pawn,
+                state,
+                now,
+                "GRENADE_LEVEL",
+                startCooldown: true);
+        }
+
+        bool specialMode =
+            _knifeRush.ApplyDecision(
+                controller,
+                pawn,
+                bot,
+                state,
+                enemy,
+                now,
+                mandatoryKnife,
+                grenadeLevel);
 
         if (mandatoryKnife)
         {
-            SetMode(state, BotBehaviorMode.KnifeLevel, "mandatory knife level");
+            SetMode(
+                state,
+                BotBehaviorMode.KnifeLevel,
+                "mandatory knife level");
+
             _registry.ActivateActuator(state.Slot);
             return;
         }
 
         if (specialMode)
         {
-            SetMode(state, BotBehaviorMode.OpportunisticKnifeRush, "Knife Rush active");
+            SetMode(
+                state,
+                BotBehaviorMode.OpportunisticKnifeRush,
+                "Knife Rush active");
+
             _registry.ActivateActuator(state.Slot);
             return;
         }
 
         if (grenadeLevel)
         {
-            SetMode(state, BotBehaviorMode.GrenadeLevel, "grenade level");
+            SetMode(
+                state,
+                BotBehaviorMode.GrenadeLevel,
+                "grenade level");
+
             _registry.DeactivateActuator(state.Slot);
-            _grenadeLevel.Apply(state.Slot, pawn, bot, enemy);
+            _grenadeLevel.Apply(
+                state.Slot,
+                pawn,
+                bot,
+                enemy);
+
             return;
         }
 
-        SetMode(state, BotBehaviorMode.NormalGunGame, "normal GunGame behaviour");
+        SetMode(
+            state,
+            BotBehaviorMode.NormalGunGame,
+            "normal GunGame behaviour");
+
         _registry.DeactivateActuator(state.Slot);
-        _combatMovement.ApplyNormal(pawn, bot, state, enemy);
+        _combatMovement.ApplyNormal(
+            pawn,
+            bot,
+            state,
+            enemy);
     }
 
     private void ActuatorLoop()
@@ -553,8 +580,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         now);
 
                 // Fast actuator ownership is exclusive. A learned physical
-                // ladder traversal must not fight Knife Rush or the reactive
-                // LadderAssistService during jump/mount/climb.
+                // ladder traversal owns the one-shot jump/mount observation;
+                // otherwise only Knife Rush needs fast continuous actuation.
                 bool ladderTraversalOwned =
                     _ladderMap?.ApplyFast(
                         pawn,
@@ -564,13 +591,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 if (!ladderTraversalOwned)
                 {
-                    _ladderAssist.ApplyFast(
-                        pawn,
-                        bot,
-                        state,
-                        enemy,
-                        now);
-
                     _knifeRush.ApplyFast(
                         controller,
                         pawn,
@@ -802,14 +822,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         BotRuntimeState state = _registry.GetOrCreate(player.Slot);
 
-        // Special movement controllers own velocity while active.
-        // Counter-strafe from the normal combat service would otherwise fight
-        // Knife Rush steering (observed in debug logs) and stuck recovery.
+        // Special movement controllers own velocity/input while active.
+        // Counter-strafe from normal combat movement must not fight them.
         if (state.Mode is
             BotBehaviorMode.KnifeLevel or
             BotBehaviorMode.OpportunisticKnifeRush or
-            BotBehaviorMode.LadderTraversal or
-            BotBehaviorMode.StuckRecovery)
+            BotBehaviorMode.LadderTraversal)
         {
             return HookResult.Continue;
         }
@@ -861,7 +879,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             return;
 
         ReleaseButtonPulse(args.Killer);
-        state.ResetMovementSamples();
         state.LevelWeaponClass = WeaponClass.Unknown;
         state.LevelWeaponDesignerName = null;
     }
@@ -953,7 +970,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] persistent ladder learning={(enabled ? "enabled" : "disabled")}.");
     }
 
-    [ConsoleCommand("css_ggbotai_debug", "Enable or disable GunGameBotAI debug logging.")]
+    [ConsoleCommand("css_ggbotai_debug", "Enable or disable focused GunGameBotAI diagnostics.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnDebugCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -967,11 +984,30 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         PersistConfig(command);
 
         Logger.LogInformation(
-            "[GunGameBotAI] Debug correction logging {State}. Debug corrections are emitted at Information level into the standard CounterStrikeSharp logs.",
-            Config.Debug ? "ENABLED" : "DISABLED");
+            "[GunGameBotAI] Focused diagnostics {State}. Routine correction logs are {CorrectionState}.",
+            Config.Debug ? "ENABLED" : "DISABLED",
+            Config.VerboseCorrectionDebug ? "ENABLED" : "DISABLED");
 
         command.ReplyToCommand(
-            $"[GunGameBotAI] debug={(Config.Debug ? "enabled" : "disabled")}; sink=standard CSS log; level=Information.");
+            $"[GunGameBotAI] focusedDebug={(Config.Debug ? "enabled" : "disabled")}; " +
+            $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_ladder_diag", "Enable or disable focused human ladder movement diagnostics.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnLadderDiagnosticCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_ladder_diag 0|1");
+            return;
+        }
+
+        Config.LadderHumanMovementDiagnostics = enabled;
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] human ladder diagnostics={(enabled ? "enabled" : "disabled")}.");
     }
 
     [ConsoleCommand("css_ggbotai_knife_chance", "Set Knife Rush chance percentage.")]
@@ -1101,8 +1137,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private void ApplyConfigToServices()
     {
         _aggression.Config = Config;
-        _stuckRecovery.Config = Config;
-        _ladderAssist.Config = Config;
 
         if (_ladderMap != null)
             _ladderMap.Config = Config;
@@ -1136,7 +1170,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         command.ReplyToCommand(
-            $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; debug={(Config.Debug ? "enabled" : "disabled")}; debugLevel=Information; liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; ladderAssist={(Config.LadderAssistEnabled ? "enabled" : "disabled")}.");
+            $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; " +
+            $"focusedDebug={(Config.Debug ? "enabled" : "disabled")}; " +
+            $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
+            $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
+            $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] decisionTimer={_decisionTimer != null}; actuatorTimer={_actuatorTimer != null}; decision={Config.DecisionIntervalSeconds:0.###}s; fastTicks={Config.FastActuatorEveryTicks}; backend={_weaponActivation.BackendName}; backendAvailable={_weaponActivation.IsBackendAvailable}.");
         command.ReplyToCommand(

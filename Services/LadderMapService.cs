@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 5.1 combines three responsibilities:
+/// Version 5.2 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -757,7 +757,7 @@ public sealed class LadderMapService
 
         try
         {
-            if (pawn.MovementServices is CCSPlayer_MovementServices movement)
+            if (TryGetCsMovementServices(pawn, out CCSPlayer_MovementServices movement))
             {
                 if (movement.LadderNormal != null)
                 {
@@ -2690,8 +2690,9 @@ public sealed class LadderMapService
             bot,
             state);
 
-        if (pawn.MovementServices is not
-            CCSPlayer_MovementServices movement)
+        if (!TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
         {
             return;
         }
@@ -2857,6 +2858,39 @@ public sealed class LadderMapService
         }
     }
 
+    /// <summary>
+    /// CBasePlayerPawn.MovementServices is exposed by CounterStrikeSharp as the
+    /// base CPlayer_MovementServices wrapper. Pattern-matching that wrapper to
+    /// CCSPlayer_MovementServices always fails even though the native object is
+    /// the CS-specific movement service. Re-wrap the same native handle as the
+    /// derived schema type before accessing LadderNormal/Forward/Left/Cmd*Move.
+    /// </summary>
+    private static bool TryGetCsMovementServices(
+        CCSPlayerPawn pawn,
+        out CCSPlayer_MovementServices movement)
+    {
+        movement = null!;
+
+        try
+        {
+            CPlayer_MovementServices? baseMovement =
+                pawn.MovementServices;
+
+            if (baseMovement == null)
+                return false;
+
+            movement =
+                baseMovement.As<CCSPlayer_MovementServices>();
+
+            return true;
+        }
+        catch
+        {
+            movement = null!;
+            return false;
+        }
+    }
+
     private static bool TryGetMovementLadderNormal(
         CCSPlayer_MovementServices movement,
         out Vector3 normal)
@@ -2966,8 +3000,9 @@ public sealed class LadderMapService
         if (!traversal.InputAssistActive)
             return;
 
-        if (pawn.MovementServices is
-            CCSPlayer_MovementServices movement)
+        if (TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
         {
             SetMovementField(
                 state,

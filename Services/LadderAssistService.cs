@@ -373,8 +373,12 @@ public sealed class LadderAssistService
         sideCommand = 0.0f;
         upCommand = 0.0f;
 
-        if (pawn.MovementServices is not CCSPlayer_MovementServices movement)
+        if (!TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
+        {
             return false;
+        }
 
         Vector3 delta = goal - position;
         Vector3 desired = delta;
@@ -428,8 +432,12 @@ public sealed class LadderAssistService
         bool onLadder,
         bool isFastPass)
     {
-        if (pawn.MovementServices is not CCSPlayer_MovementServices movement)
+        if (!TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
+        {
             return;
+        }
 
         SetMovementField(
             state,
@@ -646,6 +654,37 @@ public sealed class LadderAssistService
         return TryGetLadderNormal(pawn, out _);
     }
 
+    /// <summary>
+    /// CBasePlayerPawn.MovementServices is exposed as CPlayer_MovementServices.
+    /// Re-wrap the same native handle as CCSPlayer_MovementServices before using
+    /// CS-specific schema fields such as LadderNormal, Forward, Left and Cmd*Move.
+    /// </summary>
+    private static bool TryGetCsMovementServices(
+        CCSPlayerPawn pawn,
+        out CCSPlayer_MovementServices movement)
+    {
+        movement = null!;
+
+        try
+        {
+            CPlayer_MovementServices? baseMovement =
+                pawn.MovementServices;
+
+            if (baseMovement == null)
+                return false;
+
+            movement =
+                baseMovement.As<CCSPlayer_MovementServices>();
+
+            return true;
+        }
+        catch
+        {
+            movement = null!;
+            return false;
+        }
+    }
+
     private static bool TryGetLadderNormal(
         CCSPlayerPawn pawn,
         out Vector3 normal)
@@ -654,8 +693,9 @@ public sealed class LadderAssistService
 
         try
         {
-            if (pawn.MovementServices
-                is not CCSPlayer_MovementServices movement)
+            if (!TryGetCsMovementServices(
+                    pawn,
+                    out CCSPlayer_MovementServices movement))
             {
                 return false;
             }

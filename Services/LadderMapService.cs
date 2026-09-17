@@ -876,12 +876,36 @@ public sealed class LadderMapService
             // The movement trace remains useful even if eye angles cannot be read.
         }
 
+        ulong buttons0 = 0;
+        ulong buttons1 = 0;
+        ulong buttons2 = 0;
+        ulong queuedDown = 0;
+        ulong queuedChange = 0;
+
+        try
+        {
+            Span<ulong> buttonStates = movement.Buttons.ButtonStates;
+            if (buttonStates.Length > 0) buttons0 = buttonStates[0];
+            if (buttonStates.Length > 1) buttons1 = buttonStates[1];
+            if (buttonStates.Length > 2) buttons2 = buttonStates[2];
+            queuedDown = movement.QueuedButtonDownMask;
+            queuedChange = movement.QueuedButtonChangeMask;
+        }
+        catch
+        {
+            // Keep the rest of the movement trace even if button state is unavailable.
+        }
+
         _info(
             $"HUMAN-MOVE slot={_manualTeacherSlot}; sample={sampleIndex}; " +
             $"pos={Format(position)}; vel={Format(velocity)}; " +
             $"normal={Format(ladderNormal)}; " +
             $"forward={Format(forward)}; left={Format(left)}; up={Format(up)}; " +
             $"cmd=({movement.CmdForwardMove:0.###},{movement.CmdLeftMove:0.###},{movement.CmdUpMove:0.###}); " +
+            $"processed=({movement.ForwardMove:0.###},{movement.LeftMove:0.###},{movement.UpMove:0.###}); " +
+            $"buttons=(0x{buttons0:X},0x{buttons1:X},0x{buttons2:X}); " +
+            $"queuedDown=0x{queuedDown:X}; queuedChange=0x{queuedChange:X}; " +
+            $"lastCmd={movement.LastCommandNumberProcessed}; maxSpeed={movement.Maxspeed:0.###}; " +
             $"eye={eyeText}");
     }
 
@@ -2843,13 +2867,38 @@ public sealed class LadderMapService
 
             Vector3 eye = ReadPawnEyeAngles(pawn);
 
+            ulong buttons0 = 0;
+            ulong buttons1 = 0;
+            ulong buttons2 = 0;
+            ulong queuedDown = 0;
+            ulong queuedChange = 0;
+
+            try
+            {
+                Span<ulong> buttonStates = movement.Buttons.ButtonStates;
+                if (buttonStates.Length > 0) buttons0 = buttonStates[0];
+                if (buttonStates.Length > 1) buttons1 = buttonStates[1];
+                if (buttonStates.Length > 2) buttons2 = buttonStates[2];
+                queuedDown = movement.QueuedButtonDownMask;
+                queuedChange = movement.QueuedButtonChangeMask;
+            }
+            catch
+            {
+                // Keep the rest of the bot movement trace even if button state is unavailable.
+            }
+
             _debug(
                 $"BOT-MOVE slot={state.Slot}; id={ladder.Id}; " +
                 $"pos={Format(position)}; vel={Format(velocity)}; " +
                 $"normal={Format(ladderNormal)}; forward={Format(actualForward)}; " +
                 $"left={Format(actualLeft)}; up={Format(actualUp)}; " +
                 $"cmd=({movement.CmdForwardMove:0.###},{movement.CmdLeftMove:0.###},{movement.CmdUpMove:0.###}); " +
-                $"eye={Format(eye)}; pathDeviation={GetTargetPathDeviation(ladder, position):0.###}");
+                $"processed=({movement.ForwardMove:0.###},{movement.LeftMove:0.###},{movement.UpMove:0.###}); " +
+                $"buttons=(0x{buttons0:X},0x{buttons1:X},0x{buttons2:X}); " +
+                $"queuedDown=0x{queuedDown:X}; queuedChange=0x{queuedChange:X}; " +
+                $"lastCmd={movement.LastCommandNumberProcessed}; maxSpeed={movement.Maxspeed:0.###}; " +
+                $"eye={Format(eye)}; " +
+                $"pathDeviation={GetTargetPathDeviation(ladder, position):0.###}");
         }
     }
 

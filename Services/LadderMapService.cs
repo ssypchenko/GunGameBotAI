@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 6 combines three responsibilities:
+/// Version 7 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -22,9 +22,9 @@ namespace GunGameBotAI.Services;
 ///
 /// 3) Proactive bot traversal. Valve navigation owns the approach. The plugin
 ///    issues one learned entry jump, validates that MOVETYPE_LADDER belongs to
-///    the intended physical ladder, then observes Valve ladder locomotion without
-///    trying to rescue, remount or force a stalled bot. Failed attempts are
-///    abandoned cleanly and retried only after a cooldown.
+///    the intended physical ladder, then reproduces the measured human ladder
+///    input: look into/up the ladder and hold normalised Forward=1. There is no
+///    rescue/remount path; failed attempts are abandoned after a cooldown.
 /// </summary>
 public sealed class LadderMapService
 {
@@ -100,6 +100,7 @@ public sealed class LadderMapService
 
     public void OnMapStart(string mapName)
     {
+        ReleaseAllTraversalControls();
         SaveIfDirty();
         _trackers.Clear();
         _candidates.Clear();
@@ -113,6 +114,7 @@ public sealed class LadderMapService
 
     public void OnMapEnd()
     {
+        ReleaseAllTraversalControls();
         StopManualTeachingLoop();
         ResetManualTeachingState("map-end");
         FinalizeAllLearningSessions("map-end");
@@ -126,6 +128,7 @@ public sealed class LadderMapService
 
     public void Shutdown()
     {
+        ReleaseAllTraversalControls();
         StopManualTeachingLoop();
         ResetManualTeachingState("shutdown");
         FinalizeAllLearningSessions("shutdown");
@@ -142,6 +145,7 @@ public sealed class LadderMapService
     /// </summary>
     public void ResetRuntimeTracking()
     {
+        ReleaseAllTraversalControls();
         FinalizeAllLearningSessions("runtime-reset");
         _trackers.Clear();
 
@@ -154,6 +158,10 @@ public sealed class LadderMapService
     {
         if (_trackers.TryGetValue(slot, out BotTracker? tracker))
         {
+            ReleaseSlotTraversalControl(
+                slot,
+                tracker);
+
             FinalizeLearningSession(
                 slot,
                 tracker,
@@ -170,6 +178,7 @@ public sealed class LadderMapService
 
         string mapName = _document.Map;
 
+        ReleaseAllTraversalControls();
         FinalizeAllLearningSessions("reload");
         SaveIfDirty();
 
@@ -180,6 +189,50 @@ public sealed class LadderMapService
         _dirty = false;
         ResetManualTeachingState("reload");
         RefreshManualTeachingLoop();
+    }
+
+    private void ReleaseAllTraversalControls()
+    {
+        foreach ((int slot, BotTracker tracker) in _trackers)
+        {
+            ReleaseSlotTraversalControl(
+                slot,
+                tracker);
+        }
+    }
+
+    private static void ReleaseSlotTraversalControl(
+        int slot,
+        BotTracker tracker)
+    {
+        TraversalSession? traversal =
+            tracker.Traversal;
+
+        if (traversal == null ||
+            !traversal.HumanControlInitialised)
+        {
+            return;
+        }
+
+        try
+        {
+            if (BotValidation.TryResolveLiveBot(
+                    slot,
+                    out _,
+                    out CCSPlayerPawn? pawn,
+                    out _) &&
+                pawn != null)
+            {
+                ReleaseHumanClimbControl(
+                    pawn,
+                    traversal);
+            }
+        }
+        catch
+        {
+            // Runtime/map cleanup must stay safe even if the pawn vanished
+            // between validation and the movement-service write.
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -1320,6 +1373,7 @@ public sealed class LadderMapService
         if (ladder == null)
         {
             FailTraversal(
+                pawn,
                 state.Slot,
                 tracker,
                 null,
@@ -1337,6 +1391,7 @@ public sealed class LadderMapService
                 out Vector3 velocity))
         {
             FailTraversal(
+                pawn,
                 state.Slot,
                 tracker,
                 ladder,
@@ -1350,6 +1405,7 @@ public sealed class LadderMapService
             Config.LadderTraversalTimeoutSeconds)
         {
             FailTraversal(
+                pawn,
                 state.Slot,
                 tracker,
                 ladder,
@@ -1384,6 +1440,7 @@ public sealed class LadderMapService
                         $"deviation={mountDeviation:0.###}; position={Format(position)}; reason=different-ladder");
 
                     FailTraversal(
+                        pawn,
                         state.Slot,
                         tracker,
                         ladder,
@@ -1437,7 +1494,12 @@ public sealed class LadderMapService
                     referenceDeviation >
                         Config.LadderTraversalReferenceHardDeviation)
                 {
+                    ReleaseHumanClimbControl(
+                        pawn,
+                        traversal);
+
                     FailTraversal(
+                        pawn,
                         state.Slot,
                         tracker,
                         ladder,
@@ -1447,28 +1509,56 @@ public sealed class LadderMapService
                     return true;
                 }
 
-                bool valveGraceEnded =
-                    now - traversal.MountObservedAt >=
-                    Config.LadderTraversalValveClimbGraceSeconds;
+                if (!traversal.HumanControlReleasedNearTop &&
+                    ShouldReleaseHumanControlNearTop(
+                        ladder,
+                        position))
+                {
+                    ReleaseHumanClimbControl(
+                        pawn,
+                        traversal);
+
+                    traversal.HumanControlReleasedNearTop = true;
+
+                    _info(
+                        $"CLIMB-TOP-RELEASE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"position={Format(position)}; topZ={ladder.TopZ:0.###}");
+                }
+                else if (!traversal.HumanControlReleasedNearTop)
+                {
+                    ApplyHumanClimbControl(
+                        pawn,
+                        bot,
+                        state,
+                        ladder,
+                        position,
+                        velocity,
+                        traversal,
+                        now);
+                }
 
                 bool progressStalled =
                     now - traversal.LastProgressAt >=
                     Config.LadderTraversalClimbStallSeconds;
 
-                if (!traversal.SafeProgressReached &&
-                    valveGraceEnded &&
+                if (!traversal.HumanControlReleasedNearTop &&
                     progressStalled)
                 {
+                    ReleaseHumanClimbControl(
+                        pawn,
+                        traversal);
+
                     _info(
                         $"CLIMB-STALL map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                         $"progressZ={progress:0.###}; stalledFor={(now - traversal.LastProgressAt):0.###}s; " +
                         $"pathDeviation={referenceDeviation:0.###}; action=abandon");
 
                     FailTraversal(
+                        pawn,
                         state.Slot,
                         tracker,
                         ladder,
-                        "mounted but made no upward progress",
+                        "human-style forward control made no upward progress",
                         now);
 
                     return true;
@@ -1483,6 +1573,10 @@ public sealed class LadderMapService
                     now -
                     traversal.LastOnLadderAt);
 
+            ReleaseHumanClimbControl(
+                pawn,
+                traversal);
+
             if (detachedFor <=
                 Config.LadderSessionDetachGraceSeconds)
             {
@@ -1496,6 +1590,7 @@ public sealed class LadderMapService
                     progress))
             {
                 CompleteTraversal(
+                    pawn,
                     state.Slot,
                     tracker,
                     ladder,
@@ -1515,6 +1610,7 @@ public sealed class LadderMapService
             if (fellBelowMount)
             {
                 FailTraversal(
+                    pawn,
                     state.Slot,
                     tracker,
                     ladder,
@@ -1533,6 +1629,7 @@ public sealed class LadderMapService
                 Config.LadderTraversalReferenceHardDeviation)
             {
                 FailTraversal(
+                    pawn,
                     state.Slot,
                     tracker,
                     ladder,
@@ -1543,6 +1640,7 @@ public sealed class LadderMapService
             }
 
             FailTraversal(
+                pawn,
                 state.Slot,
                 tracker,
                 ladder,
@@ -1590,6 +1688,7 @@ public sealed class LadderMapService
                     Config.LadderTraversalMountTimeoutSeconds)
         {
             FailTraversal(
+                pawn,
                 state.Slot,
                 tracker,
                 ladder,
@@ -2321,6 +2420,10 @@ public sealed class LadderMapService
 
         if (ladder == null)
         {
+            ReleaseHumanClimbControl(
+                pawn,
+                traversal);
+
             tracker.Traversal = null;
             return;
         }
@@ -2329,6 +2432,7 @@ public sealed class LadderMapService
             Config.LadderTraversalTimeoutSeconds)
         {
             FailTraversal(
+                pawn,
                 state.Slot,
                 tracker,
                 ladder,
@@ -2360,6 +2464,7 @@ public sealed class LadderMapService
                     $"deviation={mountDeviation:0.###}; position={Format(position)}; source=slow-loop");
 
                 FailTraversal(
+                    pawn,
                     state.Slot,
                     tracker,
                     ladder,
@@ -2432,6 +2537,9 @@ public sealed class LadderMapService
         traversal.LastProgressAt = now;
         traversal.SafeProgressReached = false;
         traversal.JumpIssued = true;
+        traversal.HumanControlInitialised = false;
+        traversal.HumanControlReleasedNearTop = false;
+        traversal.LastBotMoveDiagnosticAt = float.NegativeInfinity;
 
         float referenceDeviation =
             GetTargetPathDeviation(
@@ -2445,6 +2553,7 @@ public sealed class LadderMapService
     }
 
     private void CompleteTraversal(
+        CCSPlayerPawn pawn,
         int slot,
         BotTracker tracker,
         PhysicalLadder ladder,
@@ -2453,6 +2562,16 @@ public sealed class LadderMapService
         string reason,
         float now)
     {
+        TraversalSession? traversal =
+            tracker.Traversal;
+
+        if (traversal != null)
+        {
+            ReleaseHumanClimbControl(
+                pawn,
+                traversal);
+        }
+
         ladder.AssistedTraversals++;
         ladder.AssistedSuccesses++;
 
@@ -2469,6 +2588,7 @@ public sealed class LadderMapService
     }
 
     private void FailTraversal(
+        CCSPlayerPawn pawn,
         int slot,
         BotTracker tracker,
         PhysicalLadder? ladder,
@@ -2480,6 +2600,10 @@ public sealed class LadderMapService
 
         if (traversal == null)
             return;
+
+        ReleaseHumanClimbControl(
+            pawn,
+            traversal);
 
         if (ladder != null)
         {
@@ -2589,6 +2713,290 @@ public sealed class LadderMapService
     }
 
 
+
+    private void ApplyHumanClimbControl(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState state,
+        PhysicalLadder ladder,
+        Vector3 position,
+        Vector3 velocity,
+        TraversalSession traversal,
+        float now)
+    {
+        PrepareBotForMovement(
+            bot,
+            state);
+
+        if (!TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
+        {
+            return;
+        }
+
+        Vector3 ladderNormal = default;
+        bool haveNormal = false;
+
+        try
+        {
+            if (movement.LadderNormal != null &&
+                NativeValueReader.TryCopy(
+                    movement.LadderNormal,
+                    out ladderNormal) &&
+                ladderNormal.LengthSquared() > 0.0001f)
+            {
+                haveNormal = true;
+            }
+        }
+        catch
+        {
+            ladderNormal = default;
+        }
+
+        Vector3 intoLadder;
+
+        if (haveNormal)
+        {
+            intoLadder =
+                HorizontalNormalised(
+                    new Vector3(
+                        -ladderNormal.X,
+                        -ladderNormal.Y,
+                        0.0f));
+        }
+        else
+        {
+            // Manual teaching stores the approach direction towards the ladder.
+            // It is a safe fallback if the engine's LadderNormal is unavailable
+            // for a particular frame.
+            intoLadder =
+                HorizontalNormalised(
+                    ladder.ApproachDirection.ToVector3());
+        }
+
+        if (intoLadder.LengthSquared() < 0.25f)
+            return;
+
+        float yawDegrees =
+            MathF.Atan2(
+                intoLadder.Y,
+                intoLadder.X) *
+            (180.0f / MathF.PI);
+
+        float pitchDegrees =
+            Config.LadderTraversalHumanPitchDegrees;
+
+        BuildMovementBasis(
+            pitchDegrees,
+            yawDegrees,
+            out Vector3 forward,
+            out Vector3 left,
+            out Vector3 up);
+
+        if (!traversal.HumanControlInitialised)
+        {
+            traversal.HumanControlInitialised = true;
+        }
+
+        // Human trace on this map showed Cmd=(1,0,0) for the entire successful
+        // climb. The vertical component comes from the pitched Forward basis,
+        // not from CmdUpMove.
+        movement.CmdForwardMove =
+            Config.LadderTraversalHumanForwardMove;
+        movement.CmdLeftMove = 0.0f;
+        movement.CmdUpMove = 0.0f;
+
+        WriteMovementBasis(
+            movement,
+            forward,
+            left,
+            up);
+
+        // Keep the bot's view consistent with the basis. Valve AI may try to
+        // change it between actuator ticks, so this is intentionally re-applied
+        // while ladder traversal owns movement.
+        WritePawnView(
+            pawn,
+            pitchDegrees,
+            yawDegrees);
+
+        if (Config.Debug &&
+            now - traversal.LastBotMoveDiagnosticAt >=
+                Config.LadderTraversalBotMoveLogIntervalSeconds)
+        {
+            traversal.LastBotMoveDiagnosticAt = now;
+
+            Vector3 actualForward = default;
+            Vector3 actualLeft = default;
+            Vector3 actualUp = default;
+
+            NativeValueReader.TryCopy(
+                movement.Forward,
+                out actualForward);
+            NativeValueReader.TryCopy(
+                movement.Left,
+                out actualLeft);
+            NativeValueReader.TryCopy(
+                movement.Up,
+                out actualUp);
+
+            Vector3 eye = ReadPawnEyeAngles(pawn);
+
+            _debug(
+                $"BOT-MOVE slot={state.Slot}; id={ladder.Id}; " +
+                $"pos={Format(position)}; vel={Format(velocity)}; " +
+                $"normal={Format(ladderNormal)}; forward={Format(actualForward)}; " +
+                $"left={Format(actualLeft)}; up={Format(actualUp)}; " +
+                $"cmd=({movement.CmdForwardMove:0.###},{movement.CmdLeftMove:0.###},{movement.CmdUpMove:0.###}); " +
+                $"eye={Format(eye)}; pathDeviation={GetTargetPathDeviation(ladder, position):0.###}");
+        }
+    }
+
+    private static void BuildMovementBasis(
+        float pitchDegrees,
+        float yawDegrees,
+        out Vector3 forward,
+        out Vector3 left,
+        out Vector3 up)
+    {
+        float pitch =
+            pitchDegrees *
+            (MathF.PI / 180.0f);
+
+        float yaw =
+            yawDegrees *
+            (MathF.PI / 180.0f);
+
+        float sinPitch = MathF.Sin(pitch);
+        float cosPitch = MathF.Cos(pitch);
+        float sinYaw = MathF.Sin(yaw);
+        float cosYaw = MathF.Cos(yaw);
+
+        forward =
+            new Vector3(
+                cosPitch * cosYaw,
+                cosPitch * sinYaw,
+                -sinPitch);
+
+        left =
+            new Vector3(
+                -sinYaw,
+                cosYaw,
+                0.0f);
+
+        up =
+            Vector3.Cross(
+                forward,
+                left);
+    }
+
+    private static void WriteMovementBasis(
+        CCSPlayer_MovementServices movement,
+        Vector3 forward,
+        Vector3 left,
+        Vector3 up)
+    {
+        try
+        {
+            movement.Forward.X = forward.X;
+            movement.Forward.Y = forward.Y;
+            movement.Forward.Z = forward.Z;
+
+            movement.Left.X = left.X;
+            movement.Left.Y = left.Y;
+            movement.Left.Z = left.Z;
+
+            movement.Up.X = up.X;
+            movement.Up.Y = up.Y;
+            movement.Up.Z = up.Z;
+        }
+        catch
+        {
+            // A disappearing movement-services object is handled by the next
+            // normal bot-validation pass.
+        }
+    }
+
+    private static void WritePawnView(
+        CCSPlayerPawn pawn,
+        float pitchDegrees,
+        float yawDegrees)
+    {
+        try
+        {
+            pawn.EyeAngles.X = pitchDegrees;
+            pawn.EyeAngles.Y = yawDegrees;
+            pawn.EyeAngles.Z = 0.0f;
+
+            pawn.V_angle.X = pitchDegrees;
+            pawn.V_angle.Y = yawDegrees;
+            pawn.V_angle.Z = 0.0f;
+        }
+        catch
+        {
+            // Keep movement-basis control active even if eye-angle replication
+            // is temporarily unavailable.
+        }
+    }
+
+    private static Vector3 ReadPawnEyeAngles(
+        CCSPlayerPawn pawn)
+    {
+        try
+        {
+            return new Vector3(
+                pawn.EyeAngles.X,
+                pawn.EyeAngles.Y,
+                pawn.EyeAngles.Z);
+        }
+        catch
+        {
+            return default;
+        }
+    }
+
+    private static void ReleaseHumanClimbControl(
+        CCSPlayerPawn pawn,
+        TraversalSession traversal)
+    {
+        if (!traversal.HumanControlInitialised)
+            return;
+
+        if (TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
+        {
+            try
+            {
+                movement.CmdForwardMove = 0.0f;
+                movement.CmdLeftMove = 0.0f;
+                movement.CmdUpMove = 0.0f;
+            }
+            catch
+            {
+                // Valve will rewrite movement state on its next frame.
+            }
+        }
+
+        traversal.HumanControlInitialised = false;
+    }
+
+    private bool ShouldReleaseHumanControlNearTop(
+        PhysicalLadder ladder,
+        Vector3 position)
+    {
+        if (ladder.TopZ <=
+            ladder.BottomMount.Z +
+            Config.LadderTraversalExitMinProgress)
+        {
+            return false;
+        }
+
+        return position.Z >=
+               ladder.TopZ -
+               Config.LadderTraversalTopControlReleaseDistance;
+    }
 
     /// <summary>
     /// CBasePlayerPawn.MovementServices is exposed by CounterStrikeSharp as the
@@ -3446,5 +3854,10 @@ public sealed class LadderMapService
         public float LastProgressAt { get; set; } =
             float.NegativeInfinity;
         public bool SafeProgressReached { get; set; }
+
+        public bool HumanControlInitialised { get; set; }
+        public bool HumanControlReleasedNearTop { get; set; }
+        public float LastBotMoveDiagnosticAt { get; set; } =
+            float.NegativeInfinity;
     }
 }

@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 5;
+    public override int Version { get; set; } = 6;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -96,7 +96,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Legacy name retained: this is now only the distance at which we log
     // entry into the top zone. It no longer releases or zeroes Forward.
     public float LadderTraversalTopControlReleaseDistance { get; set; } = 12.0f;
+    // v5 compatibility only. It is no longer a success timer in v6.
     public float LadderTraversalTopExitAssistSeconds { get; set; } = 0.20f;
+    public float LadderTraversalTopExitTargetTimeoutSeconds { get; set; } = 0.75f;
+    public float LadderTraversalTopExitReachDistance { get; set; } = 6.0f;
+    public float LadderTraversalTopExitPushDistance { get; set; } = 8.0f;
+    public float LadderTraversalTopExitPushTimeoutSeconds { get; set; } = 0.35f;
     public float LadderTraversalTopExitPitchDegrees { get; set; } = 0.0f;
     public float LadderTraversalTopExitMaxDrop { get; set; } = 24.0f;
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
@@ -211,6 +216,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalProcessedMoveTolerance = Clamp(LadderTraversalProcessedMoveTolerance, 1.0f, 100.0f, 12.0f, nameof(LadderTraversalProcessedMoveTolerance), warn);
         LadderTraversalTopControlReleaseDistance = Clamp(LadderTraversalTopControlReleaseDistance, 4.0f, 40.0f, 12.0f, nameof(LadderTraversalTopControlReleaseDistance), warn);
         LadderTraversalTopExitAssistSeconds = Clamp(LadderTraversalTopExitAssistSeconds, 0.05f, 0.75f, 0.20f, nameof(LadderTraversalTopExitAssistSeconds), warn);
+        LadderTraversalTopExitTargetTimeoutSeconds = Clamp(LadderTraversalTopExitTargetTimeoutSeconds, 0.20f, 2.0f, 0.75f, nameof(LadderTraversalTopExitTargetTimeoutSeconds), warn);
+        LadderTraversalTopExitReachDistance = Clamp(LadderTraversalTopExitReachDistance, 2.0f, 16.0f, 6.0f, nameof(LadderTraversalTopExitReachDistance), warn);
+        LadderTraversalTopExitPushDistance = Clamp(LadderTraversalTopExitPushDistance, 2.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitPushDistance), warn);
+        LadderTraversalTopExitPushTimeoutSeconds = Clamp(LadderTraversalTopExitPushTimeoutSeconds, 0.10f, 1.0f, 0.35f, nameof(LadderTraversalTopExitPushTimeoutSeconds), warn);
         LadderTraversalTopExitPitchDegrees = Clamp(LadderTraversalTopExitPitchDegrees, -20.0f, 20.0f, 0.0f, nameof(LadderTraversalTopExitPitchDegrees), warn);
         LadderTraversalTopExitMaxDrop = Clamp(LadderTraversalTopExitMaxDrop, 4.0f, 64.0f, 24.0f, nameof(LadderTraversalTopExitMaxDrop), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
@@ -289,6 +298,20 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             Version = 5;
         }
     }
+        if (Version < 6)
+        {
+            // Version 6 fixes the top-exit steering discovered in live logs:
+            // TARGET always recomputes current-position -> ManualExit, and a
+            // traversal can only succeed after reaching ManualExit and moving
+            // farther through the lip in the learned human exit direction.
+            FastActuatorEveryTicks = 1;
+            LadderTraversalTopExitTargetTimeoutSeconds = 0.75f;
+            LadderTraversalTopExitReachDistance = 6.0f;
+            LadderTraversalTopExitPushDistance = 8.0f;
+            LadderTraversalTopExitPushTimeoutSeconds = 0.35f;
+            Version = 6;
+        }
+
 
     private static int Clamp(int value, int minimum, int maximum, int fallback, string name, Action<string> warn)
     {

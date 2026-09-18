@@ -4229,7 +4229,7 @@ public sealed class LadderMapService
                     mountPosition,
                     comparison);
 
-            if (distance <= Config.LadderTraversalMountValidationRadius &&
+            if (distance <= Config.LadderTraversalIdentityMatchRadius &&
                 distance < best)
             {
                 selected = ladder;
@@ -4261,7 +4261,7 @@ public sealed class LadderMapService
         PhysicalLadder? closest =
             FindClosestKnownLadderAtPosition(
                 position,
-                requireBottomMountWindow: true,
+                requireBottomMountWindow: false,
                 Config.LadderTraversalIdentityMatchRadius,
                 out float closestDeviation);
 

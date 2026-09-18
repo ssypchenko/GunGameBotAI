@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 7 combines three responsibilities:
+/// Version 8 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -2563,6 +2563,9 @@ public sealed class LadderMapService
         traversal.JumpIssued = true;
         traversal.HumanControlInitialised = false;
         traversal.HumanControlReleasedNearTop = false;
+        traversal.ForwardHandoffActive = false;
+        traversal.ForwardCorrectionCount = 0;
+        traversal.ForwardHandoffCount = 0;
         traversal.LastBotMoveDiagnosticAt = float.NegativeInfinity;
 
         float referenceDeviation =
@@ -2791,9 +2794,6 @@ public sealed class LadderMapService
         }
         else
         {
-            // Manual teaching stores the approach direction towards the ladder.
-            // It is a safe fallback if the engine's LadderNormal is unavailable
-            // for a particular frame.
             intoLadder =
                 HorizontalNormalised(
                     ladder.ApproachDirection.ToVector3());
@@ -2818,38 +2818,78 @@ public sealed class LadderMapService
             out Vector3 left,
             out Vector3 up);
 
-        if (!traversal.HumanControlInitialised)
+        MovementSnapshot before =
+            ReadMovementSnapshot(
+                movement);
+
+        bool healthyBefore =
+            IsHumanLikeForwardStateHealthy(
+                before,
+                velocity);
+
+        string action;
+
+        if (healthyBefore)
         {
-            traversal.HumanControlInitialised = true;
+            // Knife Rush uses the same principle: once the desired state is
+            // genuinely active, stop issuing corrective writes and only watch.
+            // If Valve takes it back on a later command cycle we recapture it.
+            action = traversal.ForwardHandoffActive
+                ? "observe"
+                : "handoff";
+
+            if (!traversal.ForwardHandoffActive)
+            {
+                traversal.ForwardHandoffActive = true;
+                traversal.ForwardHandoffCount++;
+
+                _info(
+                    $"CLIMB-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"velocityZ={velocity.Z:0.###}; processedForward={before.ForwardMove:0.###}; " +
+                    $"buttons=0x{before.Buttons0:X}");
+            }
         }
+        else
+        {
+            bool recapture =
+                traversal.HumanControlInitialised &&
+                traversal.ForwardHandoffActive;
 
-        // Human trace on this map showed Cmd=(1,0,0) for the entire successful
-        // climb. The vertical component comes from the pitched Forward basis,
-        // not from CmdUpMove.
-        movement.CmdForwardMove =
-            Config.LadderTraversalHumanForwardMove;
-        movement.CmdLeftMove = 0.0f;
-        movement.CmdUpMove = 0.0f;
+            traversal.HumanControlInitialised = true;
+            traversal.ForwardHandoffActive = false;
+            traversal.ForwardCorrectionCount++;
 
-        WriteMovementBasis(
-            movement,
-            forward,
-            left,
-            up);
+            ApplyHumanForwardState(
+                pawn,
+                movement,
+                forward,
+                left,
+                up,
+                pitchDegrees,
+                yawDegrees);
 
-        // Keep the bot's view consistent with the basis. Valve AI may try to
-        // change it between actuator ticks, so this is intentionally re-applied
-        // while ladder traversal owns movement.
-        WritePawnView(
-            pawn,
-            pitchDegrees,
-            yawDegrees);
+            action = recapture
+                ? "recapture"
+                : "hold";
+
+            if (recapture)
+            {
+                _info(
+                    $"CLIMB-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"velocityZ={velocity.Z:0.###}; preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
+                    $"preButtons=0x{before.Buttons0:X}; corrections={traversal.ForwardCorrectionCount}");
+            }
+        }
 
         if (Config.Debug &&
             now - traversal.LastBotMoveDiagnosticAt >=
                 Config.LadderTraversalBotMoveLogIntervalSeconds)
         {
             traversal.LastBotMoveDiagnosticAt = now;
+
+            MovementSnapshot after =
+                ReadMovementSnapshot(
+                    movement);
 
             Vector3 actualForward = default;
             Vector3 actualLeft = default;
@@ -2865,41 +2905,139 @@ public sealed class LadderMapService
                 movement.Up,
                 out actualUp);
 
-            Vector3 eye = ReadPawnEyeAngles(pawn);
-
-            ulong buttons0 = 0;
-            ulong buttons1 = 0;
-            ulong buttons2 = 0;
-            ulong queuedDown = 0;
-            ulong queuedChange = 0;
-
-            try
-            {
-                Span<ulong> buttonStates = movement.Buttons.ButtonStates;
-                if (buttonStates.Length > 0) buttons0 = buttonStates[0];
-                if (buttonStates.Length > 1) buttons1 = buttonStates[1];
-                if (buttonStates.Length > 2) buttons2 = buttonStates[2];
-                queuedDown = movement.QueuedButtonDownMask;
-                queuedChange = movement.QueuedButtonChangeMask;
-            }
-            catch
-            {
-                // Keep the rest of the bot movement trace even if button state is unavailable.
-            }
+            Vector3 eye =
+                ReadPawnEyeAngles(
+                    pawn);
 
             _debug(
-                $"BOT-MOVE slot={state.Slot}; id={ladder.Id}; " +
-                $"pos={Format(position)}; vel={Format(velocity)}; " +
-                $"normal={Format(ladderNormal)}; forward={Format(actualForward)}; " +
-                $"left={Format(actualLeft)}; up={Format(actualUp)}; " +
-                $"cmd=({movement.CmdForwardMove:0.###},{movement.CmdLeftMove:0.###},{movement.CmdUpMove:0.###}); " +
-                $"processed=({movement.ForwardMove:0.###},{movement.LeftMove:0.###},{movement.UpMove:0.###}); " +
-                $"buttons=(0x{buttons0:X},0x{buttons1:X},0x{buttons2:X}); " +
-                $"queuedDown=0x{queuedDown:X}; queuedChange=0x{queuedChange:X}; " +
-                $"lastCmd={movement.LastCommandNumberProcessed}; maxSpeed={movement.Maxspeed:0.###}; " +
-                $"eye={Format(eye)}; " +
+                $"BOT-MOVE slot={state.Slot}; id={ladder.Id}; action={action}; " +
+                $"pos={Format(position)}; vel={Format(velocity)}; normal={Format(ladderNormal)}; " +
+                $"forward={Format(actualForward)}; left={Format(actualLeft)}; up={Format(actualUp)}; " +
+                $"preCmd=({before.CmdForwardMove:0.###},{before.CmdLeftMove:0.###},{before.CmdUpMove:0.###}); " +
+                $"preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
+                $"preButtons=(0x{before.Buttons0:X},0x{before.Buttons1:X},0x{before.Buttons2:X}); " +
+                $"postCmd=({after.CmdForwardMove:0.###},{after.CmdLeftMove:0.###},{after.CmdUpMove:0.###}); " +
+                $"postProcessed=({after.ForwardMove:0.###},{after.LeftMove:0.###},{after.UpMove:0.###}); " +
+                $"postButtons=(0x{after.Buttons0:X},0x{after.Buttons1:X},0x{after.Buttons2:X}); " +
+                $"queuedDown=0x{after.QueuedDown:X}; queuedChange=0x{after.QueuedChange:X}; " +
+                $"lastCmd={after.LastCommandNumber}; maxSpeed={after.MaxSpeed:0.###}; eye={Format(eye)}; " +
+                $"corrections={traversal.ForwardCorrectionCount}; handoffs={traversal.ForwardHandoffCount}; " +
                 $"pathDeviation={GetTargetPathDeviation(ladder, position):0.###}");
         }
+    }
+
+    private bool IsHumanLikeForwardStateHealthy(
+        MovementSnapshot snapshot,
+        Vector3 velocity)
+    {
+        float tolerance =
+            Config.LadderTraversalProcessedMoveTolerance;
+
+        bool forwardProcessed =
+            MathF.Abs(
+                snapshot.ForwardMove -
+                Config.LadderTraversalProcessedForwardMove) <=
+            tolerance;
+
+        bool lateralClear =
+            MathF.Abs(snapshot.LeftMove) <= tolerance;
+
+        bool upClear =
+            MathF.Abs(snapshot.UpMove) <= tolerance;
+
+        bool forwardButton =
+            (snapshot.Buttons0 &
+             (ulong)PlayerButtons.Forward) != 0;
+
+        bool climbing =
+            velocity.Z >=
+            Config.LadderTraversalHealthyVelocityZ;
+
+        return forwardProcessed &&
+               lateralClear &&
+               upClear &&
+               forwardButton &&
+               climbing;
+    }
+
+    private void ApplyHumanForwardState(
+        CCSPlayerPawn pawn,
+        CCSPlayer_MovementServices movement,
+        Vector3 forward,
+        Vector3 left,
+        Vector3 up,
+        float pitchDegrees,
+        float yawDegrees)
+    {
+        try
+        {
+            movement.CmdForwardMove =
+                Config.LadderTraversalHumanForwardMove;
+            movement.CmdLeftMove = 0.0f;
+            movement.CmdUpMove = 0.0f;
+
+            movement.ForwardMove =
+                Config.LadderTraversalProcessedForwardMove;
+            movement.LeftMove = 0.0f;
+            movement.UpMove = 0.0f;
+
+            Span<ulong> buttonStates =
+                movement.Buttons.ButtonStates;
+
+            if (buttonStates.Length > 0)
+            {
+                buttonStates[0] |=
+                    (ulong)PlayerButtons.Forward;
+            }
+        }
+        catch
+        {
+            // A disappearing movement-services object is handled by the next
+            // normal bot-validation pass.
+        }
+
+        WriteMovementBasis(
+            movement,
+            forward,
+            left,
+            up);
+
+        WritePawnView(
+            pawn,
+            pitchDegrees,
+            yawDegrees);
+    }
+
+    private static MovementSnapshot ReadMovementSnapshot(
+        CCSPlayer_MovementServices movement)
+    {
+        MovementSnapshot snapshot = new();
+
+        try
+        {
+            snapshot.CmdForwardMove = movement.CmdForwardMove;
+            snapshot.CmdLeftMove = movement.CmdLeftMove;
+            snapshot.CmdUpMove = movement.CmdUpMove;
+            snapshot.ForwardMove = movement.ForwardMove;
+            snapshot.LeftMove = movement.LeftMove;
+            snapshot.UpMove = movement.UpMove;
+            snapshot.QueuedDown = movement.QueuedButtonDownMask;
+            snapshot.QueuedChange = movement.QueuedButtonChangeMask;
+            snapshot.LastCommandNumber = movement.LastCommandNumberProcessed;
+            snapshot.MaxSpeed = movement.Maxspeed;
+
+            Span<ulong> buttonStates = movement.Buttons.ButtonStates;
+            if (buttonStates.Length > 0) snapshot.Buttons0 = buttonStates[0];
+            if (buttonStates.Length > 1) snapshot.Buttons1 = buttonStates[1];
+            if (buttonStates.Length > 2) snapshot.Buttons2 = buttonStates[2];
+        }
+        catch
+        {
+            // Return the partial/default snapshot; the feedback loop will treat
+            // it as unhealthy and retry on the next fast pass.
+        }
+
+        return snapshot;
     }
 
     private static void BuildMovementBasis(
@@ -3009,8 +3147,11 @@ public sealed class LadderMapService
         CCSPlayerPawn pawn,
         TraversalSession traversal)
     {
-        if (!traversal.HumanControlInitialised)
+        if (!traversal.HumanControlInitialised &&
+            !traversal.ForwardHandoffActive)
+        {
             return;
+        }
 
         if (TryGetCsMovementServices(
                 pawn,
@@ -3021,14 +3162,27 @@ public sealed class LadderMapService
                 movement.CmdForwardMove = 0.0f;
                 movement.CmdLeftMove = 0.0f;
                 movement.CmdUpMove = 0.0f;
+                movement.ForwardMove = 0.0f;
+                movement.LeftMove = 0.0f;
+                movement.UpMove = 0.0f;
+
+                Span<ulong> buttonStates =
+                    movement.Buttons.ButtonStates;
+
+                if (buttonStates.Length > 0)
+                {
+                    buttonStates[0] &=
+                        ~(ulong)PlayerButtons.Forward;
+                }
             }
             catch
             {
-                // Valve will rewrite movement state on its next frame.
+                // Valve will rebuild movement state on its next command cycle.
             }
         }
 
         traversal.HumanControlInitialised = false;
+        traversal.ForwardHandoffActive = false;
     }
 
     private bool ShouldReleaseHumanControlNearTop(
@@ -3879,6 +4033,23 @@ public sealed class LadderMapService
         public List<LadderPathSample> Path { get; set; } = new();
     }
 
+    private sealed class MovementSnapshot
+    {
+        public float CmdForwardMove { get; set; }
+        public float CmdLeftMove { get; set; }
+        public float CmdUpMove { get; set; }
+        public float ForwardMove { get; set; }
+        public float LeftMove { get; set; }
+        public float UpMove { get; set; }
+        public ulong Buttons0 { get; set; }
+        public ulong Buttons1 { get; set; }
+        public ulong Buttons2 { get; set; }
+        public ulong QueuedDown { get; set; }
+        public ulong QueuedChange { get; set; }
+        public uint LastCommandNumber { get; set; }
+        public float MaxSpeed { get; set; }
+    }
+
     private sealed class TraversalSession
     {
         public int LadderId { get; set; }
@@ -3906,6 +4077,9 @@ public sealed class LadderMapService
 
         public bool HumanControlInitialised { get; set; }
         public bool HumanControlReleasedNearTop { get; set; }
+        public bool ForwardHandoffActive { get; set; }
+        public int ForwardCorrectionCount { get; set; }
+        public int ForwardHandoffCount { get; set; }
         public float LastBotMoveDiagnosticAt { get; set; } =
             float.NegativeInfinity;
     }

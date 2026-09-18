@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 3;
+    public override int Version { get; set; } = 4;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -19,7 +19,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool VerboseCorrectionDebug { get; set; } = false;
 
     public float DecisionIntervalSeconds { get; set; } = 0.10f;
-    public int FastActuatorEveryTicks { get; set; } = 2;
+    public int FastActuatorEveryTicks { get; set; } = 1;
 
     public bool AggressiveStateEnabled { get; set; } = true;
     public bool DisablePanic { get; set; } = true;
@@ -78,16 +78,21 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalJumpWindow { get; set; } = 8.0f;
     public int LadderEntryJumpPulseTicks { get; set; } = 3;
 
-    // Traversal control. Human diagnostics showed that a real player climbs by
-    // looking into/up the ladder while holding normalised Forward=1; UpMove stays
-    // zero. After a validated mount the plugin reproduces that input/basis until
-    // the learned top is reached, then releases control for Valve to exit.
+    // Traversal control. The human trace showed the full successful movement
+    // state: CmdForwardMove=1, processed ForwardMove=240 and Forward button held.
+    // Valve bot AI can overwrite processed movement on the next command cycle,
+    // so the plugin now uses the same feedback pattern as Knife Rush: observe the
+    // real state every fast tick, correct only when Valve has taken it back, and
+    // stop writing whenever the desired state is already surviving on its own.
     public float LadderTraversalMountTimeoutSeconds { get; set; } = 1.50f;
     public float LadderTraversalTimeoutSeconds { get; set; } = 10.0f;
     public float LadderTraversalClimbAssistProgress { get; set; } = 24.0f; // safe-progress threshold; legacy property name retained.
     public float LadderTraversalClimbStallSeconds { get; set; } = 0.65f;
-    public float LadderTraversalHumanPitchDegrees { get; set; } = -33.0f;
+    public float LadderTraversalHumanPitchDegrees { get; set; } = -9.0f;
     public float LadderTraversalHumanForwardMove { get; set; } = 1.0f;
+    public float LadderTraversalProcessedForwardMove { get; set; } = 240.0f;
+    public float LadderTraversalHealthyVelocityZ { get; set; } = 80.0f;
+    public float LadderTraversalProcessedMoveTolerance { get; set; } = 12.0f;
     public float LadderTraversalTopControlReleaseDistance { get; set; } = 12.0f;
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
     public float LadderTraversalProgressEpsilon { get; set; } = 2.0f;
@@ -128,7 +133,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public void Validate(Action<string> warn)
     {
         DecisionIntervalSeconds = Clamp(DecisionIntervalSeconds, 0.05f, 0.25f, 0.10f, nameof(DecisionIntervalSeconds), warn);
-        FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 2, nameof(FastActuatorEveryTicks), warn);
+        FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
 
         LadderManualTeacherSlot = Clamp(LadderManualTeacherSlot, -1, 63, -1, nameof(LadderManualTeacherSlot), warn);
@@ -194,8 +199,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalTimeoutSeconds = Clamp(LadderTraversalTimeoutSeconds, LadderTraversalMountTimeoutSeconds, 20.0f, Math.Max(10.0f, LadderTraversalMountTimeoutSeconds), nameof(LadderTraversalTimeoutSeconds), warn);
         LadderTraversalClimbAssistProgress = Clamp(LadderTraversalClimbAssistProgress, 8.0f, 64.0f, 24.0f, nameof(LadderTraversalClimbAssistProgress), warn);
         LadderTraversalClimbStallSeconds = Clamp(LadderTraversalClimbStallSeconds, 0.20f, 2.0f, 0.65f, nameof(LadderTraversalClimbStallSeconds), warn);
-        LadderTraversalHumanPitchDegrees = Clamp(LadderTraversalHumanPitchDegrees, -60.0f, -5.0f, -33.0f, nameof(LadderTraversalHumanPitchDegrees), warn);
+        LadderTraversalHumanPitchDegrees = Clamp(LadderTraversalHumanPitchDegrees, -60.0f, -2.0f, -9.0f, nameof(LadderTraversalHumanPitchDegrees), warn);
         LadderTraversalHumanForwardMove = Clamp(LadderTraversalHumanForwardMove, 0.10f, 1.0f, 1.0f, nameof(LadderTraversalHumanForwardMove), warn);
+        LadderTraversalProcessedForwardMove = Clamp(LadderTraversalProcessedForwardMove, 50.0f, 450.0f, 240.0f, nameof(LadderTraversalProcessedForwardMove), warn);
+        LadderTraversalHealthyVelocityZ = Clamp(LadderTraversalHealthyVelocityZ, 10.0f, 250.0f, 80.0f, nameof(LadderTraversalHealthyVelocityZ), warn);
+        LadderTraversalProcessedMoveTolerance = Clamp(LadderTraversalProcessedMoveTolerance, 1.0f, 100.0f, 12.0f, nameof(LadderTraversalProcessedMoveTolerance), warn);
         LadderTraversalTopControlReleaseDistance = Clamp(LadderTraversalTopControlReleaseDistance, 4.0f, 40.0f, 12.0f, nameof(LadderTraversalTopControlReleaseDistance), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
         LadderTraversalProgressEpsilon = Clamp(LadderTraversalProgressEpsilon, 0.25f, 12.0f, 2.0f, nameof(LadderTraversalProgressEpsilon), warn);
@@ -244,6 +252,20 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalTopControlReleaseDistance = 12.0f;
             LadderTraversalBotMoveLogIntervalSeconds = 0.20f;
             Version = 3;
+        }
+
+        if (Version < 4)
+        {
+            // Version 4 mirrors the successful Knife Rush feedback strategy.
+            // The actuator runs every tick and only rewrites ladder movement when
+            // Valve has removed the processed Forward/button state.
+            FastActuatorEveryTicks = 1;
+            LadderTraversalHumanPitchDegrees = -9.0f;
+            LadderTraversalHumanForwardMove = 1.0f;
+            LadderTraversalProcessedForwardMove = 240.0f;
+            LadderTraversalHealthyVelocityZ = 80.0f;
+            LadderTraversalProcessedMoveTolerance = 12.0f;
+            Version = 4;
         }
     }
 

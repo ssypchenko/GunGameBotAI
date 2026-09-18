@@ -88,8 +88,11 @@ public sealed class LadderMapService
     }
 
     public string CurrentMap => _document.Map;
-    public int LadderCount => _document.Ladders.Count;
-    public int CandidateCount => _candidates.Count;
+    public int LadderCount =>
+        _document.Ladders.Count(
+            ladder => ladder.ManualCertified);
+
+    public int CandidateCount => 0;
 
     public string CurrentPath =>
         string.IsNullOrWhiteSpace(_document.Map)
@@ -97,7 +100,9 @@ public sealed class LadderMapService
             : _store.GetMapPath(_document.Map);
 
     public IReadOnlyList<PhysicalLadder> Ladders =>
-        _document.Ladders;
+        _document.Ladders
+            .Where(ladder => ladder.ManualCertified)
+            .ToArray();
 
     public void OnMapStart(string mapName)
     {

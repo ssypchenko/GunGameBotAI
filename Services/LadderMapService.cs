@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 10 combines three responsibilities:
+/// Version 11 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -1319,7 +1319,7 @@ public sealed class LadderMapService
                 PhysicalLadder? mountedKnown =
                     FindKnownAtPosition(
                         position,
-                        out _);
+                        out float mountedDeviation);
 
                 if (mountedKnown != null &&
                     mountedKnown.HasBottomApproach &&
@@ -1332,6 +1332,7 @@ public sealed class LadderMapService
                         tracker,
                         mountedKnown,
                         position,
+                        mountedDeviation,
                         now);
                 }
             }
@@ -1450,6 +1451,20 @@ public sealed class LadderMapService
             if (traversal.Stage ==
                 TraversalStage.TopExit)
             {
+                if (velocity.Z <=
+                    -Config.LadderTraversalFallingReattachVelocityZ)
+                {
+                    FailTraversal(
+                        pawn,
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        $"reattached while falling after top exit (velocityZ={velocity.Z:0.###})",
+                        now);
+
+                    return true;
+                }
+
                 // A one-frame LADDER -> WALK -> LADDER transition is possible
                 // around the lip. Resume the existing climb without resetting
                 // ClimbStartZ/MaxClimbZ; the fast loop will keep driving upward.
@@ -1470,6 +1485,17 @@ public sealed class LadderMapService
                 traversal.HumanControlInitialised = false;
                 traversal.ForwardHandoffActive = false;
 
+                PhysicalLadder retargeted =
+                    RetargetClimbLadderIfClearlyCloser(
+                        state.Slot,
+                        traversal,
+                        ladder,
+                        position,
+                        now,
+                        "top-exit-reattach");
+
+                ladder = retargeted;
+
                 _info(
                     $"TOP-EXIT-REATTACH map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; velocity={Format(velocity)}; action=resume-climb");
@@ -1477,29 +1503,42 @@ public sealed class LadderMapService
             else if (traversal.Stage !=
                      TraversalStage.Climb)
             {
-                if (!IsMountCompatibleWithTarget(
+                PhysicalLadder? mountedIdentity =
+                    ResolveMountedLadderIdentity(
+                        state.Slot,
+                        traversal,
                         ladder,
                         position,
-                        out float mountDeviation))
+                        "fast-mount");
+
+                if (mountedIdentity == null)
                 {
+                    float rejectedDeviation =
+                        GetTargetPathDeviation(
+                            ladder,
+                            position);
+
                     _buttonPulses.Release(
                         state.Slot,
                         pawn);
 
                     _info(
                         $"MOUNT-REJECT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                        $"deviation={mountDeviation:0.###}; position={Format(position)}; reason=different-ladder");
+                        $"deviation={rejectedDeviation:0.###}; position={Format(position)}; " +
+                        $"identityRadius={Config.LadderTraversalIdentityMatchRadius:0.###}; reason=no-close-ladder-identity");
 
                     FailTraversal(
                         pawn,
                         state.Slot,
                         tracker,
                         ladder,
-                        "mounted different ladder",
+                        "mounted ladder identity not close enough",
                         now);
 
                     return true;
                 }
+
+                ladder = mountedIdentity;
 
                 EnterClimb(
                     pawn,
@@ -1536,6 +1575,15 @@ public sealed class LadderMapService
 
             if (onLadder)
             {
+                ladder =
+                    RetargetClimbLadderIfClearlyCloser(
+                        state.Slot,
+                        traversal,
+                        ladder,
+                        position,
+                        now,
+                        "fast-climb");
+
                 float referenceDeviation =
                     GetTargetPathDeviation(
                         ladder,
@@ -2592,6 +2640,7 @@ public sealed class LadderMapService
         BotTracker tracker,
         PhysicalLadder ladder,
         Vector3 position,
+        float deviation,
         float now)
     {
         tracker.Traversal =
@@ -2612,7 +2661,9 @@ public sealed class LadderMapService
 
         _info(
             $"MOUNT-OWNERSHIP map={_document.Map}; slot={slot}; id={ladder.Id}; " +
-            $"position={Format(position)}; source=already-on-ladder");
+            $"position={Format(position)}; deviation={deviation:0.###}; " +
+            $"identityRadius={Config.LadderTraversalIdentityMatchRadius:0.###}; " +
+            "source=already-on-ladder");
     }
 
     private void UpdateTraversalFromSlowLoop(
@@ -2674,29 +2725,42 @@ public sealed class LadderMapService
         if (traversal.Stage !=
             TraversalStage.Climb)
         {
-            if (!IsMountCompatibleWithTarget(
+            PhysicalLadder? mountedIdentity =
+                ResolveMountedLadderIdentity(
+                    state.Slot,
+                    traversal,
                     ladder,
                     position,
-                    out float mountDeviation))
+                    "slow-mount");
+
+            if (mountedIdentity == null)
             {
+                float rejectedDeviation =
+                    GetTargetPathDeviation(
+                        ladder,
+                        position);
+
                 _buttonPulses.Release(
                     state.Slot,
                     pawn);
 
                 _info(
                     $"MOUNT-REJECT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                    $"deviation={mountDeviation:0.###}; position={Format(position)}; source=slow-loop");
+                    $"deviation={rejectedDeviation:0.###}; position={Format(position)}; " +
+                    $"identityRadius={Config.LadderTraversalIdentityMatchRadius:0.###}; source=slow-loop");
 
                 FailTraversal(
                     pawn,
                     state.Slot,
                     tracker,
                     ladder,
-                    "mounted different ladder",
+                    "mounted ladder identity not close enough",
                     now);
 
                 return;
             }
+
+            ladder = mountedIdentity;
 
             EnterClimb(
                 pawn,
@@ -3819,7 +3883,7 @@ public sealed class LadderMapService
                 position);
 
         return deviation <=
-               Config.LadderTraversalMountValidationRadius;
+               Config.LadderTraversalIdentityMatchRadius;
     }
 
 
@@ -4180,6 +4244,128 @@ public sealed class LadderMapService
         Vector3 position,
         out float selectedDeviation)
     {
+        return FindClosestKnownLadderAtPosition(
+            position,
+            requireBottomMountWindow: true,
+            Config.LadderTraversalIdentityMatchRadius,
+            out selectedDeviation);
+    }
+
+    private PhysicalLadder? ResolveMountedLadderIdentity(
+        int slot,
+        TraversalSession traversal,
+        PhysicalLadder planned,
+        Vector3 position,
+        string source)
+    {
+        PhysicalLadder? closest =
+            FindClosestKnownLadderAtPosition(
+                position,
+                requireBottomMountWindow: true,
+                Config.LadderTraversalIdentityMatchRadius,
+                out float closestDeviation);
+
+        if (closest == null)
+            return null;
+
+        float plannedDeviation =
+            GetTargetPathDeviation(
+                planned,
+                position);
+
+        if (closest.Id != planned.Id)
+        {
+            int oldId =
+                traversal.LadderId;
+
+            traversal.LadderId =
+                closest.Id;
+            traversal.LastLadderSwitchAt =
+                float.NegativeInfinity;
+            traversal.LadderSwitchCount++;
+            traversal.TopZoneLogged = false;
+
+            _info(
+                $"MOUNT-ID-SWITCH map={_document.Map}; slot={slot}; oldId={oldId}; newId={closest.Id}; " +
+                $"oldDeviation={plannedDeviation:0.###}; newDeviation={closestDeviation:0.###}; " +
+                $"position={Format(position)}; source={source}");
+        }
+
+        return closest;
+    }
+
+    private PhysicalLadder RetargetClimbLadderIfClearlyCloser(
+        int slot,
+        TraversalSession traversal,
+        PhysicalLadder current,
+        Vector3 position,
+        float now,
+        string source)
+    {
+        if (now - traversal.LastLadderSwitchAt <
+            Config.LadderTraversalLadderSwitchMinIntervalSeconds)
+        {
+            return current;
+        }
+
+        float currentDeviation =
+            GetTargetPathDeviation(
+                current,
+                position);
+
+        PhysicalLadder? closest =
+            FindClosestKnownLadderAtPosition(
+                position,
+                requireBottomMountWindow: false,
+                Config.LadderTraversalIdentityMatchRadius,
+                out float closestDeviation);
+
+        if (closest == null ||
+            closest.Id == current.Id)
+        {
+            return current;
+        }
+
+        bool currentOutsideIdentity =
+            currentDeviation >
+            Config.LadderTraversalIdentityMatchRadius;
+
+        bool clearlyCloser =
+            closestDeviation +
+            Config.LadderTraversalLadderSwitchAdvantage <=
+            currentDeviation;
+
+        if (!currentOutsideIdentity &&
+            !clearlyCloser)
+        {
+            return current;
+        }
+
+        int oldId =
+            current.Id;
+
+        traversal.LadderId =
+            closest.Id;
+        traversal.LastLadderSwitchAt =
+            now;
+        traversal.LadderSwitchCount++;
+        traversal.TopZoneLogged = false;
+
+        _info(
+            $"LADDER-ID-SWITCH map={_document.Map}; slot={slot}; oldId={oldId}; newId={closest.Id}; " +
+            $"oldDeviation={currentDeviation:0.###}; newDeviation={closestDeviation:0.###}; " +
+            $"advantage={(currentDeviation - closestDeviation):0.###}; position={Format(position)}; " +
+            $"switchCount={traversal.LadderSwitchCount}; source={source}");
+
+        return closest;
+    }
+
+    private PhysicalLadder? FindClosestKnownLadderAtPosition(
+        Vector3 position,
+        bool requireBottomMountWindow,
+        float maximumDeviation,
+        out float selectedDeviation)
+    {
         PhysicalLadder? selected = null;
         selectedDeviation = float.PositiveInfinity;
 
@@ -4188,7 +4374,16 @@ public sealed class LadderMapService
             if (!ladder.HasBottomApproach)
                 continue;
 
-            if (!IsUsableAlreadyMountedPosition(ladder, position))
+            bool verticalMatch =
+                requireBottomMountWindow
+                    ? IsUsableAlreadyMountedPosition(
+                        ladder,
+                        position)
+                    : IsWithinKnownLadderVerticalSpan(
+                        ladder,
+                        position);
+
+            if (!verticalMatch)
                 continue;
 
             float deviation =
@@ -4196,8 +4391,7 @@ public sealed class LadderMapService
                     ladder,
                     position);
 
-            if (deviation <=
-                    Config.LadderTraversalMountValidationRadius &&
+            if (deviation <= maximumDeviation &&
                 deviation < selectedDeviation)
             {
                 selected = ladder;
@@ -4206,6 +4400,26 @@ public sealed class LadderMapService
         }
 
         return selected;
+    }
+
+    private bool IsWithinKnownLadderVerticalSpan(
+        PhysicalLadder ladder,
+        Vector3 position)
+    {
+        float lower =
+            MathF.Min(
+                ladder.BottomZ,
+                ladder.BottomMount.Z) -
+            Config.LadderTraversalMountedBelowTolerance;
+
+        float upper =
+            MathF.Max(
+                ladder.TopZ,
+                ladder.BottomMount.Z) +
+            Config.LadderTraversalTopExitTolerance;
+
+        return position.Z >= lower &&
+               position.Z <= upper;
     }
 
     private PhysicalLadder? FindCandidateByAnchor(
@@ -4586,6 +4800,10 @@ public sealed class LadderMapService
         public float LastProgressAt { get; set; } =
             float.NegativeInfinity;
         public bool SafeProgressReached { get; set; }
+
+        public float LastLadderSwitchAt { get; set; } =
+            float.NegativeInfinity;
+        public int LadderSwitchCount { get; set; }
 
         public bool HumanControlInitialised { get; set; }
         public bool TopZoneLogged { get; set; }

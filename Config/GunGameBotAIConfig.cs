@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 4;
+    public override int Version { get; set; } = 5;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -93,7 +93,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalProcessedForwardMove { get; set; } = 240.0f;
     public float LadderTraversalHealthyVelocityZ { get; set; } = 80.0f;
     public float LadderTraversalProcessedMoveTolerance { get; set; } = 12.0f;
+    // Legacy name retained: this is now only the distance at which we log
+    // entry into the top zone. It no longer releases or zeroes Forward.
     public float LadderTraversalTopControlReleaseDistance { get; set; } = 12.0f;
+    public float LadderTraversalTopExitAssistSeconds { get; set; } = 0.20f;
+    public float LadderTraversalTopExitPitchDegrees { get; set; } = 0.0f;
+    public float LadderTraversalTopExitMaxDrop { get; set; } = 24.0f;
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
     public float LadderTraversalProgressEpsilon { get; set; } = 2.0f;
     public float LadderTraversalTopExitTolerance { get; set; } = 20.0f;
@@ -205,6 +210,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalHealthyVelocityZ = Clamp(LadderTraversalHealthyVelocityZ, 10.0f, 250.0f, 80.0f, nameof(LadderTraversalHealthyVelocityZ), warn);
         LadderTraversalProcessedMoveTolerance = Clamp(LadderTraversalProcessedMoveTolerance, 1.0f, 100.0f, 12.0f, nameof(LadderTraversalProcessedMoveTolerance), warn);
         LadderTraversalTopControlReleaseDistance = Clamp(LadderTraversalTopControlReleaseDistance, 4.0f, 40.0f, 12.0f, nameof(LadderTraversalTopControlReleaseDistance), warn);
+        LadderTraversalTopExitAssistSeconds = Clamp(LadderTraversalTopExitAssistSeconds, 0.05f, 0.75f, 0.20f, nameof(LadderTraversalTopExitAssistSeconds), warn);
+        LadderTraversalTopExitPitchDegrees = Clamp(LadderTraversalTopExitPitchDegrees, -20.0f, 20.0f, 0.0f, nameof(LadderTraversalTopExitPitchDegrees), warn);
+        LadderTraversalTopExitMaxDrop = Clamp(LadderTraversalTopExitMaxDrop, 4.0f, 64.0f, 24.0f, nameof(LadderTraversalTopExitMaxDrop), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
         LadderTraversalProgressEpsilon = Clamp(LadderTraversalProgressEpsilon, 0.25f, 12.0f, 2.0f, nameof(LadderTraversalProgressEpsilon), warn);
         LadderTraversalTopExitTolerance = Clamp(LadderTraversalTopExitTolerance, 4.0f, 64.0f, 20.0f, nameof(LadderTraversalTopExitTolerance), warn);
@@ -266,6 +274,19 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalHealthyVelocityZ = 80.0f;
             LadderTraversalProcessedMoveTolerance = 12.0f;
             Version = 4;
+        }
+
+        if (Version < 5)
+        {
+            // Version 5 keeps the climb feedback active until a real
+            // MOVETYPE_LADDER -> WALK transition. It never writes a zero/stop
+            // command merely to release ownership, and manually certified
+            // ladders use ManualExit for a short top-platform push.
+            FastActuatorEveryTicks = 1;
+            LadderTraversalTopExitAssistSeconds = 0.20f;
+            LadderTraversalTopExitPitchDegrees = 0.0f;
+            LadderTraversalTopExitMaxDrop = 24.0f;
+            Version = 5;
         }
     }
 

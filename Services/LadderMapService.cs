@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 9 combines three responsibilities:
+/// Version 10 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -1457,9 +1457,14 @@ public sealed class LadderMapService
                     TraversalStage.Climb;
                 traversal.StageStartedAt = now;
                 traversal.ExitStartedPosition = default;
-                traversal.ExitDirection = default;
+                traversal.ExitPushDirection = default;
+                traversal.ExitTargetReached = false;
+                traversal.ExitTargetReachedAt = float.NegativeInfinity;
+                traversal.ExitTargetReachedPosition = default;
                 traversal.TopExitControlInitialised = false;
                 traversal.TopExitCorrectionCount = 0;
+                traversal.LastLoggedManualExitDistance =
+                    float.PositiveInfinity;
                 traversal.LastTopExitDiagnosticAt =
                     float.NegativeInfinity;
                 traversal.HumanControlInitialised = false;
@@ -1736,6 +1741,117 @@ public sealed class LadderMapService
                 return true;
             }
 
+            if (ladder.ManualExit == null)
+            {
+                FailTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    "manual exit disappeared during top exit",
+                    now);
+
+                return true;
+            }
+
+            Vector3 manualExit =
+                ladder.ManualExit.ToVector3();
+
+            float manualExitDistance =
+                Distance2D(
+                    position,
+                    manualExit);
+
+            float exitElapsed =
+                MathF.Max(
+                    0.0f,
+                    now -
+                    traversal.StageStartedAt);
+
+            if (!traversal.ExitTargetReached)
+            {
+                if (manualExitDistance <=
+                    Config.LadderTraversalTopExitReachDistance)
+                {
+                    traversal.ExitTargetReached = true;
+                    traversal.ExitTargetReachedAt = now;
+                    traversal.ExitTargetReachedPosition = position;
+
+                    // Force a correction on this tick because control changes
+                    // from steering toward ManualExit to continuing through it
+                    // in the learned human exit direction.
+                    traversal.TopExitControlInitialised = false;
+
+                    _info(
+                        $"TOP-EXIT-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"position={Format(position)}; target={Format(manualExit)}; " +
+                        $"distance={manualExitDistance:0.###}; pushDirection={Format(traversal.ExitPushDirection)}");
+                }
+                else if (exitElapsed >=
+                         Config.LadderTraversalTopExitTargetTimeoutSeconds)
+                {
+                    FailTraversal(
+                        pawn,
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        $"top exit target timeout (distance={manualExitDistance:0.###})",
+                        now);
+
+                    return true;
+                }
+            }
+
+            if (traversal.ExitTargetReached)
+            {
+                Vector3 pushDelta =
+                    position -
+                    traversal.ExitTargetReachedPosition;
+
+                pushDelta.Z = 0.0f;
+
+                float pushAlong =
+                    Vector3.Dot(
+                        pushDelta,
+                        traversal.ExitPushDirection);
+
+                float pushElapsed =
+                    MathF.Max(
+                        0.0f,
+                        now -
+                        traversal.ExitTargetReachedAt);
+
+                if (pushAlong >=
+                    Config.LadderTraversalTopExitPushDistance)
+                {
+                    CompleteTraversal(
+                        pawn,
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        position,
+                        progress,
+                        "manual-exit-push",
+                        now);
+
+                    return true;
+                }
+
+                if (pushElapsed >=
+                    Config.LadderTraversalTopExitPushTimeoutSeconds)
+                {
+                    FailTraversal(
+                        pawn,
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        $"top exit push timeout (along={pushAlong:0.###})",
+                        now);
+
+                    return true;
+                }
+            }
+
             ApplyTopExitControl(
                 pawn,
                 bot,
@@ -1745,38 +1861,6 @@ public sealed class LadderMapService
                 velocity,
                 traversal,
                 now);
-
-            float exitElapsed =
-                MathF.Max(
-                    0.0f,
-                    now -
-                    traversal.StageStartedAt);
-
-            float exitTravel =
-                Distance2D(
-                    position,
-                    traversal.ExitStartedPosition);
-
-            if (exitTravel >=
-                    Config.LadderTraversalExitHorizontalDistance ||
-                exitElapsed >=
-                    Config.LadderTraversalTopExitAssistSeconds)
-            {
-                CompleteTraversal(
-                    pawn,
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    position,
-                    progress,
-                    exitTravel >=
-                        Config.LadderTraversalExitHorizontalDistance
-                            ? "manual-exit-distance"
-                            : "manual-exit-time",
-                    now);
-
-                return true;
-            }
 
             return true;
         }
@@ -2683,9 +2767,13 @@ public sealed class LadderMapService
         traversal.ForwardCorrectionCount = 0;
         traversal.ForwardHandoffCount = 0;
         traversal.ExitStartedPosition = default;
-        traversal.ExitDirection = default;
+        traversal.ExitPushDirection = default;
+        traversal.ExitTargetReached = false;
+        traversal.ExitTargetReachedAt = float.NegativeInfinity;
+        traversal.ExitTargetReachedPosition = default;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
+        traversal.LastLoggedManualExitDistance = float.PositiveInfinity;
         traversal.LastBotMoveDiagnosticAt = float.NegativeInfinity;
         traversal.LastTopExitDiagnosticAt = float.NegativeInfinity;
 
@@ -3072,9 +3160,13 @@ public sealed class LadderMapService
             return false;
         }
 
-        if (!TryGetManualExitDirection(
+        Vector3 manualExit =
+            ladder.ManualExit.ToVector3();
+
+        if (!TryGetLearnedExitPushDirection(
                 ladder,
-                out Vector3 exitDirection))
+                position,
+                out Vector3 pushDirection))
         {
             return false;
         }
@@ -3083,22 +3175,28 @@ public sealed class LadderMapService
             TraversalStage.TopExit;
         traversal.StageStartedAt = now;
         traversal.ExitStartedPosition = position;
-        traversal.ExitDirection = exitDirection;
+        traversal.ExitPushDirection = pushDirection;
+        traversal.ExitTargetReached = false;
+        traversal.ExitTargetReachedAt = float.NegativeInfinity;
+        traversal.ExitTargetReachedPosition = default;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
+        traversal.LastLoggedManualExitDistance =
+            float.PositiveInfinity;
         traversal.LastTopExitDiagnosticAt =
             float.NegativeInfinity;
 
         // Stop considering the ladder-climb feedback state "owned", but do not
-        // write zeros into movement. The first TopExit correction below will
-        // replace it with the measured human exit direction.
+        // write zeros into movement. TopExit immediately replaces it with its
+        // own TARGET steering state on the same fast actuator.
         traversal.HumanControlInitialised = false;
         traversal.ForwardHandoffActive = false;
 
         _info(
             $"TOP-EXIT-START map={_document.Map}; id={ladder.Id}; " +
             $"position={Format(position)}; peakZ={traversal.MaxClimbZ:0.###}; topZ={ladder.TopZ:0.###}; " +
-            $"manualExit={Format(ladder.ManualExit.ToVector3())}; direction={Format(exitDirection)}");
+            $"target={Format(manualExit)}; distance={Distance2D(position, manualExit):0.###}; " +
+            $"pushDirection={Format(pushDirection)}");
 
         return true;
     }
@@ -3119,14 +3217,43 @@ public sealed class LadderMapService
 
         if (!TryGetCsMovementServices(
                 pawn,
-                out CCSPlayer_MovementServices movement))
+                out CCSPlayer_MovementServices movement) ||
+            ladder.ManualExit == null)
         {
             return;
         }
 
-        Vector3 exitDirection =
-            HorizontalNormalised(
-                traversal.ExitDirection);
+        Vector3 manualExit =
+            ladder.ManualExit.ToVector3();
+
+        float manualExitDistance =
+            Distance2D(
+                position,
+                manualExit);
+
+        string phase;
+        Vector3 exitDirection;
+
+        if (traversal.ExitTargetReached)
+        {
+            phase = "push";
+            exitDirection =
+                HorizontalNormalised(
+                    traversal.ExitPushDirection);
+        }
+        else
+        {
+            phase = "target";
+
+            // Critical v10 change: steer from the bot's CURRENT position to the
+            // saved human ManualExit every fast tick. A precomputed vector from
+            // the human top reference can point away from ManualExit when the
+            // bot detaches from a different XY position.
+            exitDirection =
+                HorizontalNormalised(
+                    manualExit -
+                    position);
+        }
 
         if (exitDirection.LengthSquared() < 0.25f)
             return;
@@ -3210,22 +3337,40 @@ public sealed class LadderMapService
                 ReadMovementSnapshot(
                     movement);
 
-            float exitTravel =
-                Distance2D(
-                    position,
-                    traversal.ExitStartedPosition);
+            float previousDistance =
+                traversal.LastLoggedManualExitDistance;
 
-            float manualExitDistance =
-                ladder.ManualExit == null
-                    ? -1.0f
-                    : Distance2D(
-                        position,
-                        ladder.ManualExit.ToVector3());
+            bool havePreviousDistance =
+                float.IsFinite(previousDistance);
+
+            bool closing =
+                !havePreviousDistance ||
+                manualExitDistance <
+                    previousDistance -
+                    0.05f;
+
+            traversal.LastLoggedManualExitDistance =
+                manualExitDistance;
+
+            Vector3 pushDelta =
+                position -
+                traversal.ExitTargetReachedPosition;
+
+            pushDelta.Z = 0.0f;
+
+            float pushAlong =
+                traversal.ExitTargetReached
+                    ? Vector3.Dot(
+                        pushDelta,
+                        traversal.ExitPushDirection)
+                    : 0.0f;
 
             _debug(
-                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; action={action}; " +
-                $"pos={Format(position)}; vel={Format(velocity)}; direction={Format(exitDirection)}; " +
-                $"travel={exitTravel:0.###}; manualExitDistance={manualExitDistance:0.###}; " +
+                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; phase={phase}; action={action}; " +
+                $"pos={Format(position)}; vel={Format(velocity)}; target={Format(manualExit)}; " +
+                $"direction={Format(exitDirection)}; distance={manualExitDistance:0.###}; " +
+                $"previousDistance={(havePreviousDistance ? previousDistance.ToString("0.###") : "n/a")}; " +
+                $"closing={closing}; pushAlong={pushAlong:0.###}; " +
                 $"preCmd=({before.CmdForwardMove:0.###},{before.CmdLeftMove:0.###},{before.CmdUpMove:0.###}); " +
                 $"preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
                 $"preButtons=0x{before.Buttons0:X}; " +
@@ -3235,8 +3380,9 @@ public sealed class LadderMapService
         }
     }
 
-    private bool TryGetManualExitDirection(
+    private bool TryGetLearnedExitPushDirection(
         PhysicalLadder ladder,
+        Vector3 currentPosition,
         out Vector3 direction)
     {
         direction = default;
@@ -3247,6 +3393,9 @@ public sealed class LadderMapService
         Vector3 manualExit =
             ladder.ManualExit.ToVector3();
 
+        // This direction is deliberately NOT used to reach ManualExit. It is
+        // used only after the bot is already at the human exit point, to carry
+        // it a few more units through the lip and onto the platform.
         Vector3 topReference =
             new(
                 ladder.Anchor.X,
@@ -3283,7 +3432,7 @@ public sealed class LadderMapService
             direction =
                 HorizontalNormalised(
                     manualExit -
-                    ladder.Anchor.ToVector3());
+                    currentPosition);
         }
 
         if (direction.LengthSquared() < 0.25f &&
@@ -4445,9 +4594,16 @@ public sealed class LadderMapService
         public int ForwardHandoffCount { get; set; }
 
         public Vector3 ExitStartedPosition { get; set; }
-        public Vector3 ExitDirection { get; set; }
+        public Vector3 ExitPushDirection { get; set; }
+        public bool ExitTargetReached { get; set; }
+        public float ExitTargetReachedAt { get; set; } =
+            float.NegativeInfinity;
+        public Vector3 ExitTargetReachedPosition { get; set; }
+
         public bool TopExitControlInitialised { get; set; }
         public int TopExitCorrectionCount { get; set; }
+        public float LastLoggedManualExitDistance { get; set; } =
+            float.PositiveInfinity;
 
         public float LastBotMoveDiagnosticAt { get; set; } =
             float.NegativeInfinity;

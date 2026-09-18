@@ -297,7 +297,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalTopExitMaxDrop = 24.0f;
             Version = 5;
         }
-    }
         if (Version < 6)
         {
             // Version 6 fixes the top-exit steering discovered in live logs:
@@ -311,7 +310,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalTopExitPushTimeoutSeconds = 0.35f;
             Version = 6;
         }
-
+    }
 
     private static int Clamp(int value, int minimum, int maximum, int fallback, string name, Action<string> warn)
     {

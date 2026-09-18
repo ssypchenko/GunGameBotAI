@@ -68,7 +68,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.6.2";
+    public override string ModuleVersion => "0.6.3";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -238,7 +238,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         */
         _buttonPulses.Cancel(slot);
         _registry.Remove(slot);
-        _ladderMap?.RemoveSlot(slot);
+        _ladderMap?.RemoveSlot(slot, "spawn-grace");
     }
 
     private bool IsBotInSpawnGrace(
@@ -748,7 +748,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ReleaseButtonPulse(playerSlot);
 
         _botSpawnGrace.Remove(playerSlot);
-        _ladderMap?.RemoveSlot(playerSlot);
+        _ladderMap?.RemoveSlot(playerSlot, "disconnect");
         _registry.Remove(playerSlot);
     }
 
@@ -805,7 +805,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             ReleaseButtonPulse(slot);
 
             _botSpawnGrace.Remove(slot);
-            _ladderMap?.RemoveSlot(slot);
+            _ladderMap?.RemoveSlot(slot, "player-death");
             _registry.Remove(slot);
         }
 
@@ -866,7 +866,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             ReleaseButtonPulse(slot);
 
             _botSpawnGrace.Remove(slot);
-            _ladderMap?.RemoveSlot(slot);
+            _ladderMap?.RemoveSlot(slot, "bot-takeover");
             _registry.DeactivateActuator(slot);
         }
 

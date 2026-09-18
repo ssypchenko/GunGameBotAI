@@ -165,7 +165,7 @@ public sealed class LadderMapService
                 LogClimbResult(
                     slot,
                     tracker.Traversal,
-                    outcome: "abort",
+                    "abort",
                     reason,
                     Server.CurrentTime);
             }

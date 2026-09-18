@@ -954,20 +954,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] learned ladder traversal={(enabled ? "enabled" : "disabled")}.");
     }
 
-    [ConsoleCommand("css_ggbotai_ladder_learning", "Enable or disable persistent ladder learning.")]
-    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    [ConsoleCommand("css_ggbotai_ladder_learning", "Show ladder learning mode.")]
+    [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnLadderLearningCommand(CCSPlayerController? player, CommandInfo command)
     {
-        if (!TryParseBinary(command.GetArg(1), out bool enabled))
-        {
-            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_ladder_learning 0|1");
-            return;
-        }
-
-        Config.LadderLearningEnabled = enabled;
-        PersistConfig(command);
+        Config.LadderLearningEnabled = false;
         command.ReplyToCommand(
-            $"[GunGameBotAI] persistent ladder learning={(enabled ? "enabled" : "disabled")}.");
+            "[GunGameBotAI] ladder learning=manual-only; bots never create persistent ladder records.");
     }
 
     [ConsoleCommand("css_ggbotai_debug", "Enable or disable focused GunGameBotAI diagnostics.")]
@@ -1180,7 +1173,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +
-            $"learning={Config.LadderLearningEnabled}; traversal={Config.LadderEntryJumpEnabled}.");
+            $"learning=manual-only; traversal={Config.LadderEntryJumpEnabled}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
 

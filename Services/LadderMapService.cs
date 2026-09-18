@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 13 combines two responsibilities:
+/// Version 14 combines two responsibilities:
 ///
 /// 1) High-confidence manual teaching. When configured conditions are met
 ///    (by default: no bots and exactly one live human), successful human ladder
@@ -1332,6 +1332,7 @@ public sealed class LadderMapService
             {
                 PhysicalLadder? mountedKnown =
                     FindKnownAtPosition(
+                        pawn,
                         position,
                         out float mountedDeviation);
 
@@ -1487,13 +1488,8 @@ public sealed class LadderMapService
                 traversal.StageStartedAt = now;
                 traversal.ExitStartedPosition = default;
                 traversal.ExitPushDirection = default;
-                traversal.ExitTargetReached = false;
-                traversal.ExitTargetReachedAt = float.NegativeInfinity;
-                traversal.ExitTargetReachedPosition = default;
                 traversal.TopExitControlInitialised = false;
                 traversal.TopExitCorrectionCount = 0;
-                traversal.LastLoggedManualExitDistance =
-                    float.PositiveInfinity;
                 traversal.LastTopExitDiagnosticAt =
                     float.NegativeInfinity;
                 traversal.HumanControlInitialised = false;
@@ -1508,6 +1504,7 @@ public sealed class LadderMapService
             {
                 PhysicalLadder? mountedIdentity =
                     ResolveMountedLadderIdentity(
+                        pawn,
                         state.Slot,
                         traversal,
                         ladder,
@@ -1790,115 +1787,74 @@ public sealed class LadderMapService
                 return true;
             }
 
-            if (ladder.ManualExit == null)
+            if (velocity.Z <=
+                -Config.LadderTraversalFallingReattachVelocityZ)
             {
                 FailTraversal(
                     pawn,
                     state.Slot,
                     tracker,
                     ladder,
-                    "manual exit disappeared during top exit",
+                    $"falling during top exit (velocityZ={velocity.Z:0.###})",
                     now);
 
                 return true;
             }
 
-            Vector3 manualExit =
-                ladder.ManualExit.ToVector3();
+            Vector3 pushDelta =
+                position -
+                traversal.ExitStartedPosition;
 
-            float manualExitDistance =
-                Distance2D(
-                    position,
-                    manualExit);
+            pushDelta.Z = 0.0f;
 
-            float exitElapsed =
+            float pushAlong =
+                Vector3.Dot(
+                    pushDelta,
+                    traversal.ExitPushDirection);
+
+            float pushElapsed =
                 MathF.Max(
                     0.0f,
                     now -
                     traversal.StageStartedAt);
 
-            if (!traversal.ExitTargetReached)
+            float dropBelowKnownTop =
+                ladder.TopZ -
+                position.Z;
+
+            bool safeHeight =
+                dropBelowKnownTop <=
+                Config.LadderTraversalTopExitSuccessMaxDrop;
+
+            if (pushAlong >=
+                    Config.LadderTraversalTopExitPushDistance &&
+                safeHeight)
             {
-                if (manualExitDistance <=
-                    Config.LadderTraversalTopExitReachDistance)
-                {
-                    traversal.ExitTargetReached = true;
-                    traversal.ExitTargetReachedAt = now;
-                    traversal.ExitTargetReachedPosition = position;
+                CompleteTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    position,
+                    progress,
+                    "ladder-normal-push",
+                    now);
 
-                    // Force a correction on this tick because control changes
-                    // from steering toward ManualExit to continuing through it
-                    // in the learned human exit direction.
-                    traversal.TopExitControlInitialised = false;
-
-                    _info(
-                        $"TOP-EXIT-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                        $"position={Format(position)}; target={Format(manualExit)}; " +
-                        $"distance={manualExitDistance:0.###}; pushDirection={Format(traversal.ExitPushDirection)}");
-                }
-                else if (exitElapsed >=
-                         Config.LadderTraversalTopExitTargetTimeoutSeconds)
-                {
-                    FailTraversal(
-                        pawn,
-                        state.Slot,
-                        tracker,
-                        ladder,
-                        $"top exit target timeout (distance={manualExitDistance:0.###})",
-                        now);
-
-                    return true;
-                }
+                return true;
             }
 
-            if (traversal.ExitTargetReached)
+            if (pushElapsed >=
+                Config.LadderTraversalTopExitPushTimeoutSeconds)
             {
-                Vector3 pushDelta =
-                    position -
-                    traversal.ExitTargetReachedPosition;
+                FailTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    $"top exit push timeout (along={pushAlong:0.###}, topDrop={dropBelowKnownTop:0.###})",
+                    now);
 
-                pushDelta.Z = 0.0f;
-
-                float pushAlong =
-                    Vector3.Dot(
-                        pushDelta,
-                        traversal.ExitPushDirection);
-
-                float pushElapsed =
-                    MathF.Max(
-                        0.0f,
-                        now -
-                        traversal.ExitTargetReachedAt);
-
-                if (pushAlong >=
-                    Config.LadderTraversalTopExitPushDistance)
-                {
-                    CompleteTraversal(
-                        pawn,
-                        state.Slot,
-                        tracker,
-                        ladder,
-                        position,
-                        progress,
-                        "manual-exit-push",
-                        now);
-
-                    return true;
-                }
-
-                if (pushElapsed >=
-                    Config.LadderTraversalTopExitPushTimeoutSeconds)
-                {
-                    FailTraversal(
-                        pawn,
-                        state.Slot,
-                        tracker,
-                        ladder,
-                        $"top exit push timeout (along={pushAlong:0.###})",
-                        now);
-
-                    return true;
-                }
+                return true;
             }
 
             ApplyTopExitControl(
@@ -2728,6 +2684,7 @@ public sealed class LadderMapService
         {
             PhysicalLadder? mountedIdentity =
                 ResolveMountedLadderIdentity(
+                    pawn,
                     state.Slot,
                     traversal,
                     ladder,
@@ -2846,12 +2803,10 @@ public sealed class LadderMapService
         traversal.ForwardHandoffCount = 0;
         traversal.ExitStartedPosition = default;
         traversal.ExitPushDirection = default;
-        traversal.ExitTargetReached = false;
-        traversal.ExitTargetReachedAt = float.NegativeInfinity;
-        traversal.ExitTargetReachedPosition = default;
+        traversal.LastLadderNormal = default;
+        traversal.HasLastLadderNormal = false;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
-        traversal.LastLoggedManualExitDistance = float.PositiveInfinity;
         traversal.LastBotMoveDiagnosticAt = float.NegativeInfinity;
         traversal.LastTopExitDiagnosticAt = float.NegativeInfinity;
 
@@ -2860,9 +2815,26 @@ public sealed class LadderMapService
                 ladder,
                 position);
 
+        Vector3? actualNormal =
+            TryGetCurrentLadderNormal(
+                pawn,
+                out Vector3 mountedNormal)
+                ? mountedNormal
+                : null;
+
+        float normalDot =
+            actualNormal.HasValue
+                ? GetLadderNormalCompatibility(
+                    ladder,
+                    position,
+                    actualNormal.Value)
+                : float.NaN;
+
         _info(
             $"MOUNT map={_document.Map}; slot={slot}; id={ladder.Id}; " +
             $"position={Format(position)}; deviation={referenceDeviation:0.###}; " +
+            $"actualNormal={(actualNormal.HasValue ? Format(actualNormal.Value) : "n/a")}; " +
+            $"normalDot={(float.IsFinite(normalDot) ? normalDot.ToString("0.###") : "n/a")}; " +
             $"manual={ladder.ManualCertified}; jumpReleased=true");
     }
 
@@ -3078,6 +3050,17 @@ public sealed class LadderMapService
                 ladderNormal.LengthSquared() > 0.0001f)
             {
                 haveNormal = true;
+
+                Vector3 horizontalNormal =
+                    HorizontalNormalised(
+                        ladderNormal);
+
+                if (horizontalNormal.LengthSquared() >= 0.25f)
+                {
+                    traversal.LastLadderNormal =
+                        horizontalNormal;
+                    traversal.HasLastLadderNormal = true;
+                }
             }
         }
         catch
@@ -3387,11 +3370,8 @@ public sealed class LadderMapService
         Vector3 position,
         float now)
     {
-        if (!ladder.ManualCertified ||
-            ladder.ManualExit == null)
-        {
+        if (!ladder.ManualCertified)
             return false;
-        }
 
         bool haveUsefulTop =
             ladder.TopZ >
@@ -3406,13 +3386,11 @@ public sealed class LadderMapService
             return false;
         }
 
-        Vector3 manualExit =
-            ladder.ManualExit.ToVector3();
-
-        if (!TryGetLearnedExitPushDirection(
+        if (!TryGetTopExitDirection(
                 ladder,
-                position,
-                out Vector3 pushDirection))
+                traversal,
+                out Vector3 pushDirection,
+                out string directionSource))
         {
             return false;
         }
@@ -3422,27 +3400,29 @@ public sealed class LadderMapService
         traversal.StageStartedAt = now;
         traversal.ExitStartedPosition = position;
         traversal.ExitPushDirection = pushDirection;
-        traversal.ExitTargetReached = false;
-        traversal.ExitTargetReachedAt = float.NegativeInfinity;
-        traversal.ExitTargetReachedPosition = default;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
-        traversal.LastLoggedManualExitDistance =
-            float.PositiveInfinity;
         traversal.LastTopExitDiagnosticAt =
             float.NegativeInfinity;
 
         // Stop considering the ladder-climb feedback state "owned", but do not
-        // write zeros into movement. TopExit immediately replaces it with its
-        // own TARGET steering state on the same fast actuator.
+        // write zeros into movement. TopExit continues the same human-style
+        // forward motion horizontally, directly through the ladder lip.
         traversal.HumanControlInitialised = false;
         traversal.ForwardHandoffActive = false;
+
+        float manualExitDistance =
+            ladder.ManualExit != null
+                ? Distance2D(
+                    position,
+                    ladder.ManualExit.ToVector3())
+                : float.NaN;
 
         _info(
             $"TOP-EXIT-START map={_document.Map}; id={ladder.Id}; " +
             $"position={Format(position)}; peakZ={traversal.MaxClimbZ:0.###}; topZ={ladder.TopZ:0.###}; " +
-            $"target={Format(manualExit)}; distance={Distance2D(position, manualExit):0.###}; " +
-            $"pushDirection={Format(pushDirection)}");
+            $"pushDirection={Format(pushDirection)}; directionSource={directionSource}; " +
+            $"manualExitDistance={(float.IsFinite(manualExitDistance) ? manualExitDistance.ToString("0.###") : "n/a")}");
 
         return true;
     }
@@ -3463,43 +3443,14 @@ public sealed class LadderMapService
 
         if (!TryGetCsMovementServices(
                 pawn,
-                out CCSPlayer_MovementServices movement) ||
-            ladder.ManualExit == null)
+                out CCSPlayer_MovementServices movement))
         {
             return;
         }
 
-        Vector3 manualExit =
-            ladder.ManualExit.ToVector3();
-
-        float manualExitDistance =
-            Distance2D(
-                position,
-                manualExit);
-
-        string phase;
-        Vector3 exitDirection;
-
-        if (traversal.ExitTargetReached)
-        {
-            phase = "push";
-            exitDirection =
-                HorizontalNormalised(
-                    traversal.ExitPushDirection);
-        }
-        else
-        {
-            phase = "target";
-
-            // Critical v10 change: steer from the bot's CURRENT position to the
-            // saved human ManualExit every fast tick. A precomputed vector from
-            // the human top reference can point away from ManualExit when the
-            // bot detaches from a different XY position.
-            exitDirection =
-                HorizontalNormalised(
-                    manualExit -
-                    position);
-        }
+        Vector3 exitDirection =
+            HorizontalNormalised(
+                traversal.ExitPushDirection);
 
         if (exitDirection.LengthSquared() < 0.25f)
             return;
@@ -3583,40 +3534,33 @@ public sealed class LadderMapService
                 ReadMovementSnapshot(
                     movement);
 
-            float previousDistance =
-                traversal.LastLoggedManualExitDistance;
-
-            bool havePreviousDistance =
-                float.IsFinite(previousDistance);
-
-            bool closing =
-                !havePreviousDistance ||
-                manualExitDistance <
-                    previousDistance -
-                    0.05f;
-
-            traversal.LastLoggedManualExitDistance =
-                manualExitDistance;
-
             Vector3 pushDelta =
                 position -
-                traversal.ExitTargetReachedPosition;
+                traversal.ExitStartedPosition;
 
             pushDelta.Z = 0.0f;
 
             float pushAlong =
-                traversal.ExitTargetReached
-                    ? Vector3.Dot(
-                        pushDelta,
-                        traversal.ExitPushDirection)
-                    : 0.0f;
+                Vector3.Dot(
+                    pushDelta,
+                    exitDirection);
+
+            float topDrop =
+                ladder.TopZ -
+                position.Z;
+
+            float manualExitDistance =
+                ladder.ManualExit != null
+                    ? Distance2D(
+                        position,
+                        ladder.ManualExit.ToVector3())
+                    : float.NaN;
 
             _debug(
-                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; phase={phase}; action={action}; " +
-                $"pos={Format(position)}; vel={Format(velocity)}; target={Format(manualExit)}; " +
-                $"direction={Format(exitDirection)}; distance={manualExitDistance:0.###}; " +
-                $"previousDistance={(havePreviousDistance ? previousDistance.ToString("0.###") : "n/a")}; " +
-                $"closing={closing}; pushAlong={pushAlong:0.###}; " +
+                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; phase=normal-push; action={action}; " +
+                $"pos={Format(position)}; vel={Format(velocity)}; direction={Format(exitDirection)}; " +
+                $"pushAlong={pushAlong:0.###}; topDrop={topDrop:0.###}; " +
+                $"manualExitDistance={(float.IsFinite(manualExitDistance) ? manualExitDistance.ToString("0.###") : "n/a")}; " +
                 $"preCmd=({before.CmdForwardMove:0.###},{before.CmdLeftMove:0.###},{before.CmdUpMove:0.###}); " +
                 $"preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
                 $"preButtons=0x{before.Buttons0:X}; " +
@@ -3626,83 +3570,194 @@ public sealed class LadderMapService
         }
     }
 
-    private bool TryGetLearnedExitPushDirection(
+    private bool TryGetTopExitDirection(
         PhysicalLadder ladder,
-        Vector3 currentPosition,
-        out Vector3 direction)
+        TraversalSession traversal,
+        out Vector3 direction,
+        out string source)
     {
         direction = default;
+        source = "none";
 
-        if (ladder.ManualExit == null)
-            return false;
-
-        Vector3 manualExit =
-            ladder.ManualExit.ToVector3();
-
-        // This direction is deliberately NOT used to reach ManualExit. It is
-        // used only after the bot is already at the human exit point, to carry
-        // it a few more units through the lip and onto the platform.
-        Vector3 topReference =
-            new(
-                ladder.Anchor.X,
-                ladder.Anchor.Y,
-                ladder.TopZ);
-
-        LadderPathSample? topSample = null;
-        float topSampleZ = float.NegativeInfinity;
-
-        if (ladder.ReferencePath != null)
+        if (traversal.HasLastLadderNormal)
         {
-            foreach (LadderPathSample sample in
-                     ladder.ReferencePath)
-            {
-                Vector3 samplePosition =
-                    sample.Position.ToVector3();
+            Vector3 actualNormal =
+                HorizontalNormalised(
+                    traversal.LastLadderNormal);
 
-                if (samplePosition.Z > topSampleZ)
-                {
-                    topSampleZ = samplePosition.Z;
-                    topSample = sample;
-                    topReference = samplePosition;
-                }
+            if (actualNormal.LengthSquared() >= 0.25f)
+            {
+                direction =
+                    new Vector3(
+                        -actualNormal.X,
+                        -actualNormal.Y,
+                        0.0f);
+
+                source = "last-actual-normal";
+                return true;
+            }
+        }
+
+        if (TryGetLearnedLadderNormal(
+                ladder,
+                traversal.MaxClimbZ,
+                out Vector3 learnedNormal))
+        {
+            direction =
+                new Vector3(
+                    -learnedNormal.X,
+                    -learnedNormal.Y,
+                    0.0f);
+
+            source = "learned-normal";
+            return true;
+        }
+
+        // Compatibility fallback for an old manual map that has no recorded
+        // LadderNormal. ManualExit remains diagnostic data in v14 and is only
+        // used here as a final direction fallback, never as an absolute target.
+        if (ladder.ManualExit != null &&
+            TryGetReferenceAtZ(
+                ladder,
+                ladder.TopZ,
+                out Vector3 topReference,
+                out _))
+        {
+            direction =
+                HorizontalNormalised(
+                    ladder.ManualExit.ToVector3() -
+                    topReference);
+
+            if (direction.LengthSquared() >= 0.25f)
+            {
+                source = "manual-exit-direction-fallback";
+                return true;
             }
         }
 
         direction =
             HorizontalNormalised(
-                manualExit -
-                topReference);
+                ladder.ApproachDirection.ToVector3());
 
-        if (direction.LengthSquared() < 0.25f)
+        if (direction.LengthSquared() >= 0.25f)
         {
-            direction =
-                HorizontalNormalised(
-                    manualExit -
-                    currentPosition);
+            source = "approach-fallback";
+            return true;
         }
 
-        if (direction.LengthSquared() < 0.25f &&
-            topSample != null)
-        {
-            Vector3 normal =
-                topSample.LadderNormal.ToVector3();
+        direction = default;
+        source = "none";
+        return false;
+    }
 
-            direction =
-                HorizontalNormalised(
-                    new Vector3(
-                        -normal.X,
-                        -normal.Y,
-                        0.0f));
+    private static bool TryGetCurrentLadderNormal(
+        CCSPlayerPawn pawn,
+        out Vector3 normal)
+    {
+        normal = default;
+
+        if (!TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
+        {
+            return false;
         }
 
-        if (direction.LengthSquared() < 0.25f)
+        try
         {
-            direction =
+            if (movement.LadderNormal == null ||
+                !NativeValueReader.TryCopy(
+                    movement.LadderNormal,
+                    out Vector3 rawNormal))
+            {
+                return false;
+            }
+
+            normal =
                 HorizontalNormalised(
-                    ladder.ApproachDirection.ToVector3());
+                    rawNormal);
+
+            return normal.LengthSquared() >= 0.25f;
+        }
+        catch
+        {
+            normal = default;
+            return false;
+        }
+    }
+
+    private bool TryGetLearnedLadderNormal(
+        PhysicalLadder ladder,
+        float z,
+        out Vector3 normal)
+    {
+        normal = default;
+
+        if (TryGetReferenceAtZ(
+                ladder,
+                z,
+                out _,
+                out Vector3 sampledNormal))
+        {
+            normal =
+                HorizontalNormalised(
+                    sampledNormal);
+
+            if (normal.LengthSquared() >= 0.25f)
+                return true;
         }
 
-        return direction.LengthSquared() >= 0.25f;
+        if (ladder.ReferencePath == null)
+            return false;
+
+        Vector3 sum = default;
+        int count = 0;
+
+        foreach (LadderPathSample sample in
+                 ladder.ReferencePath)
+        {
+            Vector3 sampleNormal =
+                HorizontalNormalised(
+                    sample.LadderNormal.ToVector3());
+
+            if (sampleNormal.LengthSquared() < 0.25f)
+                continue;
+
+            sum += sampleNormal;
+            count++;
+        }
+
+        if (count <= 0)
+            return false;
+
+        normal =
+            HorizontalNormalised(
+                sum);
+
+        return normal.LengthSquared() >= 0.25f;
+    }
+
+    private float GetLadderNormalCompatibility(
+        PhysicalLadder ladder,
+        Vector3 position,
+        Vector3 actualNormal)
+    {
+        Vector3 actual =
+            HorizontalNormalised(
+                actualNormal);
+
+        if (actual.LengthSquared() < 0.25f ||
+            !TryGetLearnedLadderNormal(
+                ladder,
+                position.Z,
+                out Vector3 learned))
+        {
+            return float.NaN;
+        }
+
+        return Vector3.Dot(
+            actual,
+            learned);
     }
 
     private bool IsForwardMovementStateHealthy(
@@ -4061,24 +4116,6 @@ public sealed class LadderMapService
             position,
             ladder.Anchor.ToVector3());
     }
-
-    private bool IsMountCompatibleWithTarget(
-        PhysicalLadder ladder,
-        Vector3 position,
-        out float deviation)
-    {
-        deviation =
-            GetTargetPathDeviation(
-                ladder,
-                position);
-
-        return deviation <=
-               Config.LadderTraversalIdentityMatchRadius;
-    }
-
-
-
-
 
     private bool IsSuccessfulClimbExit(
         PhysicalLadder ladder,
@@ -4468,37 +4505,79 @@ public sealed class LadderMapService
     }
 
     private PhysicalLadder? FindKnownAtPosition(
+        CCSPlayerPawn pawn,
         Vector3 position,
         out float selectedDeviation)
     {
+        Vector3? actualNormal =
+            TryGetCurrentLadderNormal(
+                pawn,
+                out Vector3 normal)
+                ? normal
+                : null;
+
         return FindClosestKnownLadderAtPosition(
             position,
             requireBottomMountWindow: true,
             Config.LadderTraversalIdentityMatchRadius,
-            out selectedDeviation);
+            out selectedDeviation,
+            actualNormal);
     }
 
     private PhysicalLadder? ResolveMountedLadderIdentity(
+        CCSPlayerPawn pawn,
         int slot,
         TraversalSession traversal,
         PhysicalLadder planned,
         Vector3 position,
         string source)
     {
+        Vector3? actualNormal =
+            TryGetCurrentLadderNormal(
+                pawn,
+                out Vector3 normal)
+                ? normal
+                : null;
+
         PhysicalLadder? closest =
             FindClosestKnownLadderAtPosition(
                 position,
                 requireBottomMountWindow: false,
                 Config.LadderTraversalIdentityMatchRadius,
-                out float closestDeviation);
+                out float closestDeviation,
+                actualNormal);
 
         if (closest == null)
+        {
+            float plannedDot =
+                actualNormal.HasValue
+                    ? GetLadderNormalCompatibility(
+                        planned,
+                        position,
+                        actualNormal.Value)
+                    : float.NaN;
+
+            _info(
+                $"MOUNT-NORMAL-REJECT map={_document.Map}; slot={slot}; plannedId={planned.Id}; " +
+                $"position={Format(position)}; actualNormal={(actualNormal.HasValue ? Format(actualNormal.Value) : "n/a")}; " +
+                $"plannedNormalDot={(float.IsFinite(plannedDot) ? plannedDot.ToString("0.###") : "n/a")}; " +
+                $"requiredDot={Config.LadderTraversalNormalDotMinimum:0.###}; source={source}");
+
             return null;
+        }
 
         float plannedDeviation =
             GetTargetPathDeviation(
                 planned,
                 position);
+
+        float selectedDot =
+            actualNormal.HasValue
+                ? GetLadderNormalCompatibility(
+                    closest,
+                    position,
+                    actualNormal.Value)
+                : float.NaN;
 
         if (closest.Id != planned.Id)
         {
@@ -4515,74 +4594,10 @@ public sealed class LadderMapService
             _info(
                 $"MOUNT-ID-SWITCH map={_document.Map}; slot={slot}; oldId={oldId}; newId={closest.Id}; " +
                 $"oldDeviation={plannedDeviation:0.###}; newDeviation={closestDeviation:0.###}; " +
+                $"actualNormal={(actualNormal.HasValue ? Format(actualNormal.Value) : "n/a")}; " +
+                $"newNormalDot={(float.IsFinite(selectedDot) ? selectedDot.ToString("0.###") : "n/a")}; " +
                 $"position={Format(position)}; source={source}");
         }
-
-        return closest;
-    }
-
-    private PhysicalLadder RetargetClimbLadderIfClearlyCloser(
-        int slot,
-        TraversalSession traversal,
-        PhysicalLadder current,
-        Vector3 position,
-        float now,
-        string source)
-    {
-        if (now - traversal.LastLadderSwitchAt <
-            Config.LadderTraversalLadderSwitchMinIntervalSeconds)
-        {
-            return current;
-        }
-
-        float currentDeviation =
-            GetTargetPathDeviation(
-                current,
-                position);
-
-        PhysicalLadder? closest =
-            FindClosestKnownLadderAtPosition(
-                position,
-                requireBottomMountWindow: false,
-                Config.LadderTraversalIdentityMatchRadius,
-                out float closestDeviation);
-
-        if (closest == null ||
-            closest.Id == current.Id)
-        {
-            return current;
-        }
-
-        bool currentOutsideIdentity =
-            currentDeviation >
-            Config.LadderTraversalIdentityMatchRadius;
-
-        bool clearlyCloser =
-            closestDeviation +
-            Config.LadderTraversalLadderSwitchAdvantage <=
-            currentDeviation;
-
-        if (!currentOutsideIdentity &&
-            !clearlyCloser)
-        {
-            return current;
-        }
-
-        int oldId =
-            current.Id;
-
-        traversal.LadderId =
-            closest.Id;
-        traversal.LastLadderSwitchAt =
-            now;
-        traversal.LadderSwitchCount++;
-        traversal.TopZoneLogged = false;
-
-        _info(
-            $"LADDER-ID-SWITCH map={_document.Map}; slot={slot}; oldId={oldId}; newId={closest.Id}; " +
-            $"oldDeviation={currentDeviation:0.###}; newDeviation={closestDeviation:0.###}; " +
-            $"advantage={(currentDeviation - closestDeviation):0.###}; position={Format(position)}; " +
-            $"switchCount={traversal.LadderSwitchCount}; source={source}");
 
         return closest;
     }
@@ -4591,7 +4606,8 @@ public sealed class LadderMapService
         Vector3 position,
         bool requireBottomMountWindow,
         float maximumDeviation,
-        out float selectedDeviation)
+        out float selectedDeviation,
+        Vector3? actualLadderNormal = null)
     {
         PhysicalLadder? selected = null;
         selectedDeviation = float.PositiveInfinity;
@@ -4615,6 +4631,22 @@ public sealed class LadderMapService
 
             if (!verticalMatch)
                 continue;
+
+            if (actualLadderNormal.HasValue)
+            {
+                float normalDot =
+                    GetLadderNormalCompatibility(
+                        ladder,
+                        position,
+                        actualLadderNormal.Value);
+
+                if (float.IsFinite(normalDot) &&
+                    normalDot <
+                        Config.LadderTraversalNormalDotMinimum)
+                {
+                    continue;
+                }
+            }
 
             float deviation =
                 GetTargetPathDeviation(
@@ -5064,15 +5096,11 @@ public sealed class LadderMapService
 
         public Vector3 ExitStartedPosition { get; set; }
         public Vector3 ExitPushDirection { get; set; }
-        public bool ExitTargetReached { get; set; }
-        public float ExitTargetReachedAt { get; set; } =
-            float.NegativeInfinity;
-        public Vector3 ExitTargetReachedPosition { get; set; }
+        public Vector3 LastLadderNormal { get; set; }
+        public bool HasLastLadderNormal { get; set; }
 
         public bool TopExitControlInitialised { get; set; }
         public int TopExitCorrectionCount { get; set; }
-        public float LastLoggedManualExitDistance { get; set; } =
-            float.PositiveInfinity;
 
         public float LastBotMoveDiagnosticAt { get; set; } =
             float.NegativeInfinity;

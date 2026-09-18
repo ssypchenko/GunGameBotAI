@@ -10,17 +10,14 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 12 combines three responsibilities:
+/// Version 13 combines two responsibilities:
 ///
-/// 1) Automatic bot learning from successful traversals only. Bot failures are
-///    diagnostic statistics and never certify or reshape geometry.
-///
-/// 2) High-confidence manual teaching. When configured conditions are met
+/// 1) High-confidence manual teaching. When configured conditions are met
 ///    (by default: no bots and exactly one live human), successful human ladder
-///    traversals are recorded as immutable certified geometry plus a sampled
-///    reference path.
+///    traversals are recorded as certified geometry plus a sampled reference
+///    path. Bots never create persistent ladder geometry.
 ///
-/// 3) Proactive bot traversal. Valve navigation owns the approach. The plugin
+/// 2) Proactive bot traversal. Valve navigation owns the approach. The plugin
 ///    issues one learned entry jump, validates that MOVETYPE_LADDER belongs to
 ///    the intended physical ladder, then reproduces the measured human ladder
 ///    input: look into/up the ladder and hold normalised Forward=1. There is no
@@ -40,6 +37,10 @@ public sealed class LadderMapService
     private const float ManualApproachEntryMaxDistance = 48.0f;
     private const float ManualApproachMaxVerticalDelta = 16.0f;
     private const float ManualPrimaryReplaceEpsilon = 0.5f;
+
+    private const ulong SlowMovementButtonsMask =
+        (ulong)PlayerButtons.Speed |
+        (ulong)PlayerButtons.Walk;
 
     private readonly LadderMapStore _store;
     private readonly ButtonPulseService _buttonPulses;
@@ -1157,12 +1158,18 @@ public sealed class LadderMapService
 
         MarkDirtyAndSave();
 
+        int normalSamples =
+            ladder.ReferencePath?.Count(
+                sample =>
+                    sample.LadderNormal.ToVector3().LengthSquared() >
+                    0.0001f) ?? 0;
+
         _info(
             $"MANUAL certified map={_document.Map}; slot={slot}; id={ladder.Id}; " +
             $"reason={reason}; manualObs={ladder.ManualObservations}; " +
             $"primary={primaryAction}; upward={upward:0.###}; " +
             $"entryToMount={entryToMount:0.###}; " +
-            $"pathSamples={ladder.ReferencePath?.Count ?? 0}; " +
+            $"pathSamples={ladder.ReferencePath?.Count ?? 0}; normalSamples={normalSamples}; " +
             $"approachKnown={ladder.HasBottomApproach}; " +
             $"entry={Format(ladder.BottomEntry.ToVector3())}; " +
             $"mount={Format(ladder.BottomMount.ToVector3())}; " +
@@ -1295,18 +1302,8 @@ public sealed class LadderMapService
             tracker.HasSample &&
             tracker.PreviousOnLadder;
 
-        if (Config.LadderLearningEnabled)
-        {
-            ObserveLearning(
-                state.Slot,
-                tracker,
-                position,
-                velocity,
-                onLadder,
-                wasOnLadder,
-                now);
-        }
-
+        // v13: bot observations never create or reshape persistent ladder
+        // geometry. Runtime traversal consumes ManualCertified records only.
         if (!onLadder)
             tracker.SuppressTraversalUntilLadderExit = false;
 
@@ -1497,17 +1494,6 @@ public sealed class LadderMapService
                 traversal.HumanControlInitialised = false;
                 traversal.ForwardHandoffActive = false;
 
-                PhysicalLadder retargeted =
-                    RetargetClimbLadderIfClearlyCloser(
-                        state.Slot,
-                        traversal,
-                        ladder,
-                        position,
-                        now,
-                        "top-exit-reattach");
-
-                ladder = retargeted;
-
                 _info(
                     $"TOP-EXIT-REATTACH map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; velocity={Format(velocity)}; action=resume-climb");
@@ -1587,15 +1573,6 @@ public sealed class LadderMapService
 
             if (onLadder)
             {
-                ladder =
-                    RetargetClimbLadderIfClearlyCloser(
-                        state.Slot,
-                        traversal,
-                        ladder,
-                        position,
-                        now,
-                        "fast-climb");
-
                 float referenceDeviation =
                     GetTargetPathDeviation(
                         ladder,
@@ -3745,10 +3722,15 @@ public sealed class LadderMapService
             (snapshot.Buttons0 &
              (ulong)PlayerButtons.Forward) != 0;
 
+        bool noSlowModifier =
+            (snapshot.Buttons0 &
+             SlowMovementButtonsMask) == 0;
+
         return forwardProcessed &&
                lateralClear &&
                upClear &&
-               forwardButton;
+               forwardButton &&
+               noSlowModifier;
     }
 
     private bool IsHumanLikeForwardStateHealthy(
@@ -3787,6 +3769,9 @@ public sealed class LadderMapService
 
             if (buttonStates.Length > 0)
             {
+                buttonStates[0] &=
+                    ~SlowMovementButtonsMask;
+
                 buttonStates[0] |=
                     (ulong)PlayerButtons.Forward;
             }
@@ -4138,14 +4123,17 @@ public sealed class LadderMapService
                  ladder.TopZ -
                  Config.LadderTraversalTopExitTolerance);
 
-        // A mount already near a learned top can leave the ladder with very
-        // little additional Z or XY travel. Otherwise require both meaningful
-        // upward progress and movement away from the shaft before calling a
-        // detach a successful exit.
-        return nearKnownTop ||
-               (traversal.SafeProgressReached &&
-                enoughProgress &&
-                movedAwayFromShaft);
+        // For a manually certified ladder TopZ is trusted. A detach below that
+        // top is not a successful exit, even if the bot made some progress and
+        // moved sideways.
+        if (haveUsefulTop)
+            return nearKnownTop;
+
+        // Defensive fallback for incomplete legacy data only. v13 runtime
+        // acquisition does not select non-manual ladders.
+        return traversal.SafeProgressReached &&
+               enoughProgress &&
+               movedAwayFromShaft;
     }
 
     private bool IsUsableAlreadyMountedPosition(
@@ -4176,6 +4164,34 @@ public sealed class LadderMapService
         CCSBot bot,
         BotRuntimeState state)
     {
+        try
+        {
+            ulong oldButtonFlags =
+                bot.ButtonFlags;
+
+            ulong newButtonFlags =
+                oldButtonFlags &
+                ~SlowMovementButtonsMask;
+
+            if (newButtonFlags != oldButtonFlags)
+            {
+                bot.ButtonFlags =
+                    newButtonFlags;
+
+                _corrections.Field(
+                    state.Slot,
+                    nameof(LadderMapService),
+                    nameof(bot.ButtonFlags),
+                    oldButtonFlags,
+                    newButtonFlags,
+                    "remove Speed/Walk while ladder traversal owns movement");
+            }
+        }
+        catch
+        {
+            // Bot schema may disappear during teardown.
+        }
+
         if (bot.IsCrouching)
         {
             bot.IsCrouching = false;
@@ -4303,8 +4319,11 @@ public sealed class LadderMapService
         foreach (PhysicalLadder ladder
                  in _document.Ladders)
         {
-            if (!ladder.HasBottomApproach)
+            if (!ladder.ManualCertified ||
+                !ladder.HasBottomApproach)
+            {
                 continue;
+            }
 
             Vector3 mount =
                 ladder.BottomMount.ToVector3();
@@ -4419,6 +4438,9 @@ public sealed class LadderMapService
 
         foreach (PhysicalLadder ladder in _document.Ladders)
         {
+            if (!ladder.ManualCertified)
+                continue;
+
             Vector3 comparison =
                 ladder.HasBottomApproach
                     ? ladder.BottomMount.ToVector3()
@@ -4571,8 +4593,11 @@ public sealed class LadderMapService
 
         foreach (PhysicalLadder ladder in _document.Ladders)
         {
-            if (!ladder.HasBottomApproach)
+            if (!ladder.ManualCertified ||
+                !ladder.HasBottomApproach)
+            {
                 continue;
+            }
 
             bool verticalMatch =
                 requireBottomMountWindow
@@ -4688,7 +4713,8 @@ public sealed class LadderMapService
         return _document.Ladders
             .FirstOrDefault(
                 ladder =>
-                    ladder.Id == id);
+                    ladder.Id == id &&
+                    ladder.ManualCertified);
     }
 
     private int NextLadderId()

@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 6;
+    public override int Version { get; set; } = 7;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -110,6 +110,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalExitMinProgress { get; set; } = 8.0f;
     public float LadderTraversalExitHorizontalDistance { get; set; } = 16.0f;
     public float LadderTraversalMountedBelowTolerance { get; set; } = 8.0f;
+
+    // Physical-ladder identity is deliberately much stricter than the old
+    // generic mount-validation radius. Paired ladders on compact GunGame maps
+    // can sit only a few dozen units apart.
+    public float LadderTraversalIdentityMatchRadius { get; set; } = 20.0f;
+    public float LadderTraversalLadderSwitchAdvantage { get; set; } = 4.0f;
+    public float LadderTraversalLadderSwitchMinIntervalSeconds { get; set; } = 0.15f;
+    public float LadderTraversalFallingReattachVelocityZ { get; set; } = 30.0f;
+
+    // Legacy/general geometry tolerance retained for learning/manual matching.
     public float LadderTraversalMountValidationRadius { get; set; } = 36.0f;
     public float LadderTraversalReferenceHardDeviation { get; set; } = 48.0f;
     public float LadderTraversalFailureCooldownSeconds { get; set; } = 8.0f;
@@ -228,6 +238,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalExitMinProgress = Clamp(LadderTraversalExitMinProgress, 2.0f, LadderTraversalClimbAssistProgress, 8.0f, nameof(LadderTraversalExitMinProgress), warn);
         LadderTraversalExitHorizontalDistance = Clamp(LadderTraversalExitHorizontalDistance, 4.0f, 64.0f, 16.0f, nameof(LadderTraversalExitHorizontalDistance), warn);
         LadderTraversalMountedBelowTolerance = Clamp(LadderTraversalMountedBelowTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalMountedBelowTolerance), warn);
+        LadderTraversalIdentityMatchRadius = Clamp(LadderTraversalIdentityMatchRadius, 8.0f, 32.0f, 20.0f, nameof(LadderTraversalIdentityMatchRadius), warn);
+        LadderTraversalLadderSwitchAdvantage = Clamp(LadderTraversalLadderSwitchAdvantage, 1.0f, 16.0f, 4.0f, nameof(LadderTraversalLadderSwitchAdvantage), warn);
+        LadderTraversalLadderSwitchMinIntervalSeconds = Clamp(LadderTraversalLadderSwitchMinIntervalSeconds, 0.0f, 1.0f, 0.15f, nameof(LadderTraversalLadderSwitchMinIntervalSeconds), warn);
+        LadderTraversalFallingReattachVelocityZ = Clamp(LadderTraversalFallingReattachVelocityZ, 10.0f, 200.0f, 30.0f, nameof(LadderTraversalFallingReattachVelocityZ), warn);
         LadderTraversalMountValidationRadius = Clamp(LadderTraversalMountValidationRadius, 12.0f, 96.0f, 36.0f, nameof(LadderTraversalMountValidationRadius), warn);
         LadderTraversalReferenceHardDeviation = Clamp(LadderTraversalReferenceHardDeviation, LadderTraversalMountValidationRadius, 160.0f, Math.Max(48.0f, LadderTraversalMountValidationRadius), nameof(LadderTraversalReferenceHardDeviation), warn);
         LadderTraversalFailureCooldownSeconds = Clamp(LadderTraversalFailureCooldownSeconds, 1.0f, 30.0f, 8.0f, nameof(LadderTraversalFailureCooldownSeconds), warn);
@@ -309,6 +323,18 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalTopExitPushDistance = 8.0f;
             LadderTraversalTopExitPushTimeoutSeconds = 0.35f;
             Version = 6;
+        }
+
+        if (Version < 7)
+        {
+            // Version 7 separates physical-ladder identity from broad geometry
+            // validation. Already-mounted ownership now requires a close match,
+            // while active climbs may switch to a clearly closer known ladder.
+            LadderTraversalIdentityMatchRadius = 20.0f;
+            LadderTraversalLadderSwitchAdvantage = 4.0f;
+            LadderTraversalLadderSwitchMinIntervalSeconds = 0.15f;
+            LadderTraversalFallingReattachVelocityZ = 30.0f;
+            Version = 7;
         }
     }
 

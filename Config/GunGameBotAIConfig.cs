@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 8;
+    public override int Version { get; set; } = 9;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -35,7 +35,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Persistent physical ladder learning / traversal
     // ---------------------------------------------------------------------
 
-    public bool LadderLearningEnabled { get; set; } = true;
+    // Compatibility setting only. v13 never creates persistent ladder
+    // geometry from bots; only manual human teaching writes ladder records.
+    public bool LadderLearningEnabled { get; set; } = false;
     public bool LadderEntryJumpEnabled { get; set; } = true;
     public bool LadderMapDebug { get; set; } = false;
 
@@ -59,8 +61,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderManualDetachGraceSeconds { get; set; } = 0.35f;
     public int LadderManualMaxReferenceSamples { get; set; } = 64;
 
-    // Automatic learning. Successful bot climbs can still teach geometry on an
-    // untrained map, but failed bot contacts never reshape human-certified data.
+    // Legacy automatic-learning tuning retained for config compatibility.
+    // v13 does not invoke bot geometry learning.
     public float LadderLearnHorizontalClusterRadius { get; set; } = 28.0f;
     public float LadderLearnConfirmVerticalProgress { get; set; } = 28.0f;
     public float LadderSessionDetachGraceSeconds { get; set; } = 0.55f;
@@ -353,6 +355,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalSlowDetectSeconds = 0.25f;
             LadderTraversalSlowLogIntervalSeconds = 0.50f;
             Version = 8;
+        }
+
+        if (Version < 9)
+        {
+            // Version 9 makes persistent ladder geometry human-only.
+            LadderLearningEnabled = false;
+            FastActuatorEveryTicks = 1;
+            Version = 9;
         }
     }
 

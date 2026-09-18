@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 11 combines three responsibilities:
+/// Version 12 combines three responsibilities:
 ///
 /// 1) Automatic bot learning from successful traversals only. Bot failures are
 ///    diagnostic statistics and never certify or reshape geometry.
@@ -154,10 +154,22 @@ public sealed class LadderMapService
         ResetManualTeachingSession("runtime-reset");
     }
 
-    public void RemoveSlot(int slot)
+    public void RemoveSlot(
+        int slot,
+        string reason = "slot-remove")
     {
         if (_trackers.TryGetValue(slot, out BotTracker? tracker))
         {
+            if (tracker.Traversal != null)
+            {
+                LogClimbResult(
+                    slot,
+                    tracker.Traversal,
+                    outcome: "abort",
+                    reason,
+                    Server.CurrentTime);
+            }
+
             ReleaseSlotTraversalControl(
                 slot,
                 tracker);
@@ -165,7 +177,7 @@ public sealed class LadderMapService
             FinalizeLearningSession(
                 slot,
                 tracker,
-                "slot-remove");
+                reason);
         }
 
         _trackers.Remove(slot);
@@ -1753,6 +1765,13 @@ public sealed class LadderMapService
                 return true;
             }
 
+            _info(
+                $"CLIMB-DETACH map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                $"position={Format(position)}; velocity={Format(velocity)}; " +
+                $"maxClimbZ={traversal.MaxClimbZ:0.###}; progressZ={progress:0.###}; " +
+                $"pathDeviation={detachedDeviation:0.###}; slowActive={traversal.SlowClimbActive}; " +
+                $"slowEpisodes={traversal.SlowClimbEpisodes}");
+
             FailTraversal(
                 pawn,
                 state.Slot,
@@ -2824,6 +2843,19 @@ public sealed class LadderMapService
         traversal.LastProgressZ = position.Z;
         traversal.LastProgressAt = now;
         traversal.SafeProgressReached = false;
+        traversal.ClimbSampleCount = 0;
+        traversal.SlowClimbSampleCount = 0;
+        traversal.ClimbVelocityZSum = 0.0f;
+        traversal.ClimbVelocityZMin = float.PositiveInfinity;
+        traversal.ClimbVelocityZMax = float.NegativeInfinity;
+        traversal.LastClimbVelocityZ = 0.0f;
+        traversal.LastClimbPosition = position;
+        traversal.LastPreProcessedForward = 0.0f;
+        traversal.SlowClimbCandidateAt = float.NegativeInfinity;
+        traversal.SlowClimbActive = false;
+        traversal.SlowClimbStartedAt = float.NegativeInfinity;
+        traversal.SlowClimbEpisodes = 0;
+        traversal.LastSlowClimbDiagnosticAt = float.NegativeInfinity;
         traversal.JumpIssued = true;
         traversal.HumanControlInitialised = false;
         traversal.TopZoneLogged = false;
@@ -2882,6 +2914,16 @@ public sealed class LadderMapService
             $"reason={reason}; progressZ={progress:0.###}; position={Format(position)}; " +
             $"elapsed={(now - tracker.Traversal!.StartedAt):0.###}s");
 
+        if (traversal != null)
+        {
+            LogClimbResult(
+                slot,
+                traversal,
+                outcome: "success",
+                reason,
+                now);
+        }
+
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
         tracker.TraversalCooldownUntil = now + 0.75f;
@@ -2917,6 +2959,13 @@ public sealed class LadderMapService
             $"TRAVERSAL-FAIL map={_document.Map}; slot={slot}; " +
             $"id={(ladder?.Id.ToString() ?? traversal.LadderId.ToString())}; " +
             $"reason={reason}; elapsed={(now - traversal.StartedAt):0.###}s");
+
+        LogClimbResult(
+            slot,
+            traversal,
+            outcome: "fail",
+            reason,
+            now);
 
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
@@ -3095,6 +3144,16 @@ public sealed class LadderMapService
             ReadMovementSnapshot(
                 movement);
 
+        ObserveClimbSpeed(
+            bot,
+            state,
+            ladder,
+            position,
+            velocity,
+            before,
+            traversal,
+            now);
+
         bool healthyBefore =
             IsHumanLikeForwardStateHealthy(
                 before,
@@ -3194,8 +3253,149 @@ public sealed class LadderMapService
                 $"postButtons=(0x{after.Buttons0:X},0x{after.Buttons1:X},0x{after.Buttons2:X}); " +
                 $"queuedDown=0x{after.QueuedDown:X}; queuedChange=0x{after.QueuedChange:X}; " +
                 $"lastCmd={after.LastCommandNumber}; maxSpeed={after.MaxSpeed:0.###}; eye={Format(eye)}; " +
+                $"{FormatBotClimbState(bot)}; " +
                 $"corrections={traversal.ForwardCorrectionCount}; handoffs={traversal.ForwardHandoffCount}; " +
                 $"pathDeviation={GetTargetPathDeviation(ladder, position):0.###}");
+        }
+    }
+
+    private void ObserveClimbSpeed(
+        CCSBot bot,
+        BotRuntimeState state,
+        PhysicalLadder ladder,
+        Vector3 position,
+        Vector3 velocity,
+        MovementSnapshot before,
+        TraversalSession traversal,
+        float now)
+    {
+        traversal.ClimbSampleCount++;
+        traversal.ClimbVelocityZSum += velocity.Z;
+        traversal.ClimbVelocityZMin = MathF.Min(traversal.ClimbVelocityZMin, velocity.Z);
+        traversal.ClimbVelocityZMax = MathF.Max(traversal.ClimbVelocityZMax, velocity.Z);
+        traversal.LastClimbVelocityZ = velocity.Z;
+        traversal.LastClimbPosition = position;
+        traversal.LastPreProcessedForward = before.ForwardMove;
+
+        bool slow =
+            velocity.Z <
+            Config.LadderTraversalSlowVelocityZ;
+
+        if (slow)
+            traversal.SlowClimbSampleCount++;
+
+        if (!slow)
+        {
+            traversal.SlowClimbCandidateAt = float.NegativeInfinity;
+
+            if (traversal.SlowClimbActive &&
+                velocity.Z >= Config.LadderTraversalSlowRecoveryVelocityZ)
+            {
+                _info(
+                    $"CLIMB-SLOW-END map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"duration={(now - traversal.SlowClimbStartedAt):0.###}s; position={Format(position)}; " +
+                    $"velocity={Format(velocity)}; preProcessedForward={before.ForwardMove:0.###}; " +
+                    $"{FormatBotClimbState(bot)}");
+
+                traversal.SlowClimbActive = false;
+                traversal.SlowClimbStartedAt = float.NegativeInfinity;
+            }
+
+            return;
+        }
+
+        if (!float.IsFinite(traversal.SlowClimbCandidateAt))
+            traversal.SlowClimbCandidateAt = now;
+
+        if (!traversal.SlowClimbActive &&
+            now - traversal.SlowClimbCandidateAt >=
+                Config.LadderTraversalSlowDetectSeconds)
+        {
+            traversal.SlowClimbActive = true;
+            traversal.SlowClimbStartedAt = traversal.SlowClimbCandidateAt;
+            traversal.SlowClimbEpisodes++;
+            traversal.LastSlowClimbDiagnosticAt = float.NegativeInfinity;
+
+            _info(
+                $"CLIMB-SLOW-START map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                $"position={Format(position)}; velocity={Format(velocity)}; " +
+                $"preCmd=({before.CmdForwardMove:0.###},{before.CmdLeftMove:0.###},{before.CmdUpMove:0.###}); " +
+                $"preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
+                $"preButtons=0x{before.Buttons0:X}; {FormatBotClimbState(bot)}");
+        }
+
+        if (traversal.SlowClimbActive &&
+            Config.Debug &&
+            now - traversal.LastSlowClimbDiagnosticAt >=
+                Config.LadderTraversalSlowLogIntervalSeconds)
+        {
+            traversal.LastSlowClimbDiagnosticAt = now;
+
+            _debug(
+                $"CLIMB-SLOW-SAMPLE slot={state.Slot}; id={ladder.Id}; " +
+                $"slowFor={(now - traversal.SlowClimbStartedAt):0.###}s; position={Format(position)}; " +
+                $"velocity={Format(velocity)}; preProcessedForward={before.ForwardMove:0.###}; " +
+                $"preButtons=0x{before.Buttons0:X}; {FormatBotClimbState(bot)}; " +
+                $"pathDeviation={GetTargetPathDeviation(ladder, position):0.###}");
+        }
+    }
+
+    private void LogClimbResult(
+        int slot,
+        TraversalSession traversal,
+        string outcome,
+        string reason,
+        float now)
+    {
+        if (traversal.ClimbSampleCount <= 0)
+        {
+            _info(
+                $"CLIMB-RESULT map={_document.Map}; slot={slot}; id={traversal.LadderId}; " +
+                $"outcome={outcome}; reason={reason}; samples=0; stage={traversal.Stage}; " +
+                $"elapsed={(now - traversal.StartedAt):0.###}s");
+            return;
+        }
+
+        float averageVelocityZ =
+            traversal.ClimbVelocityZSum /
+            traversal.ClimbSampleCount;
+
+        float slowPercent =
+            100.0f *
+            traversal.SlowClimbSampleCount /
+            traversal.ClimbSampleCount;
+
+        _info(
+            $"CLIMB-RESULT map={_document.Map}; slot={slot}; id={traversal.LadderId}; " +
+            $"outcome={outcome}; reason={reason}; stage={traversal.Stage}; " +
+            $"climbElapsed={(traversal.MountObservedAt > 0.0f ? now - traversal.MountObservedAt : 0.0f):0.###}s; " +
+            $"samples={traversal.ClimbSampleCount}; avgVz={averageVelocityZ:0.###}; " +
+            $"minVz={traversal.ClimbVelocityZMin:0.###}; maxVz={traversal.ClimbVelocityZMax:0.###}; " +
+            $"slowSamples={traversal.SlowClimbSampleCount}; slowPct={slowPercent:0.#}; " +
+            $"slowEpisodes={traversal.SlowClimbEpisodes}; lastVz={traversal.LastClimbVelocityZ:0.###}; " +
+            $"lastPreProcessedForward={traversal.LastPreProcessedForward:0.###}; " +
+            $"lastPosition={Format(traversal.LastClimbPosition)}; maxClimbZ={traversal.MaxClimbZ:0.###}; " +
+            $"corrections={traversal.ForwardCorrectionCount}; handoffs={traversal.ForwardHandoffCount}; " +
+            $"ladderSwitches={traversal.LadderSwitchCount}");
+    }
+
+    private static string FormatBotClimbState(
+        CCSBot bot)
+    {
+        try
+        {
+            return
+                $"botForward={bot.ForwardSpeed:0.###}; botLeft={bot.LeftSpeed:0.###}; " +
+                $"botVertical={bot.VerticalSpeed:0.###}; botButtons=0x{bot.ButtonFlags:X}; " +
+                $"running={bot.IsRunning}; stopping={bot.IsStopping}; crouching={bot.IsCrouching}; " +
+                $"stuck={bot.IsStuck}; friendInWay={bot.IsFriendInTheWay}; " +
+                $"enemyVisible={bot.IsEnemyVisible}; attacking={bot.IsAttacking}; " +
+                $"aimingAtEnemy={bot.IsAimingAtEnemy}; nearbyFriends={bot.NearbyFriendCount}; " +
+                $"nearbyEnemies={bot.NearbyEnemyCount}";
+        }
+        catch
+        {
+            return "botState=unavailable";
         }
     }
 
@@ -4800,6 +5000,26 @@ public sealed class LadderMapService
         public float LastProgressAt { get; set; } =
             float.NegativeInfinity;
         public bool SafeProgressReached { get; set; }
+
+        public int ClimbSampleCount { get; set; }
+        public int SlowClimbSampleCount { get; set; }
+        public float ClimbVelocityZSum { get; set; }
+        public float ClimbVelocityZMin { get; set; } =
+            float.PositiveInfinity;
+        public float ClimbVelocityZMax { get; set; } =
+            float.NegativeInfinity;
+        public float LastClimbVelocityZ { get; set; }
+        public Vector3 LastClimbPosition { get; set; }
+        public float LastPreProcessedForward { get; set; }
+
+        public float SlowClimbCandidateAt { get; set; } =
+            float.NegativeInfinity;
+        public bool SlowClimbActive { get; set; }
+        public float SlowClimbStartedAt { get; set; } =
+            float.NegativeInfinity;
+        public int SlowClimbEpisodes { get; set; }
+        public float LastSlowClimbDiagnosticAt { get; set; } =
+            float.NegativeInfinity;
 
         public float LastLadderSwitchAt { get; set; } =
             float.NegativeInfinity;

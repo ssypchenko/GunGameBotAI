@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 7;
+    public override int Version { get; set; } = 8;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -93,6 +93,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalProcessedForwardMove { get; set; } = 240.0f;
     public float LadderTraversalHealthyVelocityZ { get; set; } = 80.0f;
     public float LadderTraversalProcessedMoveTolerance { get; set; } = 12.0f;
+    public float LadderTraversalSlowVelocityZ { get; set; } = 90.0f;
+    public float LadderTraversalSlowRecoveryVelocityZ { get; set; } = 110.0f;
+    public float LadderTraversalSlowDetectSeconds { get; set; } = 0.25f;
+    public float LadderTraversalSlowLogIntervalSeconds { get; set; } = 0.50f;
     // Legacy name retained: this is now only the distance at which we log
     // entry into the top zone. It no longer releases or zeroes Forward.
     public float LadderTraversalTopControlReleaseDistance { get; set; } = 12.0f;
@@ -224,6 +228,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalProcessedForwardMove = Clamp(LadderTraversalProcessedForwardMove, 50.0f, 450.0f, 240.0f, nameof(LadderTraversalProcessedForwardMove), warn);
         LadderTraversalHealthyVelocityZ = Clamp(LadderTraversalHealthyVelocityZ, 10.0f, 250.0f, 80.0f, nameof(LadderTraversalHealthyVelocityZ), warn);
         LadderTraversalProcessedMoveTolerance = Clamp(LadderTraversalProcessedMoveTolerance, 1.0f, 100.0f, 12.0f, nameof(LadderTraversalProcessedMoveTolerance), warn);
+        LadderTraversalSlowVelocityZ = Clamp(LadderTraversalSlowVelocityZ, 20.0f, 160.0f, 90.0f, nameof(LadderTraversalSlowVelocityZ), warn);
+        LadderTraversalSlowRecoveryVelocityZ = Clamp(LadderTraversalSlowRecoveryVelocityZ, LadderTraversalSlowVelocityZ, 220.0f, Math.Max(110.0f, LadderTraversalSlowVelocityZ), nameof(LadderTraversalSlowRecoveryVelocityZ), warn);
+        LadderTraversalSlowDetectSeconds = Clamp(LadderTraversalSlowDetectSeconds, 0.05f, 2.0f, 0.25f, nameof(LadderTraversalSlowDetectSeconds), warn);
+        LadderTraversalSlowLogIntervalSeconds = Clamp(LadderTraversalSlowLogIntervalSeconds, 0.10f, 5.0f, 0.50f, nameof(LadderTraversalSlowLogIntervalSeconds), warn);
         LadderTraversalTopControlReleaseDistance = Clamp(LadderTraversalTopControlReleaseDistance, 4.0f, 40.0f, 12.0f, nameof(LadderTraversalTopControlReleaseDistance), warn);
         LadderTraversalTopExitAssistSeconds = Clamp(LadderTraversalTopExitAssistSeconds, 0.05f, 0.75f, 0.20f, nameof(LadderTraversalTopExitAssistSeconds), warn);
         LadderTraversalTopExitTargetTimeoutSeconds = Clamp(LadderTraversalTopExitTargetTimeoutSeconds, 0.20f, 2.0f, 0.75f, nameof(LadderTraversalTopExitTargetTimeoutSeconds), warn);
@@ -335,6 +343,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalLadderSwitchMinIntervalSeconds = 0.15f;
             LadderTraversalFallingReattachVelocityZ = 30.0f;
             Version = 7;
+        }
+
+        if (Version < 8)
+        {
+            // Diagnostics only: record sustained slow climbs and their outcome.
+            LadderTraversalSlowVelocityZ = 90.0f;
+            LadderTraversalSlowRecoveryVelocityZ = 110.0f;
+            LadderTraversalSlowDetectSeconds = 0.25f;
+            LadderTraversalSlowLogIntervalSeconds = 0.50f;
+            Version = 8;
         }
     }
 

@@ -1401,6 +1401,21 @@ public sealed class LadderMapService
 
         if (tracker.Traversal == null &&
             onLadder &&
+            TryRecoverUnderBottomTrap(
+                pawn,
+                bot,
+                state,
+                tracker,
+                position,
+                velocity,
+                now))
+        {
+            tracker.HasSample = false;
+            return false;
+        }
+
+        if (tracker.Traversal == null &&
+            onLadder &&
             Config.Debug)
         {
             DiagnoseUnmanagedLadderContact(
@@ -1430,6 +1445,18 @@ public sealed class LadderMapService
                         out string matchMode,
                         out float normalDot);
 
+                if (mountedKnown == null)
+                {
+                    mountedKnown =
+                        FindKnownMountedLadderFromGoal(
+                            bot,
+                            position,
+                            out mountedDeviation,
+                            out matchMode);
+
+                    normalDot = float.NaN;
+                }
+
                 if (mountedKnown != null &&
                     mountedKnown.HasBottomApproach &&
                     IsUsableAlreadyMountedPosition(
@@ -1445,6 +1472,14 @@ public sealed class LadderMapService
                             $"position={Format(position)}; bottomDistance={mountedDeviation:0.###}; " +
                             $"recoveryRadius={Config.LadderTraversalMountValidationRadius:0.###}; " +
                             $"normalDot={(float.IsFinite(normalDot) ? normalDot.ToString("0.###") : "n/a")}; " +
+                            "action=take-ownership");
+                    }
+                    else if (matchMode == "goal-fallback")
+                    {
+                        _info(
+                            $"MOUNT-GOAL-MATCH map={_document.Map}; slot={state.Slot}; id={mountedKnown.Id}; " +
+                            $"position={Format(position)}; pawnBottomDistance={mountedDeviation:0.###}; " +
+                            $"goalRadius={Config.LadderTraversalGoalMountedFallbackRadius:0.###}; " +
                             "action=take-ownership");
                     }
 
@@ -2046,7 +2081,8 @@ public sealed class LadderMapService
                 now);
 
             if (guardElapsed >=
-                Config.LadderTraversalPostExitGuardSeconds)
+                    Config.LadderTraversalPostExitGuardSeconds &&
+                traversal.PostExitNavigationResolved)
             {
                 LogBotPathState(
                     bot,
@@ -2062,7 +2098,7 @@ public sealed class LadderMapService
                     ladder,
                     position,
                     progress,
-                    "top-exit-valve-handoff",
+                    "top-exit-navigation-stable",
                     now);
 
                 return true;
@@ -3064,9 +3100,17 @@ public sealed class LadderMapService
         traversal.PostExitHandoffGoalValid = false;
         traversal.PostExitRepathRequested = false;
         traversal.PostExitRepathRequestedAt = float.NegativeInfinity;
+        traversal.PostExitRepathWriteCount = 0;
+        traversal.PostExitRepathLastWriteAt = float.NegativeInfinity;
         traversal.PostExitNavigationResolved = false;
+        traversal.PostExitNavigationStableSince = float.NegativeInfinity;
+        traversal.PostExitLandingObserved = false;
+        traversal.PostExitLandingPosition = default;
         traversal.PostExitGoalIssued = false;
         traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
+        traversal.PostExitGoalLastWriteAt = float.NegativeInfinity;
+        traversal.PostExitGoalWriteCount = 0;
+        traversal.PostExitGoalRevertCount = 0;
         traversal.PostExitGoal = default;
 
         float referenceDeviation =
@@ -4663,9 +4707,14 @@ public sealed class LadderMapService
             return;
         }
 
-        // Only a currently visible live enemy is strong evidence that Valve
-        // already has a useful combat task. Enemy.Value alone can remain stale
-        // after the climb while the bot still holds the old ladder path.
+        if (!traversal.PostExitLandingObserved)
+        {
+            traversal.PostExitLandingObserved = true;
+            traversal.PostExitLandingPosition = position;
+        }
+
+        // Visible combat is a verified replacement task. A stale Enemy handle is
+        // not enough; this mirrors Knife Rush's "verify real state" rule.
         if (TryGetLiveBotEnemy(
                 pawn,
                 bot,
@@ -4674,183 +4723,383 @@ public sealed class LadderMapService
             if (!traversal.PostExitNavigationResolved)
             {
                 traversal.PostExitNavigationResolved = true;
+                traversal.PostExitNavigationStableSince = now;
 
                 _info(
                     $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                    $"source=enemy; enemyIndex={enemyIndex}; position={Format(position)}; action=leave-valve");
+                    $"source=visible-enemy; enemyIndex={enemyIndex}; position={Format(position)}; " +
+                    "action=leave-valve");
             }
 
             return;
         }
 
+        // Repath is itself treated as a held command. Issue it on at least
+        // several fast frames, exactly as Knife Rush keeps re-selecting the knife
+        // when Valve takes it back.
         if (!traversal.PostExitRepathRequested)
         {
             traversal.PostExitRepathRequested = true;
             traversal.PostExitRepathRequestedAt = now;
+        }
 
+        if (traversal.PostExitRepathWriteCount <
+                Config.LadderTraversalNavigationMinimumWrites &&
+            now - traversal.PostExitRepathLastWriteAt >=
+                Config.LadderTraversalNavigationRewriteIntervalSeconds)
+        {
             RequestImmediateBotRepath(
                 bot,
                 state.Slot,
-                "post-ladder safe landing");
+                "post-ladder repeated safe-landing repath");
 
-            _info(
-                $"POST-LADDER-REPATH map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                $"position={Format(position)}; oldPathIndex={traversal.PostExitHandoffPathIndex}; " +
-                $"oldPathLadderEnd={(float.IsFinite(traversal.PostExitHandoffPathLadderEnd) ? traversal.PostExitHandoffPathLadderEnd.ToString("0.###") : "n/a")}; " +
-                $"oldGoal={(traversal.PostExitHandoffGoalValid ? Format(traversal.PostExitHandoffGoal) : "n/a")}; " +
-                "action=request-valve-repath");
+            traversal.PostExitRepathLastWriteAt = now;
+            traversal.PostExitRepathWriteCount++;
 
-            LogBotPathState(
-                bot,
-                pawn,
-                state.Slot,
-                ladder.Id,
-                "post-exit-repath-request");
-
-            return;
-        }
-
-        if (traversal.PostExitNavigationResolved ||
-            traversal.PostExitGoalIssued ||
-            now - traversal.PostExitRepathRequestedAt <
-                Config.LadderTraversalPostExitGoalDelaySeconds)
-        {
-            return;
-        }
-
-        bool pathChanged =
-            false;
-
-        bool goalChanged =
-            false;
-
-        int currentPathIndex =
-            -1;
-
-        float currentPathLadderEnd =
-            float.NaN;
-
-        Vector3 currentGoal =
-            default;
-
-        bool currentGoalValid =
-            false;
-
-        try
-        {
-            currentPathIndex =
-                bot.PathIndex;
-            currentPathLadderEnd =
-                bot.PathLadderEnd;
-
-            CounterStrikeSharp.API.Modules.Utils.Vector goal =
-                bot.GoalPosition;
-
-            currentGoal =
-                new Vector3(
-                    goal.X,
-                    goal.Y,
-                    goal.Z);
-
-            currentGoalValid =
-                float.IsFinite(currentGoal.X) &&
-                float.IsFinite(currentGoal.Y) &&
-                float.IsFinite(currentGoal.Z);
-
-            pathChanged =
-                traversal.PostExitHandoffPathIndex >= 0 &&
-                currentPathIndex !=
-                    traversal.PostExitHandoffPathIndex;
-
-            if (traversal.PostExitHandoffGoalValid &&
-                currentGoalValid)
+            if (traversal.PostExitRepathWriteCount == 1)
             {
-                goalChanged =
-                    Vector3.Distance(
-                        traversal.PostExitHandoffGoal,
-                        currentGoal) >=
-                    Config.LadderTraversalPostExitGoalChangeDistance;
+                _info(
+                    $"POST-LADDER-REPATH map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"position={Format(position)}; oldPathIndex={traversal.PostExitHandoffPathIndex}; " +
+                    $"oldPathLadderEnd={(float.IsFinite(traversal.PostExitHandoffPathLadderEnd) ? traversal.PostExitHandoffPathLadderEnd.ToString("0.###") : "n/a")}; " +
+                    $"oldGoal={(traversal.PostExitHandoffGoalValid ? Format(traversal.PostExitHandoffGoal) : "n/a")}; " +
+                    $"write={traversal.PostExitRepathWriteCount}/{Config.LadderTraversalNavigationMinimumWrites}; " +
+                    "action=request-valve-repath");
             }
         }
-        catch
-        {
-            // If the native path state cannot be inspected, leave Valve alone.
-            traversal.PostExitNavigationResolved = true;
-            return;
-        }
 
-        if (pathChanged ||
-            goalChanged)
-        {
-            traversal.PostExitNavigationResolved = true;
-
-            _info(
-                $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                $"source=valve-repath; pathChanged={pathChanged}; goalChanged={goalChanged}; " +
-                $"pathIndex={currentPathIndex}; pathLadderEnd={(float.IsFinite(currentPathLadderEnd) ? currentPathLadderEnd.ToString("0.###") : "n/a")}; " +
-                $"goal={(currentGoalValid ? Format(currentGoal) : "n/a")}; action=leave-valve");
-
-            LogBotPathState(
+        if (!TryReadBotGoalPosition(
                 bot,
-                pawn,
-                state.Slot,
-                ladder.Id,
-                "post-exit-repath-resolved");
-
+                out Vector3 currentGoal))
+        {
             return;
         }
 
-        if (!Config.LadderTraversalPostExitEnemySpawnGoalEnabled ||
-            !TryGetOpposingSpawnGoal(
-                pawn,
-                position,
-                out Vector3 target,
-                out string spawnClass))
+        bool badGoal =
+            IsGoalNearKnownLadderBottom(
+                currentGoal,
+                out int badGoalLadderId,
+                out float badGoalDistance);
+
+        float movedFromLanding =
+            traversal.PostExitLandingObserved
+                ? Distance2D(
+                    position,
+                    traversal.PostExitLandingPosition)
+                : 0.0f;
+
+        // Give repeated repath a short opportunity to produce a real new path.
+        // If it does and the bot is already moving away, accept it without
+        // imposing our own destination.
+        if (!traversal.PostExitGoalIssued)
         {
-            traversal.PostExitNavigationResolved = true;
+            bool pathChanged =
+                traversal.PostExitHandoffPathIndex >= 0 &&
+                bot.PathIndex !=
+                    traversal.PostExitHandoffPathIndex;
 
-            _info(
-                $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                "source=none; reason=no-opposing-spawn; action=leave-valve");
+            bool goalChanged =
+                traversal.PostExitHandoffGoalValid &&
+                Vector3.Distance(
+                    traversal.PostExitHandoffGoal,
+                    currentGoal) >=
+                Config.LadderTraversalPostExitGoalChangeDistance;
 
-            return;
-        }
+            if ((pathChanged || goalChanged) &&
+                !badGoal &&
+                movedFromLanding >=
+                    Config.LadderTraversalPostExitStableMoveDistance)
+            {
+                if (!float.IsFinite(
+                        traversal.PostExitNavigationStableSince))
+                {
+                    traversal.PostExitNavigationStableSince = now;
+                }
 
-        if (TryWriteBotGoalPosition(
-                bot,
-                target))
-        {
+                if (now - traversal.PostExitNavigationStableSince >=
+                    Config.LadderTraversalPostExitStableSeconds)
+                {
+                    traversal.PostExitNavigationResolved = true;
+
+                    _info(
+                        $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"source=verified-valve-repath; pathChanged={pathChanged}; goalChanged={goalChanged}; " +
+                        $"goal={Format(currentGoal)}; moved={movedFromLanding:0.###}; action=leave-valve");
+
+                    return;
+                }
+            }
+            else
+            {
+                traversal.PostExitNavigationStableSince =
+                    float.NegativeInfinity;
+            }
+
+            bool readyForFallback =
+                traversal.PostExitRepathWriteCount >=
+                    Config.LadderTraversalNavigationMinimumWrites &&
+                now - traversal.PostExitRepathRequestedAt >=
+                    Config.LadderTraversalPostExitGoalDelaySeconds;
+
+            if (!readyForFallback)
+                return;
+
+            if (!Config.LadderTraversalPostExitEnemySpawnGoalEnabled ||
+                !TryGetOpposingSpawnGoal(
+                    pawn,
+                    position,
+                    out Vector3 target,
+                    out string spawnClass))
+            {
+                return;
+            }
+
             traversal.PostExitGoalIssued = true;
             traversal.PostExitGoalIssuedAt = now;
             traversal.PostExitGoal = target;
-
-            RequestImmediateBotRepath(
-                bot,
-                state.Slot,
-                "post-ladder opposing-spawn goal");
+            traversal.PostExitGoalWriteCount = 0;
+            traversal.PostExitGoalLastWriteAt =
+                float.NegativeInfinity;
+            traversal.PostExitNavigationStableSince =
+                float.NegativeInfinity;
 
             _info(
                 $"POST-LADDER-GOAL map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                 $"spawnClass={spawnClass}; target={Format(target)}; from={Format(position)}; " +
-                $"pathIndexBefore={currentPathIndex}; " +
-                $"oldGoal={(currentGoalValid ? Format(currentGoal) : "n/a")}; " +
-                "action=seed-goal-and-repath");
+                $"pathIndexBefore={bot.PathIndex}; oldGoal={Format(currentGoal)}; " +
+                "action=begin-repeated-goal-hold");
+        }
 
-            LogBotPathState(
-                bot,
+        if (!traversal.PostExitGoalIssued)
+            return;
+
+        float goalError =
+            Vector3.Distance(
+                currentGoal,
+                traversal.PostExitGoal);
+
+        bool goalMatches =
+            goalError <=
+            Config.LadderTraversalPostExitGoalTolerance;
+
+        bool mustWrite =
+            traversal.PostExitGoalWriteCount <
+                Config.LadderTraversalNavigationMinimumWrites ||
+            !goalMatches ||
+            badGoal;
+
+        if (mustWrite &&
+            now - traversal.PostExitGoalLastWriteAt >=
+                Config.LadderTraversalNavigationRewriteIntervalSeconds)
+        {
+            if (traversal.PostExitGoalWriteCount >=
+                    Config.LadderTraversalNavigationMinimumWrites &&
+                (!goalMatches || badGoal))
+            {
+                traversal.PostExitGoalRevertCount++;
+
+                _info(
+                    $"POST-LADDER-GOAL-REVERT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"observedGoal={Format(currentGoal)}; target={Format(traversal.PostExitGoal)}; " +
+                    $"goalError={goalError:0.###}; badLadderId={(badGoal ? badGoalLadderId.ToString() : "none")}; " +
+                    $"badLadderDistance={(badGoal ? badGoalDistance.ToString("0.###") : "n/a")}; " +
+                    $"reverts={traversal.PostExitGoalRevertCount}; action=reapply");
+            }
+
+            ApplyNavigationHoldWrite(
                 pawn,
-                state.Slot,
-                ladder.Id,
-                "post-exit-goal");
+                bot,
+                state,
+                position,
+                traversal.PostExitGoal,
+                "post-ladder goal hold");
+
+            traversal.PostExitGoalLastWriteAt = now;
+            traversal.PostExitGoalWriteCount++;
+
+            // Read again on the next fast pass. Never infer success from the
+            // fact that the write call itself returned successfully.
+            traversal.PostExitNavigationStableSince =
+                float.NegativeInfinity;
+
+            return;
+        }
+
+        bool heldLongEnough =
+            now - traversal.PostExitGoalIssuedAt >=
+                Config.LadderTraversalPostExitGoalHoldSeconds;
+
+        bool minimumWritesDone =
+            traversal.PostExitGoalWriteCount >=
+                Config.LadderTraversalNavigationMinimumWrites;
+
+        bool movedEnough =
+            movedFromLanding >=
+                Config.LadderTraversalPostExitStableMoveDistance;
+
+        if (minimumWritesDone &&
+            heldLongEnough &&
+            goalMatches &&
+            !badGoal &&
+            movedEnough)
+        {
+            if (!float.IsFinite(
+                    traversal.PostExitNavigationStableSince))
+            {
+                traversal.PostExitNavigationStableSince = now;
+            }
+
+            if (now - traversal.PostExitNavigationStableSince >=
+                Config.LadderTraversalPostExitStableSeconds)
+            {
+                traversal.PostExitNavigationResolved = true;
+
+                _info(
+                    $"POST-LADDER-STABLE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"goal={Format(currentGoal)}; writes={traversal.PostExitGoalWriteCount}; " +
+                    $"reverts={traversal.PostExitGoalRevertCount}; moved={movedFromLanding:0.###}; " +
+                    $"stableFor={(now - traversal.PostExitNavigationStableSince):0.###}s; action=leave-valve");
+            }
         }
         else
         {
-            traversal.PostExitNavigationResolved = true;
-
-            _info(
-                $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                $"source=none; reason=goal-write-failed; target={Format(target)}; action=leave-valve");
+            traversal.PostExitNavigationStableSince =
+                float.NegativeInfinity;
         }
+    }
+
+    private void ApplyNavigationHoldWrite(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState state,
+        Vector3 position,
+        Vector3 target,
+        string reason)
+    {
+        PrepareBotForMovement(
+            bot,
+            state);
+
+        TryWriteBotGoalPosition(
+            bot,
+            target);
+
+        RequestImmediateBotRepath(
+            bot,
+            state.Slot,
+            reason);
+
+        WriteViewTowardNavigationTarget(
+            pawn,
+            position,
+            target);
+    }
+
+    private static void WriteViewTowardNavigationTarget(
+        CCSPlayerPawn pawn,
+        Vector3 position,
+        Vector3 target)
+    {
+        Vector3 direction =
+            target -
+            position;
+
+        direction.Z = 0.0f;
+
+        if (direction.LengthSquared() <
+            1.0f)
+        {
+            return;
+        }
+
+        float yawDegrees =
+            MathF.Atan2(
+                direction.Y,
+                direction.X) *
+            (180.0f / MathF.PI);
+
+        // A short horizontal look reset is intentionally repeated together with
+        // the goal write. It clears the visually obvious stale "look up the
+        // ladder" pose without permanently owning the bot's view.
+        WritePawnView(
+            pawn,
+            0.0f,
+            yawDegrees);
+    }
+
+    private static bool TryReadBotGoalPosition(
+        CCSBot bot,
+        out Vector3 goal)
+    {
+        goal = default;
+
+        try
+        {
+            CounterStrikeSharp.API.Modules.Utils.Vector value =
+                bot.GoalPosition;
+
+            goal =
+                new Vector3(
+                    value.X,
+                    value.Y,
+                    value.Z);
+
+            return
+                float.IsFinite(goal.X) &&
+                float.IsFinite(goal.Y) &&
+                float.IsFinite(goal.Z);
+        }
+        catch
+        {
+            goal = default;
+            return false;
+        }
+    }
+
+    private bool IsGoalNearKnownLadderBottom(
+        Vector3 goal,
+        out int ladderId,
+        out float distance)
+    {
+        ladderId = -1;
+        distance = float.PositiveInfinity;
+
+        foreach (PhysicalLadder ladder in
+                 _document.Ladders)
+        {
+            if (!ladder.ManualCertified)
+                continue;
+
+            Vector3 bottom =
+                ladder.BottomMount.ToVector3();
+
+            if (MathF.Abs(
+                    goal.Z -
+                    bottom.Z) >
+                40.0f)
+            {
+                continue;
+            }
+
+            float candidateDistance =
+                Distance2D(
+                    goal,
+                    bottom);
+
+            if (candidateDistance <
+                distance)
+            {
+                distance =
+                    candidateDistance;
+                ladderId =
+                    ladder.Id;
+            }
+        }
+
+        return
+            ladderId >= 0 &&
+            distance <=
+                Config.LadderTraversalPostExitBadGoalRadius;
     }
 
     private static bool TryGetLiveBotEnemy(
@@ -5574,6 +5823,304 @@ public sealed class LadderMapService
         return remaining;
     }
 
+    private PhysicalLadder? FindKnownMountedLadderFromGoal(
+        CCSBot bot,
+        Vector3 pawnPosition,
+        out float selectedDeviation,
+        out string matchMode)
+    {
+        selectedDeviation =
+            float.PositiveInfinity;
+        matchMode = "none";
+
+        if (!TryReadBotGoalPosition(
+                bot,
+                out Vector3 goal))
+        {
+            return null;
+        }
+
+        PhysicalLadder? selected =
+            null;
+
+        float bestGoalDistance =
+            float.PositiveInfinity;
+        float secondBestGoalDistance =
+            float.PositiveInfinity;
+        float selectedPawnDistance =
+            float.PositiveInfinity;
+
+        foreach (PhysicalLadder ladder in
+                 _document.Ladders)
+        {
+            if (!ladder.ManualCertified ||
+                !ladder.HasBottomApproach ||
+                !IsUsableAlreadyMountedPosition(
+                    ladder,
+                    pawnPosition))
+            {
+                continue;
+            }
+
+            Vector3 bottom =
+                ladder.BottomMount.ToVector3();
+
+            float goalDistance =
+                Distance2D(
+                    goal,
+                    bottom);
+
+            float pawnDistance =
+                Distance2D(
+                    pawnPosition,
+                    bottom);
+
+            if (goalDistance >
+                    Config.LadderTraversalGoalMountedFallbackRadius ||
+                pawnDistance >
+                    Config.LadderTraversalMountValidationRadius * 2.0f)
+            {
+                continue;
+            }
+
+            if (goalDistance <
+                bestGoalDistance)
+            {
+                secondBestGoalDistance =
+                    bestGoalDistance;
+
+                selected = ladder;
+                bestGoalDistance =
+                    goalDistance;
+                selectedPawnDistance =
+                    pawnDistance;
+            }
+            else if (goalDistance <
+                     secondBestGoalDistance)
+            {
+                secondBestGoalDistance =
+                    goalDistance;
+            }
+        }
+
+        if (selected == null)
+            return null;
+
+        if (float.IsFinite(secondBestGoalDistance) &&
+            secondBestGoalDistance -
+                bestGoalDistance <
+            Config.LadderTraversalLadderSwitchAdvantage)
+        {
+            return null;
+        }
+
+        selectedDeviation =
+            selectedPawnDistance;
+        matchMode = "goal-fallback";
+
+        return selected;
+    }
+
+    private bool TryRecoverUnderBottomTrap(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState state,
+        BotTracker tracker,
+        Vector3 position,
+        Vector3 velocity,
+        float now)
+    {
+        if (now - tracker.LastTrapRecoveryAt <
+            0.75f)
+        {
+            return false;
+        }
+
+        PhysicalLadder? selected =
+            null;
+
+        float bestDistance =
+            float.PositiveInfinity;
+
+        foreach (PhysicalLadder ladder in
+                 _document.Ladders)
+        {
+            if (!ladder.ManualCertified ||
+                !ladder.HasBottomApproach)
+            {
+                continue;
+            }
+
+            Vector3 bottom =
+                ladder.BottomMount.ToVector3();
+
+            if (position.Z >=
+                bottom.Z -
+                Config.LadderTraversalMountedBelowTolerance)
+            {
+                continue;
+            }
+
+            float distance =
+                Distance2D(
+                    position,
+                    bottom);
+
+            if (distance <=
+                    Config.LadderTraversalTrapRecoveryXYRadius &&
+                distance <
+                    bestDistance)
+            {
+                selected = ladder;
+                bestDistance =
+                    distance;
+            }
+        }
+
+        if (selected == null)
+            return false;
+
+        Vector3 target =
+            selected.BottomEntry.ToVector3();
+
+        target.Z +=
+            Config.LadderTraversalRecoveryZOffset;
+
+        try
+        {
+            pawn.Teleport(
+                position: target,
+                angles: null,
+                velocity: Vector3.Zero);
+        }
+        catch (Exception exception)
+        {
+            _info(
+                $"LADDER-TRAP-RECOVERY-FAIL map={_document.Map}; slot={state.Slot}; id={selected.Id}; " +
+                $"position={Format(position)}; error={exception.Message}");
+
+            return false;
+        }
+
+        tracker.LastTrapRecoveryAt = now;
+        tracker.SuppressTraversalUntilLadderExit = true;
+
+        _info(
+            $"LADDER-TRAP-RECOVERY map={_document.Map}; slot={state.Slot}; id={selected.Id}; " +
+            $"from={Format(position)}; to={Format(target)}; bottomDistance={bestDistance:0.###}; " +
+            $"velocity={Format(velocity)}; action=teleport-and-repeat-navigation");
+
+        if (TryGetOpposingSpawnGoal(
+                pawn,
+                target,
+                out Vector3 navigationTarget,
+                out _))
+        {
+            ApplyNavigationHoldWrite(
+                pawn,
+                bot,
+                state,
+                target,
+                navigationTarget,
+                "ladder trap recovery");
+
+            ScheduleRepeatedNavigationWrites(
+                state.Slot,
+                navigationTarget,
+                Config.LadderTraversalNavigationMinimumWrites - 1,
+                "ladder trap recovery");
+        }
+        else
+        {
+            RequestImmediateBotRepath(
+                bot,
+                state.Slot,
+                "ladder trap recovery");
+
+            ScheduleRepeatedRepathWrites(
+                state.Slot,
+                Config.LadderTraversalNavigationMinimumWrites - 1,
+                "ladder trap recovery");
+        }
+
+        return true;
+    }
+
+    private void ScheduleRepeatedNavigationWrites(
+        int slot,
+        Vector3 target,
+        int remaining,
+        string reason)
+    {
+        if (remaining <= 0)
+            return;
+
+        Server.NextFrame(() =>
+        {
+            if (BotValidation.TryResolveLiveBot(
+                    slot,
+                    out _,
+                    out CCSPlayerPawn? pawn,
+                    out CCSBot? bot) &&
+                pawn != null &&
+                bot != null &&
+                NativeValueReader.TryGetOrigin(
+                    pawn,
+                    out Vector3 position))
+            {
+                TryWriteBotGoalPosition(
+                    bot,
+                    target);
+
+                RequestImmediateBotRepath(
+                    bot,
+                    slot,
+                    reason);
+
+                WriteViewTowardNavigationTarget(
+                    pawn,
+                    position,
+                    target);
+            }
+
+            ScheduleRepeatedNavigationWrites(
+                slot,
+                target,
+                remaining - 1,
+                reason);
+        });
+    }
+
+    private void ScheduleRepeatedRepathWrites(
+        int slot,
+        int remaining,
+        string reason)
+    {
+        if (remaining <= 0)
+            return;
+
+        Server.NextFrame(() =>
+        {
+            if (BotValidation.TryResolveLiveBot(
+                    slot,
+                    out _,
+                    out _,
+                    out CCSBot? bot) &&
+                bot != null)
+            {
+                RequestImmediateBotRepath(
+                    bot,
+                    slot,
+                    reason);
+            }
+
+            ScheduleRepeatedRepathWrites(
+                slot,
+                remaining - 1,
+                reason);
+        });
+    }
+
     private PhysicalLadder? FindKnownAtPosition(
         CCSPlayerPawn pawn,
         Vector3 position,
@@ -6072,6 +6619,9 @@ public sealed class LadderMapService
 
         public float LastUnmanagedLadderDiagnosticAt { get; set; } =
             float.NegativeInfinity;
+
+        public float LastTrapRecoveryAt { get; set; } =
+            float.NegativeInfinity;
     }
 
     private sealed class LearningSession
@@ -6229,10 +6779,23 @@ public sealed class LadderMapService
         public bool PostExitRepathRequested { get; set; }
         public float PostExitRepathRequestedAt { get; set; } =
             float.NegativeInfinity;
+        public int PostExitRepathWriteCount { get; set; }
+        public float PostExitRepathLastWriteAt { get; set; } =
+            float.NegativeInfinity;
+
         public bool PostExitNavigationResolved { get; set; }
+        public float PostExitNavigationStableSince { get; set; } =
+            float.NegativeInfinity;
+        public bool PostExitLandingObserved { get; set; }
+        public Vector3 PostExitLandingPosition { get; set; }
+
         public bool PostExitGoalIssued { get; set; }
         public float PostExitGoalIssuedAt { get; set; } =
             float.NegativeInfinity;
+        public float PostExitGoalLastWriteAt { get; set; } =
+            float.NegativeInfinity;
+        public int PostExitGoalWriteCount { get; set; }
+        public int PostExitGoalRevertCount { get; set; }
         public Vector3 PostExitGoal { get; set; }
     }
 }

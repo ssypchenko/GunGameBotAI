@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 21;
+    public override int Version { get; set; } = 22;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -168,11 +168,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // over several fast frames, verified, and re-applied if Valve takes it back.
     public int LadderTraversalNavigationMinimumWrites { get; set; } = 3;
     public float LadderTraversalNavigationRewriteIntervalSeconds { get; set; } = 0.03f;
-    public float LadderTraversalPostExitGoalHoldSeconds { get; set; } = 3.00f;
+    public float LadderTraversalPostExitGoalHoldSeconds { get; set; } = 5.00f;
     public float LadderTraversalPostExitStableSeconds { get; set; } = 0.50f;
     public float LadderTraversalPostExitStableMoveDistance { get; set; } = 24.0f;
     public float LadderTraversalPostExitProgressEpsilon { get; set; } = 6.0f;
     public float LadderTraversalPostExitStallRewriteSeconds { get; set; } = 0.40f;
+    public float LadderTraversalPostExitViewPitchTolerance { get; set; } = 8.0f;
+    public float LadderTraversalPostExitViewLookDistance { get; set; } = 512.0f;
+    public float LadderTraversalPostTraversalHoldSeconds { get; set; } = 4.0f;
     public float LadderTraversalPostExitGoalTolerance { get; set; } = 8.0f;
     public float LadderTraversalPostExitBadGoalRadius { get; set; } = 32.0f;
     public float LadderTraversalGoalMountedFallbackRadius { get; set; } = 32.0f;
@@ -349,11 +352,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalPostExitGoalChangeDistance = Clamp(LadderTraversalPostExitGoalChangeDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitGoalChangeDistance), warn);
         LadderTraversalNavigationMinimumWrites = Clamp(LadderTraversalNavigationMinimumWrites, 2, 8, 3, nameof(LadderTraversalNavigationMinimumWrites), warn);
         LadderTraversalNavigationRewriteIntervalSeconds = Clamp(LadderTraversalNavigationRewriteIntervalSeconds, 0.01f, 0.20f, 0.03f, nameof(LadderTraversalNavigationRewriteIntervalSeconds), warn);
-        LadderTraversalPostExitGoalHoldSeconds = Clamp(LadderTraversalPostExitGoalHoldSeconds, 0.25f, 6.0f, 3.00f, nameof(LadderTraversalPostExitGoalHoldSeconds), warn);
+        LadderTraversalPostExitGoalHoldSeconds = Clamp(LadderTraversalPostExitGoalHoldSeconds, 0.25f, 10.0f, 5.00f, nameof(LadderTraversalPostExitGoalHoldSeconds), warn);
         LadderTraversalPostExitStableSeconds = Clamp(LadderTraversalPostExitStableSeconds, 0.10f, 2.0f, 0.50f, nameof(LadderTraversalPostExitStableSeconds), warn);
         LadderTraversalPostExitStableMoveDistance = Clamp(LadderTraversalPostExitStableMoveDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitStableMoveDistance), warn);
         LadderTraversalPostExitProgressEpsilon = Clamp(LadderTraversalPostExitProgressEpsilon, 1.0f, 24.0f, 6.0f, nameof(LadderTraversalPostExitProgressEpsilon), warn);
         LadderTraversalPostExitStallRewriteSeconds = Clamp(LadderTraversalPostExitStallRewriteSeconds, 0.15f, 2.0f, 0.40f, nameof(LadderTraversalPostExitStallRewriteSeconds), warn);
+        LadderTraversalPostExitViewPitchTolerance = Clamp(LadderTraversalPostExitViewPitchTolerance, 2.0f, 30.0f, 8.0f, nameof(LadderTraversalPostExitViewPitchTolerance), warn);
+        LadderTraversalPostExitViewLookDistance = Clamp(LadderTraversalPostExitViewLookDistance, 64.0f, 2048.0f, 512.0f, nameof(LadderTraversalPostExitViewLookDistance), warn);
+        LadderTraversalPostTraversalHoldSeconds = Clamp(LadderTraversalPostTraversalHoldSeconds, 1.0f, 10.0f, 4.0f, nameof(LadderTraversalPostTraversalHoldSeconds), warn);
         LadderTraversalPostExitGoalTolerance = Clamp(LadderTraversalPostExitGoalTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalPostExitGoalTolerance), warn);
         LadderTraversalPostExitBadGoalRadius = Clamp(LadderTraversalPostExitBadGoalRadius, 8.0f, 64.0f, 32.0f, nameof(LadderTraversalPostExitBadGoalRadius), warn);
         LadderTraversalGoalMountedFallbackRadius = Clamp(LadderTraversalGoalMountedFallbackRadius, 8.0f, 64.0f, 32.0f, nameof(LadderTraversalGoalMountedFallbackRadius), warn);
@@ -627,6 +633,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalPostExitStallRewriteSeconds = 0.40f;
             GeometrySafetyDetectionEnabled = true;
             Version = 21;
+        }
+
+        if (Version < 22)
+        {
+            // v22 holds CCSBot's internal look state and keeps a short
+            // navigation watchdog alive after success/recovery.
+            LadderTraversalPostExitGoalHoldSeconds = 5.00f;
+            LadderTraversalPostExitViewPitchTolerance = 8.0f;
+            LadderTraversalPostExitViewLookDistance = 512.0f;
+            LadderTraversalPostTraversalHoldSeconds = 4.0f;
+            Version = 22;
         }
     }
 

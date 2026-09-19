@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 12;
+    public override int Version { get; set; } = 13;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -59,6 +59,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderManualPathSampleVerticalStep { get; set; } = 4.0f;
     public float LadderManualPathSampleHorizontalStep { get; set; } = 4.0f;
     public float LadderManualDetachGraceSeconds { get; set; } = 0.35f;
+    public float LadderManualLandingTimeoutSeconds { get; set; } = 1.00f;
+    public float LadderManualLandingMaxHorizontalDistance { get; set; } = 48.0f;
+    public float LadderManualLandingMaxDrop { get; set; } = 10.0f;
     public int LadderManualMaxReferenceSamples { get; set; } = 64;
 
     // Legacy automatic-learning tuning retained for config compatibility.
@@ -117,10 +120,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalTopExitAnchorRadius { get; set; } = 1.25f;
     public float LadderTraversalTopExitBrakeSpeed { get; set; } = 4.0f;
 
-    // v16: after LADDER -> WALK, neutralise movement and force AbsVelocity.X/Y
-    // to zero until the pawn has remained grounded near the real detach point.
-    public float LadderTraversalTopExitSettleTimeoutSeconds { get; set; } = 0.80f;
+    // v17: steer the airborne pawn to the human-taught grounded landing point.
+    public float LadderTraversalTopExitSettleTimeoutSeconds { get; set; } = 1.00f;
     public float LadderTraversalTopExitLandingRadius { get; set; } = 3.0f;
+    public float LadderTraversalTopExitLandingStopRadius { get; set; } = 0.75f;
+    public float LadderTraversalTopExitLandingVelocity { get; set; } = 60.0f;
+    public float LadderTraversalTopExitLandingVerticalTolerance { get; set; } = 6.0f;
     public float LadderTraversalTopExitGroundedConfirmSeconds { get; set; } = 0.12f;
     public float LadderTraversalTopExitMaxDrop { get; set; } = 24.0f;
     public float LadderTraversalTopExitSuccessMaxDrop { get; set; } = 8.0f;
@@ -189,6 +194,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderManualPathSampleVerticalStep = Clamp(LadderManualPathSampleVerticalStep, 1.0f, 32.0f, 4.0f, nameof(LadderManualPathSampleVerticalStep), warn);
         LadderManualPathSampleHorizontalStep = Clamp(LadderManualPathSampleHorizontalStep, 1.0f, 32.0f, 4.0f, nameof(LadderManualPathSampleHorizontalStep), warn);
         LadderManualDetachGraceSeconds = Clamp(LadderManualDetachGraceSeconds, 0.10f, 2.0f, 0.35f, nameof(LadderManualDetachGraceSeconds), warn);
+        LadderManualLandingTimeoutSeconds = Clamp(LadderManualLandingTimeoutSeconds, 0.40f, 2.0f, 1.00f, nameof(LadderManualLandingTimeoutSeconds), warn);
+        LadderManualLandingMaxHorizontalDistance = Clamp(LadderManualLandingMaxHorizontalDistance, 8.0f, 96.0f, 48.0f, nameof(LadderManualLandingMaxHorizontalDistance), warn);
+        LadderManualLandingMaxDrop = Clamp(LadderManualLandingMaxDrop, 2.0f, 32.0f, 10.0f, nameof(LadderManualLandingMaxDrop), warn);
         LadderManualMaxReferenceSamples = Clamp(LadderManualMaxReferenceSamples, 8, 256, 64, nameof(LadderManualMaxReferenceSamples), warn);
 
         // Preserve the safe values introduced during earlier ladder-map
@@ -256,10 +264,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalTopExitPushDistance = Clamp(LadderTraversalTopExitPushDistance, 2.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitPushDistance), warn);
         LadderTraversalTopExitPushTimeoutSeconds = Clamp(LadderTraversalTopExitPushTimeoutSeconds, 0.10f, 1.0f, 0.35f, nameof(LadderTraversalTopExitPushTimeoutSeconds), warn);
         LadderTraversalTopExitPitchDegrees = Clamp(LadderTraversalTopExitPitchDegrees, -20.0f, 20.0f, 0.0f, nameof(LadderTraversalTopExitPitchDegrees), warn);
-        LadderTraversalTopExitSettleTimeoutSeconds = Clamp(LadderTraversalTopExitSettleTimeoutSeconds, 0.30f, 2.0f, 0.80f, nameof(LadderTraversalTopExitSettleTimeoutSeconds), warn);
+        LadderTraversalTopExitSettleTimeoutSeconds = Clamp(LadderTraversalTopExitSettleTimeoutSeconds, 0.30f, 2.0f, 1.00f, nameof(LadderTraversalTopExitSettleTimeoutSeconds), warn);
         LadderTraversalTopExitAnchorRadius = Clamp(LadderTraversalTopExitAnchorRadius, 0.25f, 6.0f, 1.25f, nameof(LadderTraversalTopExitAnchorRadius), warn);
         LadderTraversalTopExitBrakeSpeed = Clamp(LadderTraversalTopExitBrakeSpeed, 0.5f, 40.0f, 4.0f, nameof(LadderTraversalTopExitBrakeSpeed), warn);
         LadderTraversalTopExitLandingRadius = Clamp(LadderTraversalTopExitLandingRadius, 0.5f, 8.0f, 3.0f, nameof(LadderTraversalTopExitLandingRadius), warn);
+        LadderTraversalTopExitLandingStopRadius = Clamp(LadderTraversalTopExitLandingStopRadius, 0.25f, 3.0f, 0.75f, nameof(LadderTraversalTopExitLandingStopRadius), warn);
+        LadderTraversalTopExitLandingVelocity = Clamp(LadderTraversalTopExitLandingVelocity, 10.0f, 120.0f, 60.0f, nameof(LadderTraversalTopExitLandingVelocity), warn);
+        LadderTraversalTopExitLandingVerticalTolerance = Clamp(LadderTraversalTopExitLandingVerticalTolerance, 1.0f, 16.0f, 6.0f, nameof(LadderTraversalTopExitLandingVerticalTolerance), warn);
         LadderTraversalTopExitGroundedConfirmSeconds = Clamp(LadderTraversalTopExitGroundedConfirmSeconds, 0.05f, 0.50f, 0.12f, nameof(LadderTraversalTopExitGroundedConfirmSeconds), warn);
         LadderTraversalTopExitMaxDrop = Clamp(LadderTraversalTopExitMaxDrop, 4.0f, 64.0f, 24.0f, nameof(LadderTraversalTopExitMaxDrop), warn);
         LadderTraversalTopExitSuccessMaxDrop = Clamp(LadderTraversalTopExitSuccessMaxDrop, 1.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitSuccessMaxDrop), warn);
@@ -410,13 +421,28 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 12)
         {
-            // Version 12 directly removes inherited horizontal launch velocity
-            // and requires stable ground close to the actual detach point.
+            // Version 12 directly removed inherited horizontal launch velocity.
             LadderTraversalTopExitSettleTimeoutSeconds = 0.80f;
             LadderTraversalTopExitLandingRadius = 3.0f;
             LadderTraversalTopExitGroundedConfirmSeconds = 0.12f;
             LadderTraversalTopExitSuccessMaxDrop = 8.0f;
             Version = 12;
+        }
+
+        if (Version < 13)
+        {
+            // Version 13 records a real human grounded landing point and guides
+            // bots to that point instead of treating the ladder lip as safe.
+            LadderManualLandingTimeoutSeconds = 1.00f;
+            LadderManualLandingMaxHorizontalDistance = 48.0f;
+            LadderManualLandingMaxDrop = 10.0f;
+            LadderTraversalTopExitSettleTimeoutSeconds = 1.00f;
+            LadderTraversalTopExitLandingRadius = 3.0f;
+            LadderTraversalTopExitLandingStopRadius = 0.75f;
+            LadderTraversalTopExitLandingVelocity = 60.0f;
+            LadderTraversalTopExitLandingVerticalTolerance = 6.0f;
+            LadderTraversalTopExitGroundedConfirmSeconds = 0.12f;
+            Version = 13;
         }
     }
 

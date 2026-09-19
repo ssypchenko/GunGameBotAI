@@ -1362,6 +1362,7 @@ public sealed class LadderMapService
         {
             UpdateTraversalFromSlowLoop(
                 pawn,
+                bot,
                 state,
                 tracker,
                 position,
@@ -2774,6 +2775,7 @@ public sealed class LadderMapService
 
     private void UpdateTraversalFromSlowLoop(
         CCSPlayerPawn pawn,
+        CCSBot bot,
         BotRuntimeState state,
         BotTracker tracker,
         Vector3 position,
@@ -2877,6 +2879,13 @@ public sealed class LadderMapService
                 ladder,
                 position,
                 now);
+
+            LogBotPathState(
+                bot,
+                pawn,
+                state.Slot,
+                ladder.Id,
+                "mount-slow");
         }
 
         UpdateClimbProgress(

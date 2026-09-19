@@ -1378,6 +1378,47 @@ public sealed class LadderMapService
         bool onLadder =
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER;
 
+        if (onLadder &&
+            tracker.PostTraversalNavigation != null)
+        {
+            tracker.PostTraversalNavigation = null;
+        }
+
+        if (!onLadder &&
+            tracker.Traversal == null &&
+            tracker.PostTraversalNavigationRequested)
+        {
+            tracker.PostTraversalNavigationRequested = false;
+
+            StartPostTraversalNavigationHold(
+                pawn,
+                bot,
+                state,
+                tracker,
+                position,
+                now,
+                "recovery-teleport");
+        }
+
+        if (!onLadder &&
+            tracker.Traversal == null &&
+            tracker.PostTraversalNavigation != null &&
+            MaintainPostTraversalNavigationHold(
+                pawn,
+                bot,
+                state,
+                tracker,
+                position,
+                now))
+        {
+            tracker.HasSample = true;
+            tracker.PreviousOnLadder = false;
+            tracker.PreviousPosition = position;
+            tracker.PreviousVelocity = velocity;
+            tracker.PreviousSampleAt = now;
+            return true;
+        }
+
         bool wasOnLadder =
             tracker.HasSample &&
             tracker.PreviousOnLadder;
@@ -1541,7 +1582,9 @@ public sealed class LadderMapService
         tracker.PreviousVelocity = velocity;
         tracker.PreviousSampleAt = now;
 
-        return tracker.Traversal != null;
+        return
+            tracker.Traversal != null ||
+            tracker.PostTraversalNavigation != null;
     }
 
     /// <summary>
@@ -3109,6 +3152,8 @@ public sealed class LadderMapService
         traversal.PostExitLastMovementPosition = default;
         traversal.PostExitLastMovementAt = float.NegativeInfinity;
         traversal.PostExitStallCorrectionCount = 0;
+        traversal.PostExitViewCorrectionCount = 0;
+        traversal.PostExitLastViewDiagnosticAt = float.NegativeInfinity;
         traversal.PostExitGoalIssued = false;
         traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
         traversal.PostExitGoalLastWriteAt = float.NegativeInfinity;
@@ -3179,6 +3224,26 @@ public sealed class LadderMapService
                 now);
         }
 
+        if (traversal != null &&
+            traversal.PostExitGoalIssued)
+        {
+            tracker.PostTraversalNavigation =
+                new PostTraversalNavigationSession
+                {
+                    Target = traversal.PostExitGoal,
+                    StartedAt = now,
+                    ExpiresAt =
+                        now +
+                        Config.LadderTraversalPostTraversalHoldSeconds,
+                    Reason = "post-success"
+                };
+
+            _info(
+                $"POST-TRAVERSAL-HOLD-START map={_document.Map}; slot={slot}; id={ladder.Id}; " +
+                $"target={Format(traversal.PostExitGoal)}; seconds={Config.LadderTraversalPostTraversalHoldSeconds:0.###}; " +
+                "reason=post-success");
+        }
+
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
 
@@ -3230,13 +3295,20 @@ public sealed class LadderMapService
                     TraversalStage.TopExit or
                     TraversalStage.PostExitGuard;
 
-            RecoverTraversalToSafePoint(
-                pawn,
-                slot,
-                traversal,
-                ladder,
-                reason,
-                preferTop);
+            bool recovered =
+                RecoverTraversalToSafePoint(
+                    pawn,
+                    slot,
+                    traversal,
+                    ladder,
+                    reason,
+                    preferTop);
+
+            if (recovered &&
+                preferTop)
+            {
+                tracker.PostTraversalNavigationRequested = true;
+            }
         }
 
         if (traversal.Stage ==
@@ -4735,7 +4807,8 @@ public sealed class LadderMapService
         if (TryGetLiveBotEnemy(
                 pawn,
                 bot,
-                out int enemyIndex))
+                out int enemyIndex) &&
+            bot.IsAimingAtEnemy)
         {
             if (!traversal.PostExitNavigationResolved)
             {
@@ -4899,6 +4972,39 @@ public sealed class LadderMapService
             goalError <=
             Config.LadderTraversalPostExitGoalTolerance;
 
+        bool viewStale =
+            IsPostExitViewStale(
+                bot);
+
+        if (viewStale)
+        {
+            traversal.PostExitViewCorrectionCount++;
+
+            if (now -
+                    traversal.PostExitLastViewDiagnosticAt >=
+                0.25f)
+            {
+                traversal.PostExitLastViewDiagnosticAt = now;
+
+                _info(
+                    $"POST-LADDER-VIEW-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
+                    $"lookPitch={NormaliseAngleDegrees(bot.LookPitch):0.###}; " +
+                    $"corrections={traversal.PostExitViewCorrectionCount}; action=hold-bot-view");
+            }
+
+            traversal.PostExitGoalIssuedAt = now;
+            traversal.PostExitNavigationStableSince =
+                float.NegativeInfinity;
+        }
+
+        HoldBotNavigationView(
+            pawn,
+            bot,
+            position,
+            traversal.PostExitGoal,
+            now);
+
         float goalDistanceFromBot =
             Distance2D(
                 position,
@@ -5003,11 +5109,16 @@ public sealed class LadderMapService
             movedFromLanding >=
                 Config.LadderTraversalPostExitStableMoveDistance;
 
+        bool viewStable =
+            !IsPostExitViewStale(
+                bot);
+
         if (minimumWritesDone &&
             heldLongEnough &&
             goalMatches &&
             !badGoal &&
-            movedEnough)
+            movedEnough &&
+            viewStable)
         {
             if (!float.IsFinite(
                     traversal.PostExitNavigationStableSince))
@@ -5024,7 +5135,7 @@ public sealed class LadderMapService
                     $"POST-LADDER-STABLE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"goal={Format(currentGoal)}; writes={traversal.PostExitGoalWriteCount}; " +
                     $"reverts={traversal.PostExitGoalRevertCount}; stalls={traversal.PostExitStallCorrectionCount}; " +
-                    $"moved={movedFromLanding:0.###}; " +
+                    $"viewCorrections={traversal.PostExitViewCorrectionCount}; moved={movedFromLanding:0.###}; " +
                     $"stableFor={(now - traversal.PostExitNavigationStableSince):0.###}s; action=leave-valve");
             }
         }
@@ -5056,22 +5167,44 @@ public sealed class LadderMapService
             state.Slot,
             reason);
 
-        WriteViewTowardNavigationTarget(
+        HoldBotNavigationView(
             pawn,
+            bot,
             position,
-            target);
+            target,
+            Server.CurrentTime);
     }
 
-    private static void WriteViewTowardNavigationTarget(
+    private bool IsPostExitViewStale(
+        CCSBot bot)
+    {
+        try
+        {
+            return
+                bot.EyeAnglesUnderPathFinderControl ||
+                MathF.Abs(
+                    NormaliseAngleDegrees(
+                        bot.LookPitch)) >
+                Config.LadderTraversalPostExitViewPitchTolerance;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private void HoldBotNavigationView(
         CCSPlayerPawn pawn,
+        CCSBot bot,
         Vector3 position,
-        Vector3 target)
+        Vector3 target,
+        float now)
     {
         Vector3 direction =
-            target -
-            position;
-
-        direction.Z = 0.0f;
+            new(
+                target.X - position.X,
+                target.Y - position.Y,
+                0.0f);
 
         if (direction.LengthSquared() <
             1.0f)
@@ -5079,19 +5212,68 @@ public sealed class LadderMapService
             return;
         }
 
+        direction =
+            Vector3.Normalize(
+                direction);
+
         float yawDegrees =
             MathF.Atan2(
                 direction.Y,
                 direction.X) *
             (180.0f / MathF.PI);
 
-        // A short horizontal look reset is intentionally repeated together with
-        // the goal write. It clears the visually obvious stale "look up the
-        // ladder" pose without permanently owning the bot's view.
+        try
+        {
+            bot.EyeAnglesUnderPathFinderControl = false;
+            bot.LookPitch = 0.0f;
+            bot.LookPitchVel = 0.0f;
+            bot.LookYaw = yawDegrees;
+            bot.LookYawVel = 0.0f;
+            bot.InhibitLookAroundTimestamp =
+                now +
+                0.20f;
+
+            CounterStrikeSharp.API.Modules.Utils.Vector lookAt =
+                bot.LookAtSpot;
+
+            lookAt.X =
+                position.X +
+                direction.X *
+                Config.LadderTraversalPostExitViewLookDistance;
+            lookAt.Y =
+                position.Y +
+                direction.Y *
+                Config.LadderTraversalPostExitViewLookDistance;
+            lookAt.Z =
+                position.Z +
+                64.0f;
+
+            bot.LookAtSpotTimestamp = now;
+            bot.LookAtSpotDuration = 0.25f;
+            bot.LookAtSpotClearIfClose = false;
+            bot.LookAtSpotAttack = false;
+        }
+        catch
+        {
+            // Native bot state can disappear during death/map teardown.
+        }
+
         WritePawnView(
             pawn,
             0.0f,
             yawDegrees);
+    }
+
+    private static float NormaliseAngleDegrees(
+        float angle)
+    {
+        while (angle > 180.0f)
+            angle -= 360.0f;
+
+        while (angle < -180.0f)
+            angle += 360.0f;
+
+        return angle;
     }
 
     private static bool TryReadBotGoalPosition(
@@ -5167,6 +5349,137 @@ public sealed class LadderMapService
             ladderId >= 0 &&
             distance <=
                 Config.LadderTraversalPostExitBadGoalRadius;
+    }
+
+    private void StartPostTraversalNavigationHold(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState state,
+        BotTracker tracker,
+        Vector3 position,
+        float now,
+        string reason)
+    {
+        if (!TryGetOpposingSpawnGoal(
+                pawn,
+                position,
+                out Vector3 target,
+                out string spawnClass))
+        {
+            return;
+        }
+
+        tracker.PostTraversalNavigation =
+            new PostTraversalNavigationSession
+            {
+                Target = target,
+                StartedAt = now,
+                ExpiresAt =
+                    now +
+                    Config.LadderTraversalPostTraversalHoldSeconds,
+                Reason = reason
+            };
+
+        _info(
+            $"POST-TRAVERSAL-HOLD-START map={_document.Map}; slot={state.Slot}; " +
+            $"target={Format(target)}; spawnClass={spawnClass}; " +
+            $"seconds={Config.LadderTraversalPostTraversalHoldSeconds:0.###}; reason={reason}");
+
+        ApplyNavigationHoldWrite(
+            pawn,
+            bot,
+            state,
+            position,
+            target,
+            $"post-traversal {reason}");
+    }
+
+    private bool MaintainPostTraversalNavigationHold(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState state,
+        BotTracker tracker,
+        Vector3 position,
+        float now)
+    {
+        PostTraversalNavigationSession? hold =
+            tracker.PostTraversalNavigation;
+
+        if (hold == null)
+            return false;
+
+        if (TryGetLiveBotEnemy(
+                pawn,
+                bot,
+                out int enemyIndex) &&
+            bot.IsAimingAtEnemy)
+        {
+            _info(
+                $"POST-TRAVERSAL-HOLD-END map={_document.Map}; slot={state.Slot}; " +
+                $"reason=verified-combat; enemyIndex={enemyIndex}; writes={hold.WriteCount}; " +
+                $"corrections={hold.CorrectionCount}");
+
+            tracker.PostTraversalNavigation = null;
+            return false;
+        }
+
+        if (now >= hold.ExpiresAt)
+        {
+            _info(
+                $"POST-TRAVERSAL-HOLD-END map={_document.Map}; slot={state.Slot}; " +
+                $"reason=timeout-stable-window; writes={hold.WriteCount}; corrections={hold.CorrectionCount}");
+
+            tracker.PostTraversalNavigation = null;
+            return false;
+        }
+
+        bool goalWrong = true;
+
+        if (TryReadBotGoalPosition(
+                bot,
+                out Vector3 currentGoal))
+        {
+            goalWrong =
+                Vector3.Distance(
+                    currentGoal,
+                    hold.Target) >
+                Config.LadderTraversalPostExitGoalTolerance;
+        }
+
+        bool viewStale =
+            IsPostExitViewStale(
+                bot);
+
+        if (goalWrong ||
+            viewStale)
+        {
+            hold.CorrectionCount++;
+
+            if (now -
+                    hold.LastDiagnosticAt >=
+                0.25f)
+            {
+                hold.LastDiagnosticAt = now;
+
+                _info(
+                    $"POST-TRAVERSAL-HOLD-RECAPTURE map={_document.Map}; slot={state.Slot}; " +
+                    $"goalWrong={goalWrong}; eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
+                    $"lookPitch={NormaliseAngleDegrees(bot.LookPitch):0.###}; " +
+                    $"corrections={hold.CorrectionCount}; reason={hold.Reason}");
+            }
+        }
+
+        ApplyNavigationHoldWrite(
+            pawn,
+            bot,
+            state,
+            position,
+            hold.Target,
+            $"post-traversal {hold.Reason}");
+
+        hold.WriteCount++;
+
+        return true;
     }
 
     private static bool TryGetLiveBotEnemy(
@@ -6676,6 +6989,8 @@ public sealed class LadderMapService
 
         public LearningSession? Learning { get; set; }
         public TraversalSession? Traversal { get; set; }
+        public PostTraversalNavigationSession? PostTraversalNavigation { get; set; }
+        public bool PostTraversalNavigationRequested { get; set; }
 
         public bool SuppressTraversalUntilLadderExit { get; set; }
 
@@ -6688,6 +7003,18 @@ public sealed class LadderMapService
             float.NegativeInfinity;
 
         public float LastTrapRecoveryAt { get; set; } =
+            float.NegativeInfinity;
+    }
+
+    private sealed class PostTraversalNavigationSession
+    {
+        public Vector3 Target { get; set; }
+        public float StartedAt { get; set; }
+        public float ExpiresAt { get; set; }
+        public string Reason { get; set; } = string.Empty;
+        public int WriteCount { get; set; }
+        public int CorrectionCount { get; set; }
+        public float LastDiagnosticAt { get; set; } =
             float.NegativeInfinity;
     }
 
@@ -6859,6 +7186,9 @@ public sealed class LadderMapService
         public float PostExitLastMovementAt { get; set; } =
             float.NegativeInfinity;
         public int PostExitStallCorrectionCount { get; set; }
+        public int PostExitViewCorrectionCount { get; set; }
+        public float PostExitLastViewDiagnosticAt { get; set; } =
+            float.NegativeInfinity;
 
         public bool PostExitGoalIssued { get; set; }
         public float PostExitGoalIssuedAt { get; set; } =

@@ -42,7 +42,21 @@ public sealed class PhysicalLadder
     /// </summary>
     public bool ManualCertified { get; set; }
     public int ManualObservations { get; set; }
+
+    /// <summary>
+    /// First off-ladder position after the human LADDER -> WALK transition.
+    /// This is the lip/exit observation, not necessarily a safe place to stand.
+    /// </summary>
     public LadderPoint? ManualExit { get; set; }
+
+    /// <summary>
+    /// First real grounded position reached by the human after the upper exit.
+    /// Runtime top-exit guidance uses this as the safe landing target.
+    /// Null is valid for older version-5 JSON and means the ladder needs one
+    /// fresh manual traversal before assisted top exit can be used.
+    /// </summary>
+    public LadderPoint? ManualLanding { get; set; }
+
     public List<LadderPathSample> ReferencePath { get; set; } = new();
 
     public int Observations { get; set; }

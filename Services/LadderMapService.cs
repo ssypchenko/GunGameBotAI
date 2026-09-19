@@ -1394,10 +1394,12 @@ public sealed class LadderMapService
             if (onLadder)
             {
                 PhysicalLadder? mountedKnown =
-                    FindKnownAtPosition(
+                    FindKnownMountedLadder(
                         pawn,
                         position,
-                        out float mountedDeviation);
+                        out float mountedDeviation,
+                        out string matchMode,
+                        out float normalDot);
 
                 if (mountedKnown != null &&
                     mountedKnown.HasBottomApproach &&
@@ -1405,20 +1407,14 @@ public sealed class LadderMapService
                         mountedKnown,
                         position))
                 {
-                    float cooldownRemaining =
-                        MathF.Max(
-                            0.0f,
-                            tracker.TraversalCooldownUntil -
-                            now);
-
-                    if (cooldownRemaining > 0.0f ||
-                        tracker.SuppressTraversalUntilLadderExit)
+                    if (matchMode == "recovery")
                     {
                         _info(
-                            $"MOUNT-TAKEOVER-OVERRIDE map={_document.Map}; slot={state.Slot}; id={mountedKnown.Id}; " +
-                            $"position={Format(position)}; deviation={mountedDeviation:0.###}; " +
-                            $"cooldownRemaining={cooldownRemaining:0.###}s; " +
-                            $"suppress={tracker.SuppressTraversalUntilLadderExit}; action=take-ownership");
+                            $"MOUNT-RECOVERY-MATCH map={_document.Map}; slot={state.Slot}; id={mountedKnown.Id}; " +
+                            $"position={Format(position)}; bottomDistance={mountedDeviation:0.###}; " +
+                            $"recoveryRadius={Config.LadderTraversalMountValidationRadius:0.###}; " +
+                            $"normalDot={(float.IsFinite(normalDot) ? normalDot.ToString("0.###") : "n/a")}; " +
+                            "action=take-ownership");
                     }
 
                     tracker.SuppressTraversalUntilLadderExit = false;
@@ -1439,13 +1435,14 @@ public sealed class LadderMapService
                         "already-mounted");
                 }
             }
-            else if (now >=
-                     tracker.TraversalCooldownUntil)
+            else
             {
                 PhysicalLadder? candidate =
                     FindApproachingKnownLadder(
+                        tracker,
                         position,
                         velocity,
+                        now,
                         out float alongToMount,
                         out float perpendicular,
                         out float towardDot);
@@ -3094,7 +3091,12 @@ public sealed class LadderMapService
 
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
-        tracker.TraversalCooldownUntil = now + 0.75f;
+
+        // A successful climb needs no time-based cooldown. Geometry/Z checks
+        // already prevent an immediate false proactive acquire at the top, and
+        // a legitimate move toward another ladder should remain available.
+        tracker.ProactiveFailureCooldownByLadder.Remove(
+            ladder.Id);
     }
 
     private void FailTraversal(
@@ -3158,7 +3160,19 @@ public sealed class LadderMapService
 
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
-        tracker.TraversalCooldownUntil = now + Config.LadderTraversalFailureCooldownSeconds;
+
+        int failedLadderId =
+            ladder?.Id ??
+            traversal.LadderId;
+
+        tracker.ProactiveFailureCooldownByLadder[failedLadderId] =
+            now +
+            Config.LadderTraversalProactiveFailureCooldownSeconds;
+
+        _info(
+            $"LADDER-PROACTIVE-COOLDOWN map={_document.Map}; slot={slot}; id={failedLadderId}; " +
+            $"seconds={Config.LadderTraversalProactiveFailureCooldownSeconds:0.###}; " +
+            "scope=this-ladder-acquire-only");
     }
 
     private bool ShouldIssueJump(
@@ -4980,10 +4994,12 @@ public sealed class LadderMapService
         tracker.LastUnmanagedLadderDiagnosticAt = now;
 
         PhysicalLadder? mountedKnown =
-            FindKnownAtPosition(
+            FindKnownMountedLadder(
                 pawn,
                 position,
-                out float mountedDeviation);
+                out float mountedDeviation,
+                out string matchMode,
+                out float normalDot);
 
         bool usable =
             mountedKnown != null &&
@@ -4993,17 +5009,20 @@ public sealed class LadderMapService
                 position);
 
         float cooldownRemaining =
-            MathF.Max(
-                0.0f,
-                tracker.TraversalCooldownUntil -
-                now);
+            mountedKnown != null
+                ? GetProactiveAcquireCooldownRemaining(
+                    tracker,
+                    mountedKnown.Id,
+                    now)
+                : 0.0f;
 
         _info(
             $"UNMANAGED-LADDER-CONTACT map={_document.Map}; slot={state.Slot}; " +
             $"position={Format(position)}; nearestId={(mountedKnown?.Id.ToString() ?? "none")}; " +
             $"deviation={(float.IsFinite(mountedDeviation) ? mountedDeviation.ToString("0.###") : "n/a")}; " +
+            $"matchMode={matchMode}; normalDot={(float.IsFinite(normalDot) ? normalDot.ToString("0.###") : "n/a")}; " +
             $"usable={usable}; suppress={tracker.SuppressTraversalUntilLadderExit}; " +
-            $"cooldownRemaining={cooldownRemaining:0.###}s; moveType={pawn.MoveType}");
+            $"proactiveCooldownRemaining={cooldownRemaining:0.###}s; moveType={pawn.MoveType}");
 
         LogBotPathState(
             bot,
@@ -5061,8 +5080,10 @@ public sealed class LadderMapService
     }
 
     private PhysicalLadder? FindApproachingKnownLadder(
+        BotTracker tracker,
         Vector3 position,
         Vector3 velocity,
+        float now,
         out float selectedAlong,
         out float selectedPerpendicular,
         out float selectedTowardDot)
@@ -5103,6 +5124,14 @@ public sealed class LadderMapService
         {
             if (!ladder.ManualCertified ||
                 !ladder.HasBottomApproach)
+            {
+                continue;
+            }
+
+            if (IsProactiveAcquireCoolingDown(
+                    tracker,
+                    ladder.Id,
+                    now))
             {
                 continue;
             }
@@ -5242,6 +5271,183 @@ public sealed class LadderMapService
         }
 
         return selected;
+    }
+
+    private PhysicalLadder? FindKnownMountedLadder(
+        CCSPlayerPawn pawn,
+        Vector3 position,
+        out float selectedDeviation,
+        out string matchMode,
+        out float selectedNormalDot)
+    {
+        PhysicalLadder? strict =
+            FindKnownAtPosition(
+                pawn,
+                position,
+                out selectedDeviation);
+
+        if (strict != null)
+        {
+            matchMode = "strict";
+
+            selectedNormalDot =
+                TryGetCurrentLadderNormal(
+                    pawn,
+                    out Vector3 strictNormal)
+                    ? GetLadderNormalCompatibility(
+                        strict,
+                        position,
+                        strictNormal)
+                    : float.NaN;
+
+            return strict;
+        }
+
+        matchMode = "none";
+        selectedNormalDot = float.NaN;
+        selectedDeviation = float.PositiveInfinity;
+
+        // Recovery matching is only legal when Source 2 already confirms that
+        // the pawn is physically on a ladder and supplies a real ladder normal.
+        // This wider radius is never used for proactive WALK acquisition.
+        if (pawn.MoveType !=
+                MoveType_t.MOVETYPE_LADDER ||
+            !TryGetCurrentLadderNormal(
+                pawn,
+                out Vector3 actualNormal))
+        {
+            return null;
+        }
+
+        PhysicalLadder? selected =
+            null;
+
+        float bestDistance =
+            float.PositiveInfinity;
+
+        float secondBestDistance =
+            float.PositiveInfinity;
+
+        float bestNormalDot =
+            float.NaN;
+
+        foreach (PhysicalLadder ladder in
+                 _document.Ladders)
+        {
+            if (!ladder.ManualCertified ||
+                !ladder.HasBottomApproach ||
+                !IsUsableAlreadyMountedPosition(
+                    ladder,
+                    position))
+            {
+                continue;
+            }
+
+            float normalDot =
+                GetLadderNormalCompatibility(
+                    ladder,
+                    position,
+                    actualNormal);
+
+            if (!float.IsFinite(normalDot) ||
+                normalDot <
+                    Config.LadderTraversalNormalDotMinimum)
+            {
+                continue;
+            }
+
+            float bottomDistance =
+                Distance2D(
+                    position,
+                    ladder.BottomMount.ToVector3());
+
+            if (bottomDistance >
+                Config.LadderTraversalMountValidationRadius)
+            {
+                continue;
+            }
+
+            if (bottomDistance <
+                bestDistance)
+            {
+                secondBestDistance =
+                    bestDistance;
+
+                selected = ladder;
+                bestDistance =
+                    bottomDistance;
+                bestNormalDot =
+                    normalDot;
+            }
+            else if (bottomDistance <
+                     secondBestDistance)
+            {
+                secondBestDistance =
+                    bottomDistance;
+            }
+        }
+
+        if (selected == null)
+            return null;
+
+        // Paired ladders can be close together. The expanded fallback is only
+        // accepted when the best candidate has a useful distance advantage.
+        if (float.IsFinite(secondBestDistance) &&
+            secondBestDistance -
+                bestDistance <
+            Config.LadderTraversalLadderSwitchAdvantage)
+        {
+            return null;
+        }
+
+        selectedDeviation =
+            bestDistance;
+        selectedNormalDot =
+            bestNormalDot;
+        matchMode = "recovery";
+
+        return selected;
+    }
+
+    private bool IsProactiveAcquireCoolingDown(
+        BotTracker tracker,
+        int ladderId,
+        float now)
+    {
+        return
+            GetProactiveAcquireCooldownRemaining(
+                tracker,
+                ladderId,
+                now) >
+            0.0f;
+    }
+
+    private static float GetProactiveAcquireCooldownRemaining(
+        BotTracker tracker,
+        int ladderId,
+        float now)
+    {
+        if (!tracker.ProactiveFailureCooldownByLadder.TryGetValue(
+                ladderId,
+                out float until))
+        {
+            return 0.0f;
+        }
+
+        float remaining =
+            until -
+            now;
+
+        if (remaining <=
+            0.0f)
+        {
+            tracker.ProactiveFailureCooldownByLadder.Remove(
+                ladderId);
+
+            return 0.0f;
+        }
+
+        return remaining;
     }
 
     private PhysicalLadder? FindKnownAtPosition(
@@ -5704,8 +5910,12 @@ public sealed class LadderMapService
         public TraversalSession? Traversal { get; set; }
 
         public bool SuppressTraversalUntilLadderExit { get; set; }
-        public float TraversalCooldownUntil { get; set; } =
-            float.NegativeInfinity;
+
+        // v16: failures throttle only proactive ACQUIRE/JUMP on the ladder that
+        // failed. Already-mounted takeover and all other ladders stay live.
+        public Dictionary<int, float> ProactiveFailureCooldownByLadder { get; } =
+            new();
+
         public float LastUnmanagedLadderDiagnosticAt { get; set; } =
             float.NegativeInfinity;
     }

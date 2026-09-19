@@ -1533,22 +1533,12 @@ public sealed class LadderMapService
             else if (traversal.Stage ==
                      TraversalStage.PostExitGuard)
             {
-                RecoverTraversalToSafePoint(
-                    pawn,
-                    state.Slot,
-                    traversal,
-                    ladder,
-                    "reattached during post-exit guard",
-                    preferTop: true);
-
-                CompleteTraversal(
+                FailTraversal(
                     pawn,
                     state.Slot,
                     tracker,
                     ladder,
-                    ladder.ManualLanding?.ToVector3() ?? position,
-                    traversal.MaxClimbZ - traversal.ClimbStartZ,
-                    "top-exit-recovered-after-reattach",
+                    "reattached during post-exit guard",
                     now);
 
                 return true;
@@ -1863,22 +1853,12 @@ public sealed class LadderMapService
                 ladder.TopZ -
                 Config.LadderTraversalPostExitRecoveryDrop)
             {
-                RecoverTraversalToSafePoint(
-                    pawn,
-                    state.Slot,
-                    traversal,
-                    ladder,
-                    "fell during top-exit kick",
-                    preferTop: true);
-
-                CompleteTraversal(
+                FailTraversal(
                     pawn,
                     state.Slot,
                     tracker,
                     ladder,
-                    ladder.ManualLanding.ToVector3(),
-                    progress,
-                    "top-exit-recovered-during-kick",
+                    "fell during top-exit kick",
                     now);
 
                 return true;
@@ -1941,22 +1921,12 @@ public sealed class LadderMapService
                 ladder.TopZ -
                 Config.LadderTraversalPostExitRecoveryDrop)
             {
-                RecoverTraversalToSafePoint(
-                    pawn,
-                    state.Slot,
-                    traversal,
-                    ladder,
-                    "fell after Valve handoff",
-                    preferTop: true);
-
-                CompleteTraversal(
+                FailTraversal(
                     pawn,
                     state.Slot,
                     tracker,
                     ladder,
-                    ladder.ManualLanding?.ToVector3() ?? position,
-                    progress,
-                    "top-exit-recovered-after-handoff",
+                    "fell after Valve handoff",
                     now);
 
                 return true;

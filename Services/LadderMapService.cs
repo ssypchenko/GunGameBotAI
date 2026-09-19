@@ -3712,9 +3712,9 @@ public sealed class LadderMapService
         }
         catch (Exception exception)
         {
-            _warn(
-                exception,
-                $"Recovery teleport failed for slot {slot}, ladder {ladder.Id}.");
+            _info(
+                $"RECOVERY-TELEPORT-FAIL map={_document.Map}; slot={slot}; id={ladder.Id}; " +
+                $"reason={reason}; error={exception.Message}");
 
             return false;
         }

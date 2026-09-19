@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 15 combines two responsibilities:
+/// Version 16 combines two responsibilities:
 ///
 /// 1) High-confidence manual teaching. When configured conditions are met
 ///    (by default: no bots and exactly one live human), successful human ladder
@@ -1475,6 +1475,8 @@ public sealed class LadderMapService
                 traversal.ExitStartedPosition = default;
                 traversal.TopExitControlInitialised = false;
                 traversal.TopExitCorrectionCount = 0;
+                traversal.TopExitGroundedSince =
+                    float.NegativeInfinity;
                 traversal.LastTopExitDiagnosticAt =
                     float.NegativeInfinity;
                 traversal.HumanControlInitialised = false;
@@ -1775,21 +1777,70 @@ public sealed class LadderMapService
                     position,
                     traversal.ExitStartedPosition);
 
-            if (grounded &&
+            bool safeHeight =
                 dropBelowKnownTop <=
-                    Config.LadderTraversalTopExitSuccessMaxDrop)
-            {
-                CompleteTraversal(
-                    pawn,
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    position,
-                    progress,
-                    "top-exit-grounded",
-                    now);
+                Config.LadderTraversalTopExitSuccessMaxDrop;
 
-                return true;
+            bool insideLandingRadius =
+                anchorDistance <=
+                Config.LadderTraversalTopExitLandingRadius;
+
+            bool validGroundContact =
+                grounded &&
+                safeHeight &&
+                insideLandingRadius;
+
+            if (validGroundContact)
+            {
+                if (!float.IsFinite(
+                        traversal.TopExitGroundedSince))
+                {
+                    traversal.TopExitGroundedSince = now;
+
+                    _info(
+                        $"TOP-EXIT-GROUND-CONTACT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"position={Format(position)}; anchorDistance={anchorDistance:0.###}; " +
+                        $"topDrop={dropBelowKnownTop:0.###}; action=confirm");
+                }
+
+                float groundedFor =
+                    now -
+                    traversal.TopExitGroundedSince;
+
+                if (groundedFor >=
+                    Config.LadderTraversalTopExitGroundedConfirmSeconds)
+                {
+                    CompleteTraversal(
+                        pawn,
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        position,
+                        progress,
+                        "top-exit-safe-grounded",
+                        now);
+
+                    return true;
+                }
+            }
+            else
+            {
+                traversal.TopExitGroundedSince =
+                    float.NegativeInfinity;
+
+                if (grounded &&
+                    !insideLandingRadius)
+                {
+                    FailTraversal(
+                        pawn,
+                        state.Slot,
+                        tracker,
+                        ladder,
+                        $"grounded outside safe top-exit radius (anchorDistance={anchorDistance:0.###}, allowed={Config.LadderTraversalTopExitLandingRadius:0.###}, topDrop={dropBelowKnownTop:0.###})",
+                        now);
+
+                    return true;
+                }
             }
 
             if (dropBelowKnownTop >
@@ -1800,7 +1851,7 @@ public sealed class LadderMapService
                     state.Slot,
                     tracker,
                     ladder,
-                    $"fell below top during settle (topDrop={dropBelowKnownTop:0.###})",
+                    $"fell below top during velocity lock (topDrop={dropBelowKnownTop:0.###}, anchorDistance={anchorDistance:0.###})",
                     now);
 
                 return true;
@@ -1809,12 +1860,19 @@ public sealed class LadderMapService
             if (exitElapsed >=
                 Config.LadderTraversalTopExitSettleTimeoutSeconds)
             {
+                float groundedFor =
+                    float.IsFinite(
+                        traversal.TopExitGroundedSince)
+                        ? now -
+                          traversal.TopExitGroundedSince
+                        : 0.0f;
+
                 FailTraversal(
                     pawn,
                     state.Slot,
                     tracker,
                     ladder,
-                    $"top exit settle timeout (grounded={grounded}, anchorDistance={anchorDistance:0.###}, topDrop={dropBelowKnownTop:0.###}, velocityZ={velocity.Z:0.###})",
+                    $"top exit settle timeout (grounded={grounded}, groundedFor={groundedFor:0.###}, anchorDistance={anchorDistance:0.###}, topDrop={dropBelowKnownTop:0.###}, velocityZ={velocity.Z:0.###})",
                     now);
 
                 return true;
@@ -2769,6 +2827,7 @@ public sealed class LadderMapService
         traversal.HasLastLadderNormal = false;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
+        traversal.TopExitGroundedSince = float.NegativeInfinity;
         traversal.LastBotMoveDiagnosticAt = float.NegativeInfinity;
         traversal.LastTopExitDiagnosticAt = float.NegativeInfinity;
 
@@ -3360,6 +3419,8 @@ public sealed class LadderMapService
         traversal.ExitStartedPosition = position;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
+        traversal.TopExitGroundedSince =
+            float.NegativeInfinity;
         traversal.LastTopExitDiagnosticAt =
             float.NegativeInfinity;
 
@@ -3377,7 +3438,7 @@ public sealed class LadderMapService
             $"TOP-EXIT-START map={_document.Map}; id={ladder.Id}; " +
             $"position={Format(position)}; peakZ={traversal.MaxClimbZ:0.###}; topZ={ladder.TopZ:0.###}; " +
             $"anchor={Format(traversal.ExitStartedPosition)}; " +
-            $"horizontalSpeed={HorizontalSpeed(velocity):0.###}; " +
+            $"velocity={Format(velocity)}; horizontalLock=true; " +
             $"manualExitDistance={(float.IsFinite(manualExitDistance) ? manualExitDistance.ToString("0.###") : "n/a")}; " +
             $"grounded={IsGrounded(pawn)}");
 
@@ -3398,88 +3459,57 @@ public sealed class LadderMapService
             bot,
             state);
 
-        if (!TryGetCsMovementServices(
+        MovementSnapshot before = default;
+        MovementSnapshot after = default;
+
+        if (TryGetCsMovementServices(
                 pawn,
                 out CCSPlayer_MovementServices movement))
         {
-            return;
-        }
+            before =
+                ReadMovementSnapshot(
+                    movement);
 
-        Vector3 horizontalVelocity =
-            new(
-                velocity.X,
-                velocity.Y,
-                0.0f);
-
-        float horizontalSpeed =
-            horizontalVelocity.Length();
-
-        Vector3 toAnchor =
-            new(
-                traversal.ExitStartedPosition.X - position.X,
-                traversal.ExitStartedPosition.Y - position.Y,
-                0.0f);
-
-        float anchorDistance =
-            toAnchor.Length();
-
-        Vector3 controlDirection = default;
-        string action;
-
-        if (anchorDistance >
-            Config.LadderTraversalTopExitAnchorRadius)
-        {
-            controlDirection =
-                HorizontalNormalised(
-                    toAnchor);
-            action = "return";
-        }
-        else if (horizontalSpeed >
-                 Config.LadderTraversalTopExitBrakeSpeed)
-        {
-            controlDirection =
-                HorizontalNormalised(
-                    new Vector3(
-                        -horizontalVelocity.X,
-                        -horizontalVelocity.Y,
-                        0.0f));
-            action = "brake";
-        }
-        else
-        {
-            action = "neutral";
-        }
-
-        MovementSnapshot before =
-            ReadMovementSnapshot(
-                movement);
-
-        if (controlDirection.LengthSquared() >= 0.25f)
-        {
-            float yawDegrees =
-                MathF.Atan2(
-                    controlDirection.Y,
-                    controlDirection.X) *
-                (180.0f / MathF.PI);
-
-            BuildMovementBasis(
-                0.0f,
-                yawDegrees,
-                out Vector3 forward,
-                out Vector3 left,
-                out Vector3 up);
-
-            ApplyTopExitMovementState(
-                movement,
-                forward,
-                left,
-                up);
-        }
-        else
-        {
+            // During the airborne top-exit phase, input steering was not able
+            // to cancel the inherited ~30 u/s horizontal launch velocity.
+            // Neutralise movement commands so Valve AI cannot add more drift.
             ApplyTopExitNeutralState(
                 movement);
+
+            after =
+                ReadMovementSnapshot(
+                    movement);
         }
+
+        Vector3 velocityBeforeLock = velocity;
+        Vector3 velocityAfterLock = velocity;
+        bool velocityLocked =
+            TryLockTopExitHorizontalVelocity(
+                pawn,
+                out velocityBeforeLock,
+                out velocityAfterLock);
+
+        float anchorDistance =
+            Distance2D(
+                position,
+                traversal.ExitStartedPosition);
+
+        float topDrop =
+            ladder.TopZ -
+            position.Z;
+
+        bool grounded =
+            IsGrounded(
+                pawn);
+
+        float groundedFor =
+            float.IsFinite(
+                traversal.TopExitGroundedSince)
+                ? MathF.Max(
+                    0.0f,
+                    now -
+                    traversal.TopExitGroundedSince)
+                : 0.0f;
 
         traversal.TopExitControlInitialised = true;
         traversal.TopExitCorrectionCount++;
@@ -3489,14 +3519,6 @@ public sealed class LadderMapService
                 Config.LadderTraversalBotMoveLogIntervalSeconds)
         {
             traversal.LastTopExitDiagnosticAt = now;
-
-            MovementSnapshot after =
-                ReadMovementSnapshot(
-                    movement);
-
-            float topDrop =
-                ladder.TopZ -
-                position.Z;
 
             float manualExitDistance =
                 ladder.ManualExit != null
@@ -3510,12 +3532,13 @@ public sealed class LadderMapService
                     pawn);
 
             _debug(
-                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; phase=settle; action={action}; " +
-                $"pos={Format(position)}; vel={Format(velocity)}; anchor={Format(traversal.ExitStartedPosition)}; " +
-                $"anchorDistance={anchorDistance:0.###}; horizontalSpeed={horizontalSpeed:0.###}; " +
-                $"controlDirection={Format(controlDirection)}; topDrop={topDrop:0.###}; " +
-                $"grounded={IsGrounded(pawn)}; eye={Format(eye)}; " +
+                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; phase=velocity-lock; " +
+                $"pos={Format(position)}; anchor={Format(traversal.ExitStartedPosition)}; " +
+                $"anchorDistance={anchorDistance:0.###}; topDrop={topDrop:0.###}; " +
+                $"grounded={grounded}; groundedFor={groundedFor:0.###}; eye={Format(eye)}; " +
                 $"manualExitDistance={(float.IsFinite(manualExitDistance) ? manualExitDistance.ToString("0.###") : "n/a")}; " +
+                $"velocityLocked={velocityLocked}; " +
+                $"velocityBefore={Format(velocityBeforeLock)}; velocityAfter={Format(velocityAfterLock)}; " +
                 $"preCmd=({before.CmdForwardMove:0.###},{before.CmdLeftMove:0.###},{before.CmdUpMove:0.###}); " +
                 $"preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
                 $"preButtons=0x{before.Buttons0:X}; " +
@@ -3523,49 +3546,6 @@ public sealed class LadderMapService
                 $"postProcessed=({after.ForwardMove:0.###},{after.LeftMove:0.###},{after.UpMove:0.###}); " +
                 $"postButtons=0x{after.Buttons0:X}; corrections={traversal.TopExitCorrectionCount}");
         }
-    }
-
-    private void ApplyTopExitMovementState(
-        CCSPlayer_MovementServices movement,
-        Vector3 forward,
-        Vector3 left,
-        Vector3 up)
-    {
-        try
-        {
-            movement.CmdForwardMove =
-                Config.LadderTraversalHumanForwardMove;
-            movement.CmdLeftMove = 0.0f;
-            movement.CmdUpMove = 0.0f;
-
-            movement.ForwardMove =
-                Config.LadderTraversalProcessedForwardMove;
-            movement.LeftMove = 0.0f;
-            movement.UpMove = 0.0f;
-
-            Span<ulong> buttonStates =
-                movement.Buttons.ButtonStates;
-
-            if (buttonStates.Length > 0)
-            {
-                buttonStates[0] &=
-                    ~SlowMovementButtonsMask;
-
-                buttonStates[0] |=
-                    (ulong)PlayerButtons.Forward;
-            }
-        }
-        catch
-        {
-            return;
-        }
-
-        // Top settle owns movement only. Do not touch the bot's view/aim.
-        WriteMovementBasis(
-            movement,
-            forward,
-            left,
-            up);
     }
 
     private static void ApplyTopExitNeutralState(
@@ -3588,12 +3568,49 @@ public sealed class LadderMapService
             {
                 buttonStates[0] &=
                     ~((ulong)PlayerButtons.Forward |
+                      (ulong)PlayerButtons.Back |
+                      (ulong)PlayerButtons.Moveleft |
+                      (ulong)PlayerButtons.Moveright |
                       SlowMovementButtonsMask);
             }
         }
         catch
         {
             // Retry on the next fast pass.
+        }
+    }
+
+    private static bool TryLockTopExitHorizontalVelocity(
+        CCSPlayerPawn pawn,
+        out Vector3 before,
+        out Vector3 after)
+    {
+        before = default;
+        after = default;
+
+        try
+        {
+            before =
+                new Vector3(
+                    pawn.AbsVelocity.X,
+                    pawn.AbsVelocity.Y,
+                    pawn.AbsVelocity.Z);
+
+            pawn.AbsVelocity.X = 0.0f;
+            pawn.AbsVelocity.Y = 0.0f;
+
+            after =
+                new Vector3(
+                    pawn.AbsVelocity.X,
+                    pawn.AbsVelocity.Y,
+                    pawn.AbsVelocity.Z);
+
+            return true;
+        }
+        catch
+        {
+            after = before;
+            return false;
         }
     }
 
@@ -3609,14 +3626,6 @@ public sealed class LadderMapService
         {
             return false;
         }
-    }
-
-    private static float HorizontalSpeed(
-        Vector3 vector)
-    {
-        return MathF.Sqrt(
-            vector.X * vector.X +
-            vector.Y * vector.Y);
     }
 
     private static bool TryGetCurrentLadderNormal(
@@ -5069,6 +5078,8 @@ public sealed class LadderMapService
 
         public bool TopExitControlInitialised { get; set; }
         public int TopExitCorrectionCount { get; set; }
+        public float TopExitGroundedSince { get; set; } =
+            float.NegativeInfinity;
 
         public float LastBotMoveDiagnosticAt { get; set; } =
             float.NegativeInfinity;

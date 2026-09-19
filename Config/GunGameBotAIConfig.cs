@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 14;
+    public override int Version { get; set; } = 15;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -139,6 +139,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalPostExitRecoveryDrop { get; set; } = 12.0f;
     public bool LadderTraversalRecoveryEnabled { get; set; } = true;
     public float LadderTraversalRecoveryZOffset { get; set; } = 2.0f;
+
+    // v15: once the pawn has really landed after the top-exit handoff, ask
+    // Valve to build a fresh path. If Valve still has the same ladder-era
+    // path/goal after a short grace window and no enemy exists, seed a one-shot
+    // goal at the opposing team's spawn and request another repath.
+    public bool LadderTraversalPostExitRepathEnabled { get; set; } = true;
+    public float LadderTraversalPostExitGoalDelaySeconds { get; set; } = 0.20f;
+    public bool LadderTraversalPostExitEnemySpawnGoalEnabled { get; set; } = true;
+    public float LadderTraversalPostExitGoalChangeDistance { get; set; } = 24.0f;
+
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
     public float LadderTraversalProgressEpsilon { get; set; } = 2.0f;
     public float LadderTraversalTopExitTolerance { get; set; } = 20.0f;
@@ -289,6 +299,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalPostExitGuardSeconds = Clamp(LadderTraversalPostExitGuardSeconds, 0.25f, 3.0f, 1.00f, nameof(LadderTraversalPostExitGuardSeconds), warn);
         LadderTraversalPostExitRecoveryDrop = Clamp(LadderTraversalPostExitRecoveryDrop, 4.0f, 48.0f, 12.0f, nameof(LadderTraversalPostExitRecoveryDrop), warn);
         LadderTraversalRecoveryZOffset = Clamp(LadderTraversalRecoveryZOffset, 0.5f, 12.0f, 2.0f, nameof(LadderTraversalRecoveryZOffset), warn);
+        LadderTraversalPostExitGoalDelaySeconds = Clamp(LadderTraversalPostExitGoalDelaySeconds, 0.05f, 0.75f, 0.20f, nameof(LadderTraversalPostExitGoalDelaySeconds), warn);
+        LadderTraversalPostExitGoalChangeDistance = Clamp(LadderTraversalPostExitGoalChangeDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitGoalChangeDistance), warn);
         LadderTraversalTopExitSuccessMaxDrop = Clamp(LadderTraversalTopExitSuccessMaxDrop, 1.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitSuccessMaxDrop), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
         LadderTraversalProgressEpsilon = Clamp(LadderTraversalProgressEpsilon, 0.25f, 12.0f, 2.0f, nameof(LadderTraversalProgressEpsilon), warn);
@@ -473,6 +485,21 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalRecoveryEnabled = true;
             LadderTraversalRecoveryZOffset = 2.0f;
             Version = 14;
+        }
+
+        if (Version < 15)
+        {
+            // Version 15 fixes two live-test findings:
+            // 1) an already-mounted known ladder may be taken over even while
+            //    the proactive-acquire failure cooldown is active;
+            // 2) after a safe top landing, Valve is asked to rebuild its path,
+            //    with a one-shot opposing-spawn goal only if the old ladder-era
+            //    path/goal survives and no enemy has appeared.
+            LadderTraversalPostExitRepathEnabled = true;
+            LadderTraversalPostExitGoalDelaySeconds = 0.20f;
+            LadderTraversalPostExitEnemySpawnGoalEnabled = true;
+            LadderTraversalPostExitGoalChangeDistance = 24.0f;
+            Version = 15;
         }
     }
 

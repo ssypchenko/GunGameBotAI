@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 11;
+    public override int Version { get; set; } = 12;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -113,11 +113,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalTopExitPushTimeoutSeconds { get; set; } = 0.35f;
     public float LadderTraversalTopExitPitchDegrees { get; set; } = 0.0f;
 
-    // v15: after LADDER -> WALK, hold the actual detach XY until the pawn
-    // physically lands on the upper platform.
-    public float LadderTraversalTopExitSettleTimeoutSeconds { get; set; } = 0.80f;
+    // Legacy v15 input-steering settings retained for config compatibility.
     public float LadderTraversalTopExitAnchorRadius { get; set; } = 1.25f;
     public float LadderTraversalTopExitBrakeSpeed { get; set; } = 4.0f;
+
+    // v16: after LADDER -> WALK, neutralise movement and force AbsVelocity.X/Y
+    // to zero until the pawn has remained grounded near the real detach point.
+    public float LadderTraversalTopExitSettleTimeoutSeconds { get; set; } = 0.80f;
+    public float LadderTraversalTopExitLandingRadius { get; set; } = 3.0f;
+    public float LadderTraversalTopExitGroundedConfirmSeconds { get; set; } = 0.12f;
     public float LadderTraversalTopExitMaxDrop { get; set; } = 24.0f;
     public float LadderTraversalTopExitSuccessMaxDrop { get; set; } = 8.0f;
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
@@ -255,6 +259,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalTopExitSettleTimeoutSeconds = Clamp(LadderTraversalTopExitSettleTimeoutSeconds, 0.30f, 2.0f, 0.80f, nameof(LadderTraversalTopExitSettleTimeoutSeconds), warn);
         LadderTraversalTopExitAnchorRadius = Clamp(LadderTraversalTopExitAnchorRadius, 0.25f, 6.0f, 1.25f, nameof(LadderTraversalTopExitAnchorRadius), warn);
         LadderTraversalTopExitBrakeSpeed = Clamp(LadderTraversalTopExitBrakeSpeed, 0.5f, 40.0f, 4.0f, nameof(LadderTraversalTopExitBrakeSpeed), warn);
+        LadderTraversalTopExitLandingRadius = Clamp(LadderTraversalTopExitLandingRadius, 0.5f, 8.0f, 3.0f, nameof(LadderTraversalTopExitLandingRadius), warn);
+        LadderTraversalTopExitGroundedConfirmSeconds = Clamp(LadderTraversalTopExitGroundedConfirmSeconds, 0.05f, 0.50f, 0.12f, nameof(LadderTraversalTopExitGroundedConfirmSeconds), warn);
         LadderTraversalTopExitMaxDrop = Clamp(LadderTraversalTopExitMaxDrop, 4.0f, 64.0f, 24.0f, nameof(LadderTraversalTopExitMaxDrop), warn);
         LadderTraversalTopExitSuccessMaxDrop = Clamp(LadderTraversalTopExitSuccessMaxDrop, 1.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitSuccessMaxDrop), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
@@ -393,13 +399,24 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 11)
         {
-            // Version 11 replaces horizontal top-exit pushing with an airborne
-            // settle phase that brakes XY drift and waits for real ground.
+            // Version 11 replaced horizontal top-exit pushing with an airborne
+            // settle phase.
             LadderTraversalTopExitSettleTimeoutSeconds = 0.80f;
             LadderTraversalTopExitAnchorRadius = 1.25f;
             LadderTraversalTopExitBrakeSpeed = 4.0f;
             LadderTraversalTopExitSuccessMaxDrop = 8.0f;
             Version = 11;
+        }
+
+        if (Version < 12)
+        {
+            // Version 12 directly removes inherited horizontal launch velocity
+            // and requires stable ground close to the actual detach point.
+            LadderTraversalTopExitSettleTimeoutSeconds = 0.80f;
+            LadderTraversalTopExitLandingRadius = 3.0f;
+            LadderTraversalTopExitGroundedConfirmSeconds = 0.12f;
+            LadderTraversalTopExitSuccessMaxDrop = 8.0f;
+            Version = 12;
         }
     }
 

@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 19;
+    public override int Version { get; set; } = 20;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -162,6 +162,19 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalPostExitGoalDelaySeconds { get; set; } = 0.20f;
     public bool LadderTraversalPostExitEnemySpawnGoalEnabled { get; set; } = true;
     public float LadderTraversalPostExitGoalChangeDistance { get; set; } = 24.0f;
+
+    // v20: navigation writes follow the same feedback/hold principle that made
+    // Knife Rush weapon selection reliable. A goal/repath command is repeated
+    // over several fast frames, verified, and re-applied if Valve takes it back.
+    public int LadderTraversalNavigationMinimumWrites { get; set; } = 3;
+    public float LadderTraversalNavigationRewriteIntervalSeconds { get; set; } = 0.03f;
+    public float LadderTraversalPostExitGoalHoldSeconds { get; set; } = 1.25f;
+    public float LadderTraversalPostExitStableSeconds { get; set; } = 0.30f;
+    public float LadderTraversalPostExitStableMoveDistance { get; set; } = 24.0f;
+    public float LadderTraversalPostExitGoalTolerance { get; set; } = 8.0f;
+    public float LadderTraversalPostExitBadGoalRadius { get; set; } = 32.0f;
+    public float LadderTraversalGoalMountedFallbackRadius { get; set; } = 32.0f;
+    public float LadderTraversalTrapRecoveryXYRadius { get; set; } = 12.0f;
 
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
     public float LadderTraversalProgressEpsilon { get; set; } = 2.0f;
@@ -329,6 +342,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalRecoveryZOffset = Clamp(LadderTraversalRecoveryZOffset, 0.5f, 12.0f, 2.0f, nameof(LadderTraversalRecoveryZOffset), warn);
         LadderTraversalPostExitGoalDelaySeconds = Clamp(LadderTraversalPostExitGoalDelaySeconds, 0.05f, 0.75f, 0.20f, nameof(LadderTraversalPostExitGoalDelaySeconds), warn);
         LadderTraversalPostExitGoalChangeDistance = Clamp(LadderTraversalPostExitGoalChangeDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitGoalChangeDistance), warn);
+        LadderTraversalNavigationMinimumWrites = Clamp(LadderTraversalNavigationMinimumWrites, 2, 8, 3, nameof(LadderTraversalNavigationMinimumWrites), warn);
+        LadderTraversalNavigationRewriteIntervalSeconds = Clamp(LadderTraversalNavigationRewriteIntervalSeconds, 0.01f, 0.20f, 0.03f, nameof(LadderTraversalNavigationRewriteIntervalSeconds), warn);
+        LadderTraversalPostExitGoalHoldSeconds = Clamp(LadderTraversalPostExitGoalHoldSeconds, 0.25f, 4.0f, 1.25f, nameof(LadderTraversalPostExitGoalHoldSeconds), warn);
+        LadderTraversalPostExitStableSeconds = Clamp(LadderTraversalPostExitStableSeconds, 0.10f, 2.0f, 0.30f, nameof(LadderTraversalPostExitStableSeconds), warn);
+        LadderTraversalPostExitStableMoveDistance = Clamp(LadderTraversalPostExitStableMoveDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitStableMoveDistance), warn);
+        LadderTraversalPostExitGoalTolerance = Clamp(LadderTraversalPostExitGoalTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalPostExitGoalTolerance), warn);
+        LadderTraversalPostExitBadGoalRadius = Clamp(LadderTraversalPostExitBadGoalRadius, 8.0f, 64.0f, 32.0f, nameof(LadderTraversalPostExitBadGoalRadius), warn);
+        LadderTraversalGoalMountedFallbackRadius = Clamp(LadderTraversalGoalMountedFallbackRadius, 8.0f, 64.0f, 32.0f, nameof(LadderTraversalGoalMountedFallbackRadius), warn);
+        LadderTraversalTrapRecoveryXYRadius = Clamp(LadderTraversalTrapRecoveryXYRadius, 4.0f, 32.0f, 12.0f, nameof(LadderTraversalTrapRecoveryXYRadius), warn);
         LadderTraversalTopExitSuccessMaxDrop = Clamp(LadderTraversalTopExitSuccessMaxDrop, 1.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitSuccessMaxDrop), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
         LadderTraversalProgressEpsilon = Clamp(LadderTraversalProgressEpsilon, 0.25f, 12.0f, 2.0f, nameof(LadderTraversalProgressEpsilon), warn);
@@ -568,6 +590,23 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // A saved config can never re-arm teaching after plugin restart.
             LadderManualTeachingEnabled = false;
             Version = 19;
+        }
+
+        if (Version < 20)
+        {
+            // v20 applies the verified Knife Rush feedback pattern to ladder
+            // navigation: repeat, verify, and re-apply state if Valve restores
+            // its previous path/goal on a later frame.
+            LadderTraversalNavigationMinimumWrites = 3;
+            LadderTraversalNavigationRewriteIntervalSeconds = 0.03f;
+            LadderTraversalPostExitGoalHoldSeconds = 1.25f;
+            LadderTraversalPostExitStableSeconds = 0.30f;
+            LadderTraversalPostExitStableMoveDistance = 24.0f;
+            LadderTraversalPostExitGoalTolerance = 8.0f;
+            LadderTraversalPostExitBadGoalRadius = 32.0f;
+            LadderTraversalGoalMountedFallbackRadius = 32.0f;
+            LadderTraversalTrapRecoveryXYRadius = 12.0f;
+            Version = 20;
         }
     }
 

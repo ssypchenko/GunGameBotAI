@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 18;
+    public override int Version { get; set; } = 19;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -48,10 +48,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     /// </summary>
     public bool LadderHumanMovementDiagnostics { get; set; } = false;
 
-    // Manual teaching. With defaults, remove all bots and leave exactly one
-    // live human on the server; successful WALK -> LADDER -> WALK traversals are
-    // recorded automatically even when the bot-AI runtime itself is disabled.
-    public bool LadderManualTeachingEnabled { get; set; } = true;
+    // Legacy compatibility flag. From v19, trusted ladder persistence is
+    // runtime-only and must be armed explicitly with
+    // css_ggbotai_ladder_teach 1. This config value is ignored by the runtime.
+    public bool LadderManualTeachingEnabled { get; set; } = false;
     public bool LadderManualTeachingRequireNoBots { get; set; } = true;
     public int LadderManualTeacherSlot { get; set; } = -1; // -1 = auto-select sole live human.
     public float LadderManualSampleIntervalSeconds { get; set; } = 0.01f;
@@ -560,6 +560,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalApproachTimeoutSeconds = 1.25f;
             LadderTraversalMountedTakeoverMaxProgress = 80.0f;
             Version = 18;
+        }
+
+        if (Version < 19)
+        {
+            // v19 makes trusted ladder persistence explicit and runtime-only.
+            // A saved config can never re-arm teaching after plugin restart.
+            LadderManualTeachingEnabled = false;
+            Version = 19;
         }
     }
 

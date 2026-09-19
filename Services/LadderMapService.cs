@@ -12,10 +12,10 @@ namespace GunGameBotAI.Services;
 ///
 /// Version 18 combines two responsibilities:
 ///
-/// 1) High-confidence manual teaching. When configured conditions are met
-///    (by default: no bots and exactly one live human), successful human ladder
-///    traversals are recorded as certified geometry plus a sampled reference
-///    path. Bots never create persistent ladder geometry.
+/// 1) High-confidence manual teaching. Persistence is armed explicitly by the
+///    operator with css_ggbotai_ladder_teach 1. While armed, the human-only
+///    safety conditions still apply. Bots never create or modify persistent
+///    ladder geometry or traversal statistics.
 ///
 /// 2) Proactive bot traversal. Valve navigation owns the approach. The plugin
 ///    issues one learned entry jump, validates that MOVETYPE_LADDER belongs to
@@ -60,6 +60,7 @@ public sealed class LadderMapService
     // available even when the bot-AI runtime is disabled and no bots exist.
     private int _manualLoopGeneration;
     private bool _manualLoopScheduled;
+    private bool _manualTeachingActive;
     private int _manualTeacherSlot = -1;
     private readonly ManualHumanTracker _manualHuman = new();
 
@@ -93,6 +94,9 @@ public sealed class LadderMapService
             ladder => ladder.ManualCertified);
 
     public int CandidateCount => 0;
+
+    public bool ManualTeachingActive =>
+        _manualTeachingActive;
 
     public string CurrentPath =>
         string.IsNullOrWhiteSpace(_document.Map)
@@ -189,6 +193,27 @@ public sealed class LadderMapService
         _trackers.Remove(slot);
     }
 
+    public void SetManualTeachingActive(bool enabled)
+    {
+        if (_manualTeachingActive == enabled)
+            return;
+
+        _manualTeachingActive = enabled;
+
+        // Mode changes are explicit trust boundaries. Never carry a partial
+        // human traversal across enable/disable.
+        ResetManualTeachingState(
+            enabled
+                ? "manual-teach-enabled"
+                : "manual-teach-disabled");
+
+        RefreshManualTeachingLoop();
+
+        _info(
+            $"MANUAL teaching={(enabled ? "ENABLED" : "DISABLED")}; " +
+            "persistence=operator-controlled");
+    }
+
     public void ReloadCurrentMap()
     {
         if (string.IsNullOrWhiteSpace(_document.Map))
@@ -262,7 +287,8 @@ public sealed class LadderMapService
         _manualLoopGeneration++;
         _manualLoopScheduled = false;
 
-        if (!Config.LadderManualTeachingEnabled ||
+        if ((!_manualTeachingActive &&
+             !Config.LadderHumanMovementDiagnostics) ||
             string.IsNullOrWhiteSpace(_document.Map))
         {
             return;
@@ -281,7 +307,8 @@ public sealed class LadderMapService
     {
         if (_manualLoopScheduled ||
             generation != _manualLoopGeneration ||
-            !Config.LadderManualTeachingEnabled ||
+            (!_manualTeachingActive &&
+             !Config.LadderHumanMovementDiagnostics) ||
             string.IsNullOrWhiteSpace(_document.Map))
         {
             return;
@@ -294,7 +321,8 @@ public sealed class LadderMapService
             _manualLoopScheduled = false;
 
             if (generation != _manualLoopGeneration ||
-                !Config.LadderManualTeachingEnabled ||
+                (!_manualTeachingActive &&
+                 !Config.LadderHumanMovementDiagnostics) ||
                 string.IsNullOrWhiteSpace(_document.Map))
             {
                 return;
@@ -1010,11 +1038,13 @@ public sealed class LadderMapService
             return;
         }
 
-        if (Config.LadderHumanMovementDiagnostics)
+        if (Config.LadderHumanMovementDiagnostics ||
+            !_manualTeachingActive)
         {
             _info(
                 $"HUMAN-MOVE-END slot={slot}; upward={upward:0.###}; " +
-                $"samples={session.Path.Count}; persistence=skipped");
+                $"samples={session.Path.Count}; persistence=skipped; " +
+                $"manualTeach={(_manualTeachingActive ? "enabled" : "disabled")}");
 
             return;
         }
@@ -1092,14 +1122,13 @@ public sealed class LadderMapService
                 oldPrimaryMountZ -
                 ManualPrimaryReplaceEpsilon;
 
-        ladder.ManualLanding =
-            LadderPoint.FromVector3(
-                session.LandingCandidate);
-
         string primaryAction;
 
         if (replacePrimary)
         {
+            ladder.ManualLanding =
+                LadderPoint.FromVector3(
+                    session.LandingCandidate);
             ladder.Anchor =
                 LadderPoint.FromVector3(
                     observedAnchor);
@@ -3088,11 +3117,6 @@ public sealed class LadderMapService
                 traversal);
         }
 
-        ladder.AssistedTraversals++;
-        ladder.AssistedSuccesses++;
-
-        MarkDirtyAndSave();
-
         _info(
             $"TRAVERSAL-SUCCESS map={_document.Map}; slot={slot}; id={ladder.Id}; " +
             $"reason={reason}; progressZ={progress:0.###}; position={Format(position)}; " +
@@ -3135,14 +3159,6 @@ public sealed class LadderMapService
         ReleaseHumanClimbControl(
             pawn,
             traversal);
-
-        if (ladder != null)
-        {
-            ladder.AssistedTraversals++;
-            ladder.AssistedFailures++;
-
-            MarkDirtyAndSave();
-        }
 
         _info(
             $"TRAVERSAL-FAIL map={_document.Map}; slot={slot}; " +

@@ -1407,7 +1407,9 @@ public sealed class LadderMapService
                         mountedKnown,
                         position))
                 {
-                    if (matchMode == "recovery")
+                    if (matchMode.StartsWith(
+                            "recovery",
+                            StringComparison.Ordinal))
                     {
                         _info(
                             $"MOUNT-RECOVERY-MATCH map={_document.Map}; slot={state.Slot}; id={mountedKnown.Id}; " +
@@ -3138,11 +3140,10 @@ public sealed class LadderMapService
             now);
 
         if (ladder != null &&
-            (traversal.JumpIssued ||
-             traversal.Stage is
+            traversal.Stage is
                 TraversalStage.Climb or
                 TraversalStage.TopExit or
-                TraversalStage.PostExitGuard))
+                TraversalStage.PostExitGuard)
         {
             bool preferTop =
                 traversal.Stage is
@@ -3156,6 +3157,14 @@ public sealed class LadderMapService
                 ladder,
                 reason,
                 preferTop);
+        }
+
+        if (traversal.Stage ==
+            TraversalStage.Mounting)
+        {
+            _info(
+                $"MOUNT-FAIL-RELEASE map={_document.Map}; slot={slot}; id={(ladder?.Id ?? traversal.LadderId)}; " +
+                "action=release-without-teleport");
         }
 
         tracker.Traversal = null;
@@ -3235,8 +3244,10 @@ public sealed class LadderMapService
                     approach));
 
         float maxJumpAlong =
-            Config.LadderTraversalJumpLeadDistance +
-            Config.LadderTraversalJumpWindow;
+            MathF.Min(
+                Config.LadderTraversalJumpLeadDistance +
+                Config.LadderTraversalJumpWindow,
+                Config.LadderTraversalJumpMaximumAlongDistance);
 
         return
             alongToMount > 2.0f &&
@@ -5207,9 +5218,13 @@ public sealed class LadderMapService
                 continue;
             }
 
-            if (Vector3.Dot(
+            float approachDirectionDot =
+                Vector3.Dot(
                     velocityDirection,
-                    approach) <= 0.0f)
+                    approach);
+
+            if (approachDirectionDot <
+                Config.LadderTraversalApproachDirectionDotMinimum)
             {
                 continue;
             }
@@ -5308,16 +5323,20 @@ public sealed class LadderMapService
         selectedDeviation = float.PositiveInfinity;
 
         // Recovery matching is only legal when Source 2 already confirms that
-        // the pawn is physically on a ladder and supplies a real ladder normal.
-        // This wider radius is never used for proactive WALK acquisition.
+        // the pawn is physically on a ladder. LadderNormal is preferred, but
+        // Source 2 can expose MOVETYPE_LADDER one sample before LadderNormal is
+        // readable. In that brief case geometry-only matching is allowed only
+        // when the nearest learned bottom is unambiguous.
         if (pawn.MoveType !=
-                MoveType_t.MOVETYPE_LADDER ||
-            !TryGetCurrentLadderNormal(
-                pawn,
-                out Vector3 actualNormal))
+            MoveType_t.MOVETYPE_LADDER)
         {
             return null;
         }
+
+        bool haveActualNormal =
+            TryGetCurrentLadderNormal(
+                pawn,
+                out Vector3 actualNormal);
 
         PhysicalLadder? selected =
             null;
@@ -5344,14 +5363,17 @@ public sealed class LadderMapService
             }
 
             float normalDot =
-                GetLadderNormalCompatibility(
-                    ladder,
-                    position,
-                    actualNormal);
+                haveActualNormal
+                    ? GetLadderNormalCompatibility(
+                        ladder,
+                        position,
+                        actualNormal)
+                    : float.NaN;
 
-            if (!float.IsFinite(normalDot) ||
-                normalDot <
-                    Config.LadderTraversalNormalDotMinimum)
+            if (haveActualNormal &&
+                (!float.IsFinite(normalDot) ||
+                 normalDot <
+                     Config.LadderTraversalNormalDotMinimum))
             {
                 continue;
             }
@@ -5404,7 +5426,10 @@ public sealed class LadderMapService
             bestDistance;
         selectedNormalDot =
             bestNormalDot;
-        matchMode = "recovery";
+        matchMode =
+            haveActualNormal
+                ? "recovery-normal"
+                : "recovery-geometry";
 
         return selected;
     }

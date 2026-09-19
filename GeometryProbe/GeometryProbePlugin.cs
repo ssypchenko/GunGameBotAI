@@ -361,7 +361,7 @@ public sealed class GeometryProbePlugin : BasePlugin
         }
 
         string? firstName = null;
-        Vector firstPoint = default;
+        Vector firstPoint = new();
         FloorSample firstFloor = default;
         float firstDrop = float.NaN;
         int dangerousSamples = 0;

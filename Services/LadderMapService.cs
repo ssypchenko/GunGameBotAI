@@ -3551,12 +3551,21 @@ public sealed class LadderMapService
         Vector3 landingTarget =
             ladder.ManualLanding.ToVector3();
 
+        bool grounded =
+            IsGrounded(
+                pawn);
+
+        float guidanceStopRadius =
+            grounded
+                ? Config.LadderTraversalTopExitLandingRadius
+                : Config.LadderTraversalTopExitLandingStopRadius;
+
         bool velocityGuided =
             TryGuideTopExitHorizontalVelocity(
                 pawn,
                 position,
                 landingTarget,
-                Config.LadderTraversalTopExitLandingStopRadius,
+                guidanceStopRadius,
                 Config.LadderTraversalTopExitLandingVelocity,
                 out Vector3 velocityBefore,
                 out Vector3 velocityAfter,
@@ -3566,10 +3575,6 @@ public sealed class LadderMapService
             MathF.Abs(
                 position.Z -
                 landingTarget.Z);
-
-        bool grounded =
-            IsGrounded(
-                pawn);
 
         float groundedFor =
             float.IsFinite(

@@ -3106,6 +3106,9 @@ public sealed class LadderMapService
         traversal.PostExitNavigationStableSince = float.NegativeInfinity;
         traversal.PostExitLandingObserved = false;
         traversal.PostExitLandingPosition = default;
+        traversal.PostExitLastMovementPosition = default;
+        traversal.PostExitLastMovementAt = float.NegativeInfinity;
+        traversal.PostExitStallCorrectionCount = 0;
         traversal.PostExitGoalIssued = false;
         traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
         traversal.PostExitGoalLastWriteAt = float.NegativeInfinity;
@@ -4711,6 +4714,20 @@ public sealed class LadderMapService
         {
             traversal.PostExitLandingObserved = true;
             traversal.PostExitLandingPosition = position;
+            traversal.PostExitLastMovementPosition = position;
+            traversal.PostExitLastMovementAt = now;
+        }
+
+        float movementProgress =
+            Distance2D(
+                position,
+                traversal.PostExitLastMovementPosition);
+
+        if (movementProgress >=
+            Config.LadderTraversalPostExitProgressEpsilon)
+        {
+            traversal.PostExitLastMovementPosition = position;
+            traversal.PostExitLastMovementAt = now;
         }
 
         // Visible combat is a verified replacement task. A stale Enemy handle is
@@ -4882,28 +4899,77 @@ public sealed class LadderMapService
             goalError <=
             Config.LadderTraversalPostExitGoalTolerance;
 
+        float goalDistanceFromBot =
+            Distance2D(
+                position,
+                traversal.PostExitGoal);
+
+        float horizontalSpeed =
+            0.0f;
+
+        if (NativeValueReader.TryGetVelocity(
+                pawn,
+                out Vector3 currentVelocity))
+        {
+            horizontalSpeed =
+                MathF.Sqrt(
+                    currentVelocity.X * currentVelocity.X +
+                    currentVelocity.Y * currentVelocity.Y);
+        }
+
+        bool navigationStalled =
+            goalDistanceFromBot > 48.0f &&
+            horizontalSpeed < 20.0f &&
+            now - traversal.PostExitLastMovementAt >=
+                Config.LadderTraversalPostExitStallRewriteSeconds;
+
         bool mustWrite =
             traversal.PostExitGoalWriteCount <
                 Config.LadderTraversalNavigationMinimumWrites ||
             !goalMatches ||
-            badGoal;
+            badGoal ||
+            navigationStalled;
 
         if (mustWrite &&
             now - traversal.PostExitGoalLastWriteAt >=
                 Config.LadderTraversalNavigationRewriteIntervalSeconds)
         {
-            if (traversal.PostExitGoalWriteCount >=
+            bool correctionAfterInitialHold =
+                traversal.PostExitGoalWriteCount >=
                     Config.LadderTraversalNavigationMinimumWrites &&
-                (!goalMatches || badGoal))
-            {
-                traversal.PostExitGoalRevertCount++;
+                (!goalMatches ||
+                 badGoal ||
+                 navigationStalled);
 
-                _info(
-                    $"POST-LADDER-GOAL-REVERT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                    $"observedGoal={Format(currentGoal)}; target={Format(traversal.PostExitGoal)}; " +
-                    $"goalError={goalError:0.###}; badLadderId={(badGoal ? badGoalLadderId.ToString() : "none")}; " +
-                    $"badLadderDistance={(badGoal ? badGoalDistance.ToString("0.###") : "n/a")}; " +
-                    $"reverts={traversal.PostExitGoalRevertCount}; action=reapply");
+            if (correctionAfterInitialHold)
+            {
+                traversal.PostExitGoalIssuedAt = now;
+
+                if (!goalMatches || badGoal)
+                {
+                    traversal.PostExitGoalRevertCount++;
+
+                    _info(
+                        $"POST-LADDER-GOAL-REVERT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"observedGoal={Format(currentGoal)}; target={Format(traversal.PostExitGoal)}; " +
+                        $"goalError={goalError:0.###}; badLadderId={(badGoal ? badGoalLadderId.ToString() : "none")}; " +
+                        $"badLadderDistance={(badGoal ? badGoalDistance.ToString("0.###") : "n/a")}; " +
+                        $"reverts={traversal.PostExitGoalRevertCount}; action=reapply-and-restart-hold");
+                }
+
+                if (navigationStalled)
+                {
+                    traversal.PostExitStallCorrectionCount++;
+                    traversal.PostExitLastMovementAt = now;
+
+                    _info(
+                        $"POST-LADDER-STALL-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"position={Format(position)}; goal={Format(traversal.PostExitGoal)}; " +
+                        $"goalDistance={goalDistanceFromBot:0.###}; horizontalSpeed={horizontalSpeed:0.###}; " +
+                        $"stalledFor={Config.LadderTraversalPostExitStallRewriteSeconds:0.###}s; " +
+                        $"corrections={traversal.PostExitStallCorrectionCount}; " +
+                        "action=reapply-goal-repath-view-and-restart-hold");
+                }
             }
 
             ApplyNavigationHoldWrite(
@@ -4957,7 +5023,8 @@ public sealed class LadderMapService
                 _info(
                     $"POST-LADDER-STABLE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"goal={Format(currentGoal)}; writes={traversal.PostExitGoalWriteCount}; " +
-                    $"reverts={traversal.PostExitGoalRevertCount}; moved={movedFromLanding:0.###}; " +
+                    $"reverts={traversal.PostExitGoalRevertCount}; stalls={traversal.PostExitStallCorrectionCount}; " +
+                    $"moved={movedFromLanding:0.###}; " +
                     $"stableFor={(now - traversal.PostExitNavigationStableSince):0.###}s; action=leave-valve");
             }
         }
@@ -6788,6 +6855,10 @@ public sealed class LadderMapService
             float.NegativeInfinity;
         public bool PostExitLandingObserved { get; set; }
         public Vector3 PostExitLandingPosition { get; set; }
+        public Vector3 PostExitLastMovementPosition { get; set; }
+        public float PostExitLastMovementAt { get; set; } =
+            float.NegativeInfinity;
+        public int PostExitStallCorrectionCount { get; set; }
 
         public bool PostExitGoalIssued { get; set; }
         public float PostExitGoalIssuedAt { get; set; } =

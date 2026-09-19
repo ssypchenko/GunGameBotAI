@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 17;
+    public override int Version { get; set; } = 18;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -82,6 +82,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // v17: TowardDot alone can still be high on a side approach. Require the
     // bot velocity to follow the learned human approach vector as well.
     public float LadderTraversalApproachDirectionDotMinimum { get; set; } = 0.85f;
+
+    // An ACQUIRE decision is only a short-lived observation of Valve's current
+    // path. If the bot does not reach the jump window quickly, discard it and
+    // wait for a fresh approach instead of jumping several seconds later.
+    public float LadderTraversalApproachTimeoutSeconds { get; set; } = 1.25f;
 
     public float LadderTraversalCorridorHalfWidth { get; set; } = 24.0f;
     public float LadderTraversalJumpLeadDistance { get; set; } = 24.0f;
@@ -164,6 +169,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalExitMinProgress { get; set; } = 8.0f;
     public float LadderTraversalExitHorizontalDistance { get; set; } = 16.0f;
     public float LadderTraversalMountedBelowTolerance { get; set; } = 8.0f;
+
+    // Emergency ownership may begin above the very first mount frame. Live
+    // traces showed valid MOVETYPE_LADDER contacts around Z=58-76 while the
+    // learned bottom is near Z=22.
+    public float LadderTraversalMountedTakeoverMaxProgress { get; set; } = 80.0f;
 
     // Physical-ladder identity is deliberately much stricter than the old
     // generic mount-validation radius. Paired ladders on compact GunGame maps
@@ -275,6 +285,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalEntryMaxVerticalDelta = Clamp(LadderTraversalEntryMaxVerticalDelta, 8.0f, 128.0f, 40.0f, nameof(LadderTraversalEntryMaxVerticalDelta), warn);
         LadderTraversalApproachDot = Clamp(LadderTraversalApproachDot, -1.0f, 1.0f, 0.35f, nameof(LadderTraversalApproachDot), warn);
         LadderTraversalApproachDirectionDotMinimum = Clamp(LadderTraversalApproachDirectionDotMinimum, 0.0f, 1.0f, 0.85f, nameof(LadderTraversalApproachDirectionDotMinimum), warn);
+        LadderTraversalApproachTimeoutSeconds = Clamp(LadderTraversalApproachTimeoutSeconds, 0.25f, 3.0f, 1.25f, nameof(LadderTraversalApproachTimeoutSeconds), warn);
         LadderTraversalCorridorHalfWidth = Clamp(LadderTraversalCorridorHalfWidth, 8.0f, 64.0f, 24.0f, nameof(LadderTraversalCorridorHalfWidth), warn);
         LadderTraversalJumpLeadDistance = Clamp(LadderTraversalJumpLeadDistance, 8.0f, 64.0f, 24.0f, nameof(LadderTraversalJumpLeadDistance), warn);
         LadderTraversalJumpWindow = Clamp(LadderTraversalJumpWindow, 3.0f, 24.0f, 8.0f, nameof(LadderTraversalJumpWindow), warn);
@@ -325,6 +336,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalExitMinProgress = Clamp(LadderTraversalExitMinProgress, 2.0f, LadderTraversalClimbAssistProgress, 8.0f, nameof(LadderTraversalExitMinProgress), warn);
         LadderTraversalExitHorizontalDistance = Clamp(LadderTraversalExitHorizontalDistance, 4.0f, 64.0f, 16.0f, nameof(LadderTraversalExitHorizontalDistance), warn);
         LadderTraversalMountedBelowTolerance = Clamp(LadderTraversalMountedBelowTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalMountedBelowTolerance), warn);
+        LadderTraversalMountedTakeoverMaxProgress = Clamp(LadderTraversalMountedTakeoverMaxProgress, 24.0f, 160.0f, 80.0f, nameof(LadderTraversalMountedTakeoverMaxProgress), warn);
         LadderTraversalIdentityMatchRadius = Clamp(LadderTraversalIdentityMatchRadius, 8.0f, 32.0f, 20.0f, nameof(LadderTraversalIdentityMatchRadius), warn);
         LadderTraversalNormalDotMinimum = Clamp(LadderTraversalNormalDotMinimum, 0.50f, 1.0f, 0.90f, nameof(LadderTraversalNormalDotMinimum), warn);
         LadderTraversalLadderSwitchAdvantage = Clamp(LadderTraversalLadderSwitchAdvantage, 1.0f, 16.0f, 4.0f, nameof(LadderTraversalLadderSwitchAdvantage), warn);
@@ -537,6 +549,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalApproachDirectionDotMinimum = 0.85f;
             LadderTraversalJumpMaximumAlongDistance = 28.0f;
             Version = 17;
+        }
+
+        if (Version < 18)
+        {
+            // Version 18 expires stale ACQUIRE decisions, revalidates motion at
+            // JUMP time, expands emergency mounted ownership above the first
+            // mount frame, and treats LadderNormal as diagnostic inside the
+            // strict identity radius.
+            LadderTraversalApproachTimeoutSeconds = 1.25f;
+            LadderTraversalMountedTakeoverMaxProgress = 80.0f;
+            Version = 18;
         }
     }
 

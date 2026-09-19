@@ -57,6 +57,13 @@ public sealed class GeometryProbePlugin : BasePlugin
     private const float GeometryTrapMaxSpeed = 12.0f;
     private const float GeometryTrapConfirmSeconds = 0.40f;
     private const float GeometryTrapRepeatSeconds = 1.00f;
+
+    // Detect impossible movement between diagnostic samples. Normal bot travel
+    // over 0.1 s is only a few dozen units; ladder failures in the test logs
+    // jumped from the upper floor to Z=0 in one sample with zero velocity.
+    private const float PositionSnapMinDistance = 64.0f;
+    private const float PositionSnapVelocitySlack = 48.0f;
+    private const float PositionSnapMaxSampleAge = 0.25f;
     private static readonly (string Name, float X, float Y)[] NearbyDirections =
     {
         ("E", 1.0f, 0.0f),
@@ -85,7 +92,7 @@ public sealed class GeometryProbePlugin : BasePlugin
     private bool _enabled = true;
 
     public override string ModuleName => "Geometry Probe";
-    public override string ModuleVersion => "0.3.0";
+    public override string ModuleVersion => "0.4.0";
     public override string ModuleAuthor => "Sergey / ChatGPT";
     public override string ModuleDescription =>
         "Diagnostic-only bot floor/drop collision probe.";
@@ -245,6 +252,13 @@ public sealed class GeometryProbePlugin : BasePlugin
                 GetState(
                     slot);
 
+            DetectPositionSnap(
+                controller,
+                state,
+                origin,
+                velocity,
+                pawn.MoveType);
+
             if (!state.Announced)
             {
                 state.Announced = true;
@@ -338,6 +352,13 @@ public sealed class GeometryProbePlugin : BasePlugin
             if (onLadder)
             {
                 state.HazardActive = false;
+
+                UpdatePreviousSample(
+                    state,
+                    origin,
+                    velocity,
+                    pawn.MoveType);
+
                 continue;
             }
 
@@ -358,6 +379,12 @@ public sealed class GeometryProbePlugin : BasePlugin
                 velocity,
                 current,
                 grounded);
+
+            UpdatePreviousSample(
+                state,
+                origin,
+                velocity,
+                pawn.MoveType);
         }
 
         int[] stale =
@@ -367,6 +394,124 @@ public sealed class GeometryProbePlugin : BasePlugin
 
         foreach (int slot in stale)
             _states.Remove(slot);
+    }
+
+    private void DetectPositionSnap(
+        CCSPlayerController controller,
+        BotProbeState state,
+        Vector origin,
+        Vector velocity,
+        MoveType_t moveType)
+    {
+        if (!state.HasPreviousSample)
+            return;
+
+        float now =
+            Server.CurrentTime;
+
+        float elapsed =
+            now -
+            state.PreviousSampleAt;
+
+        if (elapsed <= 0.0f ||
+            elapsed >
+                PositionSnapMaxSampleAge)
+        {
+            return;
+        }
+
+        float dx =
+            origin.X -
+            state.PreviousPosition.X;
+        float dy =
+            origin.Y -
+            state.PreviousPosition.Y;
+        float dz =
+            origin.Z -
+            state.PreviousPosition.Z;
+
+        float distance =
+            MathF.Sqrt(
+                dx * dx +
+                dy * dy +
+                dz * dz);
+
+        if (distance <
+            PositionSnapMinDistance)
+        {
+            return;
+        }
+
+        float previousSpeed =
+            MathF.Sqrt(
+                state.PreviousVelocity.X * state.PreviousVelocity.X +
+                state.PreviousVelocity.Y * state.PreviousVelocity.Y +
+                state.PreviousVelocity.Z * state.PreviousVelocity.Z);
+
+        float currentSpeed =
+            MathF.Sqrt(
+                velocity.X * velocity.X +
+                velocity.Y * velocity.Y +
+                velocity.Z * velocity.Z);
+
+        float velocityExplainedDistance =
+            MathF.Max(
+                previousSpeed,
+                currentSpeed) *
+            elapsed;
+
+        if (distance <=
+            velocityExplainedDistance +
+            PositionSnapVelocitySlack)
+        {
+            return;
+        }
+
+        Logger.LogInformation(
+            "[GeometryProbe] POSITION-SNAP slot={Slot}; name={Name}; " +
+            "from={From}; to={To}; delta=({Dx:0.###},{Dy:0.###},{Dz:0.###}); " +
+            "distance={Distance:0.###}; elapsed={Elapsed:0.###}s; " +
+            "previousVelocity={PreviousVelocity}; currentVelocity={CurrentVelocity}; " +
+            "velocityExplainedDistance={Explained:0.###}; previousMoveType={PreviousMoveType}; " +
+            "moveType={MoveType}; {Ladder}",
+            controller.Slot,
+            controller.PlayerName,
+            Format(state.PreviousPosition),
+            Format(origin),
+            dx,
+            dy,
+            dz,
+            distance,
+            elapsed,
+            Format(state.PreviousVelocity),
+            Format(velocity),
+            velocityExplainedDistance,
+            state.PreviousMoveType,
+            moveType,
+            DescribeNearestLadder(origin));
+    }
+
+    private static void UpdatePreviousSample(
+        BotProbeState state,
+        Vector origin,
+        Vector velocity,
+        MoveType_t moveType)
+    {
+        state.HasPreviousSample = true;
+        state.PreviousSampleAt =
+            Server.CurrentTime;
+        state.PreviousPosition =
+            new Vector(
+                origin.X,
+                origin.Y,
+                origin.Z);
+        state.PreviousVelocity =
+            new Vector(
+                velocity.X,
+                velocity.Y,
+                velocity.Z);
+        state.PreviousMoveType =
+            moveType;
     }
 
     private void ProbeAhead(
@@ -1355,6 +1500,12 @@ public sealed class GeometryProbePlugin : BasePlugin
     private sealed class BotProbeState
     {
         public bool Announced { get; set; }
+
+        public bool HasPreviousSample { get; set; }
+        public float PreviousSampleAt { get; set; } = float.NegativeInfinity;
+        public Vector PreviousPosition { get; set; } = new();
+        public Vector PreviousVelocity { get; set; } = new();
+        public MoveType_t PreviousMoveType { get; set; } = MoveType_t.MOVETYPE_NONE;
 
         public bool HasMoveType { get; set; }
         public bool WasOnLadder { get; set; }

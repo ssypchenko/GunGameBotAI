@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 13;
+    public override int Version { get; set; } = 14;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -120,7 +120,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalTopExitAnchorRadius { get; set; } = 1.25f;
     public float LadderTraversalTopExitBrakeSpeed { get; set; } = 4.0f;
 
-    // v17: steer the airborne pawn to the human-taught grounded landing point.
+    // Legacy v17 manual-landing steering values retained for config compatibility.
     public float LadderTraversalTopExitSettleTimeoutSeconds { get; set; } = 1.00f;
     public float LadderTraversalTopExitLandingRadius { get; set; } = 3.0f;
     public float LadderTraversalTopExitLandingStopRadius { get; set; } = 0.75f;
@@ -129,6 +129,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalTopExitGroundedConfirmSeconds { get; set; } = 0.12f;
     public float LadderTraversalTopExitMaxDrop { get; set; } = 24.0f;
     public float LadderTraversalTopExitSuccessMaxDrop { get; set; } = 8.0f;
+
+    // v18: after natural LADDER -> WALK, give one short outward kick and
+    // immediately hand movement back to Valve AI. Keep only a brief fall guard.
+    public float LadderTraversalTopExitKickDistance { get; set; } = 18.0f;
+    public float LadderTraversalTopExitKickSpeed { get; set; } = 100.0f;
+    public float LadderTraversalTopExitKickTimeoutSeconds { get; set; } = 0.30f;
+    public float LadderTraversalPostExitGuardSeconds { get; set; } = 1.00f;
+    public float LadderTraversalPostExitRecoveryDrop { get; set; } = 12.0f;
+    public bool LadderTraversalRecoveryEnabled { get; set; } = true;
+    public float LadderTraversalRecoveryZOffset { get; set; } = 2.0f;
     public float LadderTraversalBotMoveLogIntervalSeconds { get; set; } = 0.20f;
     public float LadderTraversalProgressEpsilon { get; set; } = 2.0f;
     public float LadderTraversalTopExitTolerance { get; set; } = 20.0f;
@@ -273,6 +283,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalTopExitLandingVerticalTolerance = Clamp(LadderTraversalTopExitLandingVerticalTolerance, 1.0f, 16.0f, 6.0f, nameof(LadderTraversalTopExitLandingVerticalTolerance), warn);
         LadderTraversalTopExitGroundedConfirmSeconds = Clamp(LadderTraversalTopExitGroundedConfirmSeconds, 0.05f, 0.50f, 0.12f, nameof(LadderTraversalTopExitGroundedConfirmSeconds), warn);
         LadderTraversalTopExitMaxDrop = Clamp(LadderTraversalTopExitMaxDrop, 4.0f, 64.0f, 24.0f, nameof(LadderTraversalTopExitMaxDrop), warn);
+        LadderTraversalTopExitKickDistance = Clamp(LadderTraversalTopExitKickDistance, 6.0f, 40.0f, 18.0f, nameof(LadderTraversalTopExitKickDistance), warn);
+        LadderTraversalTopExitKickSpeed = Clamp(LadderTraversalTopExitKickSpeed, 40.0f, 220.0f, 100.0f, nameof(LadderTraversalTopExitKickSpeed), warn);
+        LadderTraversalTopExitKickTimeoutSeconds = Clamp(LadderTraversalTopExitKickTimeoutSeconds, 0.10f, 0.75f, 0.30f, nameof(LadderTraversalTopExitKickTimeoutSeconds), warn);
+        LadderTraversalPostExitGuardSeconds = Clamp(LadderTraversalPostExitGuardSeconds, 0.25f, 3.0f, 1.00f, nameof(LadderTraversalPostExitGuardSeconds), warn);
+        LadderTraversalPostExitRecoveryDrop = Clamp(LadderTraversalPostExitRecoveryDrop, 4.0f, 48.0f, 12.0f, nameof(LadderTraversalPostExitRecoveryDrop), warn);
+        LadderTraversalRecoveryZOffset = Clamp(LadderTraversalRecoveryZOffset, 0.5f, 12.0f, 2.0f, nameof(LadderTraversalRecoveryZOffset), warn);
         LadderTraversalTopExitSuccessMaxDrop = Clamp(LadderTraversalTopExitSuccessMaxDrop, 1.0f, 24.0f, 8.0f, nameof(LadderTraversalTopExitSuccessMaxDrop), warn);
         LadderTraversalBotMoveLogIntervalSeconds = Clamp(LadderTraversalBotMoveLogIntervalSeconds, 0.05f, 2.0f, 0.20f, nameof(LadderTraversalBotMoveLogIntervalSeconds), warn);
         LadderTraversalProgressEpsilon = Clamp(LadderTraversalProgressEpsilon, 0.25f, 12.0f, 2.0f, nameof(LadderTraversalProgressEpsilon), warn);
@@ -443,6 +459,20 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalTopExitLandingVerticalTolerance = 6.0f;
             LadderTraversalTopExitGroundedConfirmSeconds = 0.12f;
             Version = 13;
+        }
+
+        if (Version < 14)
+        {
+            // Version 14 gives a short outward kick, hands movement back to
+            // Valve AI, and retains only a temporary fall/recovery guard.
+            LadderTraversalTopExitKickDistance = 18.0f;
+            LadderTraversalTopExitKickSpeed = 100.0f;
+            LadderTraversalTopExitKickTimeoutSeconds = 0.30f;
+            LadderTraversalPostExitGuardSeconds = 1.00f;
+            LadderTraversalPostExitRecoveryDrop = 12.0f;
+            LadderTraversalRecoveryEnabled = true;
+            LadderTraversalRecoveryZOffset = 2.0f;
+            Version = 14;
         }
     }
 

@@ -1655,9 +1655,11 @@ public sealed class LadderMapService
                     progress))
             {
                 if (TryEnterTopExit(
+                        pawn,
                         ladder,
                         traversal,
                         position,
+                        velocity,
                         now))
                 {
                     ApplyTopExitControl(
@@ -3325,9 +3327,11 @@ public sealed class LadderMapService
     }
 
     private bool TryEnterTopExit(
+        CCSPlayerPawn pawn,
         PhysicalLadder ladder,
         TraversalSession traversal,
         Vector3 position,
+        Vector3 velocity,
         float now)
     {
         if (!ladder.ManualCertified)
@@ -3613,6 +3617,116 @@ public sealed class LadderMapService
         return MathF.Sqrt(
             vector.X * vector.X +
             vector.Y * vector.Y);
+    }
+
+    private static bool TryGetCurrentLadderNormal(
+        CCSPlayerPawn pawn,
+        out Vector3 normal)
+    {
+        normal = default;
+
+        if (!TryGetCsMovementServices(
+                pawn,
+                out CCSPlayer_MovementServices movement))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (movement.LadderNormal == null ||
+                !NativeValueReader.TryCopy(
+                    movement.LadderNormal,
+                    out Vector3 rawNormal))
+            {
+                return false;
+            }
+
+            normal =
+                HorizontalNormalised(
+                    rawNormal);
+
+            return normal.LengthSquared() >= 0.25f;
+        }
+        catch
+        {
+            normal = default;
+            return false;
+        }
+    }
+
+    private bool TryGetLearnedLadderNormal(
+        PhysicalLadder ladder,
+        float z,
+        out Vector3 normal)
+    {
+        normal = default;
+
+        if (TryGetReferenceAtZ(
+                ladder,
+                z,
+                out _,
+                out Vector3 sampledNormal))
+        {
+            normal =
+                HorizontalNormalised(
+                    sampledNormal);
+
+            if (normal.LengthSquared() >= 0.25f)
+                return true;
+        }
+
+        if (ladder.ReferencePath == null)
+            return false;
+
+        Vector3 sum = default;
+        int count = 0;
+
+        foreach (LadderPathSample sample in
+                 ladder.ReferencePath)
+        {
+            Vector3 sampleNormal =
+                HorizontalNormalised(
+                    sample.LadderNormal.ToVector3());
+
+            if (sampleNormal.LengthSquared() < 0.25f)
+                continue;
+
+            sum += sampleNormal;
+            count++;
+        }
+
+        if (count <= 0)
+            return false;
+
+        normal =
+            HorizontalNormalised(
+                sum);
+
+        return normal.LengthSquared() >= 0.25f;
+    }
+
+    private float GetLadderNormalCompatibility(
+        PhysicalLadder ladder,
+        Vector3 position,
+        Vector3 actualNormal)
+    {
+        Vector3 actual =
+            HorizontalNormalised(
+                actualNormal);
+
+        if (actual.LengthSquared() < 0.25f ||
+            !TryGetLearnedLadderNormal(
+                ladder,
+                position.Z,
+                out Vector3 learned))
+        {
+            return float.NaN;
+        }
+
+        return Vector3.Dot(
+            actual,
+            learned);
     }
 
     private bool IsForwardMovementStateHealthy(

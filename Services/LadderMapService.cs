@@ -10,7 +10,7 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Persistent physical-ladder learning plus proactive traversal.
 ///
-/// Version 17 combines two responsibilities:
+/// Version 18 combines two responsibilities:
 ///
 /// 1) High-confidence manual teaching. When configured conditions are met
 ///    (by default: no bots and exactly one live human), successful human ladder
@@ -1512,13 +1512,11 @@ public sealed class LadderMapService
             if (traversal.Stage ==
                 TraversalStage.TopExit)
             {
-                // Reattachment around the lip is a rescue opportunity even
-                // while descending. Resume climbing and let the normal ladder
-                // feedback loop pull the bot upward again.
                 traversal.Stage =
                     TraversalStage.Climb;
                 traversal.StageStartedAt = now;
                 traversal.ExitStartedPosition = default;
+                traversal.TopExitPushDirection = default;
                 traversal.TopExitControlInitialised = false;
                 traversal.TopExitCorrectionCount = 0;
                 traversal.TopExitGroundedSince =
@@ -1531,6 +1529,29 @@ public sealed class LadderMapService
                 _info(
                     $"TOP-EXIT-REATTACH map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; velocity={Format(velocity)}; action=resume-climb");
+            }
+            else if (traversal.Stage ==
+                     TraversalStage.PostExitGuard)
+            {
+                RecoverTraversalToSafePoint(
+                    pawn,
+                    state.Slot,
+                    traversal,
+                    ladder,
+                    "reattached during post-exit guard",
+                    preferTop: true);
+
+                CompleteTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    ladder.ManualLanding?.ToVector3() ?? position,
+                    traversal.MaxClimbZ - traversal.ClimbStartZ,
+                    "top-exit-recovered-after-reattach",
+                    now);
+
+                return true;
             }
             else if (traversal.Stage !=
                      TraversalStage.Climb)
@@ -1723,9 +1744,8 @@ public sealed class LadderMapService
                         velocity,
                         now))
                 {
-                    ApplyTopExitControl(
+                    ApplyTopExitKick(
                         pawn,
-                        bot,
                         state,
                         ladder,
                         position,
@@ -1822,132 +1842,154 @@ public sealed class LadderMapService
                     state.Slot,
                     tracker,
                     ladder,
-                    "manual landing disappeared during top exit",
+                    "manual landing disappeared during top-exit kick",
                     now);
 
                 return true;
             }
 
-            Vector3 landingTarget =
-                ladder.ManualLanding.ToVector3();
+            float kickDistance =
+                Distance2D(
+                    position,
+                    traversal.ExitStartedPosition);
 
-            float exitElapsed =
+            float kickElapsed =
                 MathF.Max(
                     0.0f,
                     now -
                     traversal.StageStartedAt);
 
-            float landingDistance =
-                Distance2D(
-                    position,
-                    landingTarget);
-
-            float landingVerticalDelta =
-                MathF.Abs(
-                    position.Z -
-                    landingTarget.Z);
-
-            bool grounded =
-                IsGrounded(
-                    pawn);
-
-            bool validGroundContact =
-                grounded &&
-                landingDistance <=
-                    Config.LadderTraversalTopExitLandingRadius &&
-                landingVerticalDelta <=
-                    Config.LadderTraversalTopExitLandingVerticalTolerance;
-
-            if (validGroundContact)
+            if (position.Z <
+                ladder.TopZ -
+                Config.LadderTraversalPostExitRecoveryDrop)
             {
-                if (!float.IsFinite(
-                        traversal.TopExitGroundedSince))
-                {
-                    traversal.TopExitGroundedSince = now;
+                RecoverTraversalToSafePoint(
+                    pawn,
+                    state.Slot,
+                    traversal,
+                    ladder,
+                    "fell during top-exit kick",
+                    preferTop: true);
 
-                    _info(
-                        $"TOP-EXIT-GROUND-CONTACT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                        $"position={Format(position)}; landing={Format(landingTarget)}; " +
-                        $"distance={landingDistance:0.###}; verticalDelta={landingVerticalDelta:0.###}; action=confirm");
-                }
+                CompleteTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    ladder.ManualLanding.ToVector3(),
+                    progress,
+                    "top-exit-recovered-during-kick",
+                    now);
 
-                float groundedFor =
-                    now -
-                    traversal.TopExitGroundedSince;
-
-                if (groundedFor >=
-                    Config.LadderTraversalTopExitGroundedConfirmSeconds)
-                {
-                    CompleteTraversal(
-                        pawn,
-                        state.Slot,
-                        tracker,
-                        ladder,
-                        position,
-                        progress,
-                        "top-exit-manual-landing",
-                        now);
-
-                    return true;
-                }
+                return true;
             }
-            else
+
+            bool kickComplete =
+                kickDistance >=
+                    Config.LadderTraversalTopExitKickDistance ||
+                kickElapsed >=
+                    Config.LadderTraversalTopExitKickTimeoutSeconds;
+
+            if (kickComplete)
             {
-                traversal.TopExitGroundedSince =
+                traversal.Stage =
+                    TraversalStage.PostExitGuard;
+                traversal.StageStartedAt = now;
+                traversal.TopExitControlInitialised = false;
+                traversal.LastTopExitDiagnosticAt =
                     float.NegativeInfinity;
 
-                if (grounded)
-                {
-                    FailTraversal(
-                        pawn,
-                        state.Slot,
-                        tracker,
-                        ladder,
-                        $"grounded away from manual landing (distance={landingDistance:0.###}, verticalDelta={landingVerticalDelta:0.###})",
-                        now);
-
-                    return true;
-                }
-            }
-
-            if (position.Z <
-                landingTarget.Z -
-                Config.LadderTraversalTopExitMaxDrop)
-            {
-                FailTraversal(
+                ReleaseHumanClimbControl(
                     pawn,
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    $"fell below manual landing (landingDrop={(landingTarget.Z - position.Z):0.###}, distance={landingDistance:0.###})",
-                    now);
+                    traversal);
+
+                _info(
+                    $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
+                    $"kickElapsed={kickElapsed:0.###}s; velocity={Format(velocity)}; " +
+                    "action=valve-ai");
 
                 return true;
             }
 
-            if (exitElapsed >=
-                Config.LadderTraversalTopExitSettleTimeoutSeconds)
-            {
-                FailTraversal(
-                    pawn,
-                    state.Slot,
-                    tracker,
-                    ladder,
-                    $"manual landing timeout (distance={landingDistance:0.###}, verticalDelta={landingVerticalDelta:0.###}, grounded={grounded}, velocityZ={velocity.Z:0.###})",
-                    now);
-
-                return true;
-            }
-
-            ApplyTopExitControl(
+            ApplyTopExitKick(
                 pawn,
-                bot,
                 state,
                 ladder,
                 position,
                 velocity,
                 traversal,
                 now);
+
+            return true;
+        }
+
+        if (traversal.Stage ==
+            TraversalStage.PostExitGuard)
+        {
+            float progress =
+                traversal.MaxClimbZ -
+                traversal.ClimbStartZ;
+
+            float guardElapsed =
+                MathF.Max(
+                    0.0f,
+                    now -
+                    traversal.StageStartedAt);
+
+            if (position.Z <
+                ladder.TopZ -
+                Config.LadderTraversalPostExitRecoveryDrop)
+            {
+                RecoverTraversalToSafePoint(
+                    pawn,
+                    state.Slot,
+                    traversal,
+                    ladder,
+                    "fell after Valve handoff",
+                    preferTop: true);
+
+                CompleteTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    ladder.ManualLanding?.ToVector3() ?? position,
+                    progress,
+                    "top-exit-recovered-after-handoff",
+                    now);
+
+                return true;
+            }
+
+            if (guardElapsed >=
+                Config.LadderTraversalPostExitGuardSeconds)
+            {
+                CompleteTraversal(
+                    pawn,
+                    state.Slot,
+                    tracker,
+                    ladder,
+                    position,
+                    progress,
+                    "top-exit-valve-handoff",
+                    now);
+
+                return true;
+            }
+
+            if (Config.Debug &&
+                now - traversal.LastTopExitDiagnosticAt >=
+                    Config.LadderTraversalBotMoveLogIntervalSeconds)
+            {
+                traversal.LastTopExitDiagnosticAt = now;
+
+                _debug(
+                    $"TOP-EXIT-GUARD slot={state.Slot}; id={ladder.Id}; " +
+                    $"position={Format(position)}; velocity={Format(velocity)}; " +
+                    $"guardElapsed={guardElapsed:0.###}s; grounded={IsGrounded(pawn)}; " +
+                    "movementOwner=valve");
+            }
 
             return true;
         }
@@ -2755,8 +2797,9 @@ public sealed class LadderMapService
         // TopExit is a short fast-actuator phase. If the engine reattaches the
         // pawn to the ladder, ApplyFast() will restore Climb without discarding
         // the climb progress already accumulated.
-        if (traversal.Stage ==
-            TraversalStage.TopExit)
+        if (traversal.Stage is
+            TraversalStage.TopExit or
+            TraversalStage.PostExitGuard)
         {
             return;
         }
@@ -2884,6 +2927,7 @@ public sealed class LadderMapService
         traversal.ForwardCorrectionCount = 0;
         traversal.ForwardHandoffCount = 0;
         traversal.ExitStartedPosition = default;
+        traversal.TopExitPushDirection = default;
         traversal.LastLadderNormal = default;
         traversal.HasLastLadderNormal = false;
         traversal.TopExitControlInitialised = false;
@@ -3002,6 +3046,27 @@ public sealed class LadderMapService
             outcome: "fail",
             reason,
             now);
+
+        if (ladder != null &&
+            (traversal.JumpIssued ||
+             traversal.Stage is
+                TraversalStage.Climb or
+                TraversalStage.TopExit or
+                TraversalStage.PostExitGuard))
+        {
+            bool preferTop =
+                traversal.Stage is
+                    TraversalStage.TopExit or
+                    TraversalStage.PostExitGuard;
+
+            RecoverTraversalToSafePoint(
+                pawn,
+                slot,
+                traversal,
+                ladder,
+                reason,
+                preferTop);
+        }
 
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
@@ -3477,10 +3542,22 @@ public sealed class LadderMapService
             TraversalStage.TopExit;
         traversal.StageStartedAt = now;
 
-        // The natural LADDER -> WALK transition already puts the bot at the
-        // correct upper lip. Keep that actual detach XY as a local landing
-        // anchor instead of adding another horizontal push.
+        // Use the human landing only to choose a safe outward direction. The
+        // kick is distance-bounded and then movement ownership goes back to Valve.
         traversal.ExitStartedPosition = position;
+
+        Vector3 landingTarget =
+            ladder.ManualLanding.ToVector3();
+
+        traversal.TopExitPushDirection =
+            HorizontalNormalised(
+                new Vector3(
+                    landingTarget.X - position.X,
+                    landingTarget.Y - position.Y,
+                    0.0f));
+
+        if (traversal.TopExitPushDirection.LengthSquared() < 0.25f)
+            return false;
         traversal.TopExitControlInitialised = false;
         traversal.TopExitCorrectionCount = 0;
         traversal.TopExitGroundedSince =
@@ -3490,9 +3567,6 @@ public sealed class LadderMapService
 
         traversal.HumanControlInitialised = false;
         traversal.ForwardHandoffActive = false;
-
-        Vector3 landingTarget =
-            ladder.ManualLanding.ToVector3();
 
         float manualExitDistance =
             ladder.ManualExit != null
@@ -3505,16 +3579,18 @@ public sealed class LadderMapService
             $"TOP-EXIT-START map={_document.Map}; id={ladder.Id}; " +
             $"position={Format(position)}; peakZ={traversal.MaxClimbZ:0.###}; topZ={ladder.TopZ:0.###}; " +
             $"landing={Format(landingTarget)}; landingDistance={Distance2D(position, landingTarget):0.###}; " +
-            $"velocity={Format(velocity)}; landingGuidance=true; " +
+            $"pushDirection={Format(traversal.TopExitPushDirection)}; " +
+            $"kickDistance={Config.LadderTraversalTopExitKickDistance:0.###}; " +
+            $"kickSpeed={Config.LadderTraversalTopExitKickSpeed:0.###}; " +
+            $"velocity={Format(velocity)}; outwardKick=true; " +
             $"manualExitDistance={(float.IsFinite(manualExitDistance) ? manualExitDistance.ToString("0.###") : "n/a")}; " +
             $"grounded={IsGrounded(pawn)}");
 
         return true;
     }
 
-    private void ApplyTopExitControl(
+    private void ApplyTopExitKick(
         CCSPlayerPawn pawn,
-        CCSBot bot,
         BotRuntimeState state,
         PhysicalLadder ladder,
         Vector3 position,
@@ -3522,68 +3598,40 @@ public sealed class LadderMapService
         TraversalSession traversal,
         float now)
     {
-        if (ladder.ManualLanding == null)
-            return;
-
-        PrepareBotForMovement(
-            bot,
-            state);
-
-        MovementSnapshot before = new();
-        MovementSnapshot after = new();
-
         if (TryGetCsMovementServices(
                 pawn,
                 out CCSPlayer_MovementServices movement))
         {
-            before =
-                ReadMovementSnapshot(
-                    movement);
-
             ApplyTopExitNeutralState(
                 movement);
-
-            after =
-                ReadMovementSnapshot(
-                    movement);
         }
 
-        Vector3 landingTarget =
-            ladder.ManualLanding.ToVector3();
+        Vector3 before = velocity;
+        Vector3 after = velocity;
+        bool applied = false;
 
-        bool grounded =
-            IsGrounded(
-                pawn);
+        try
+        {
+            pawn.AbsVelocity.X =
+                traversal.TopExitPushDirection.X *
+                Config.LadderTraversalTopExitKickSpeed;
 
-        float guidanceStopRadius =
-            grounded
-                ? Config.LadderTraversalTopExitLandingRadius
-                : Config.LadderTraversalTopExitLandingStopRadius;
+            pawn.AbsVelocity.Y =
+                traversal.TopExitPushDirection.Y *
+                Config.LadderTraversalTopExitKickSpeed;
 
-        bool velocityGuided =
-            TryGuideTopExitHorizontalVelocity(
-                pawn,
-                position,
-                landingTarget,
-                guidanceStopRadius,
-                Config.LadderTraversalTopExitLandingVelocity,
-                out Vector3 velocityBefore,
-                out Vector3 velocityAfter,
-                out float landingDistance);
+            after =
+                new Vector3(
+                    pawn.AbsVelocity.X,
+                    pawn.AbsVelocity.Y,
+                    pawn.AbsVelocity.Z);
 
-        float landingVerticalDelta =
-            MathF.Abs(
-                position.Z -
-                landingTarget.Z);
-
-        float groundedFor =
-            float.IsFinite(
-                traversal.TopExitGroundedSince)
-                ? MathF.Max(
-                    0.0f,
-                    now -
-                    traversal.TopExitGroundedSince)
-                : 0.0f;
+            applied = true;
+        }
+        catch
+        {
+            // Retry on the next fast pass; the fall guard remains active.
+        }
 
         traversal.TopExitControlInitialised = true;
         traversal.TopExitCorrectionCount++;
@@ -3594,31 +3642,17 @@ public sealed class LadderMapService
         {
             traversal.LastTopExitDiagnosticAt = now;
 
-            float manualExitDistance =
-                ladder.ManualExit != null
-                    ? Distance2D(
-                        position,
-                        ladder.ManualExit.ToVector3())
-                    : float.NaN;
-
-            Vector3 eye =
-                ReadPawnEyeAngles(
-                    pawn);
+            float travelled =
+                Distance2D(
+                    position,
+                    traversal.ExitStartedPosition);
 
             _debug(
-                $"TOP-EXIT-MOVE slot={state.Slot}; id={ladder.Id}; phase=manual-landing; " +
-                $"pos={Format(position)}; landing={Format(landingTarget)}; " +
-                $"landingDistance={landingDistance:0.###}; verticalDelta={landingVerticalDelta:0.###}; " +
-                $"grounded={grounded}; groundedFor={groundedFor:0.###}; eye={Format(eye)}; " +
-                $"manualExitDistance={(float.IsFinite(manualExitDistance) ? manualExitDistance.ToString("0.###") : "n/a")}; " +
-                $"velocityGuided={velocityGuided}; " +
-                $"velocityBefore={Format(velocityBefore)}; velocityAfter={Format(velocityAfter)}; " +
-                $"preCmd=({before.CmdForwardMove:0.###},{before.CmdLeftMove:0.###},{before.CmdUpMove:0.###}); " +
-                $"preProcessed=({before.ForwardMove:0.###},{before.LeftMove:0.###},{before.UpMove:0.###}); " +
-                $"preButtons=0x{before.Buttons0:X}; " +
-                $"postCmd=({after.CmdForwardMove:0.###},{after.CmdLeftMove:0.###},{after.CmdUpMove:0.###}); " +
-                $"postProcessed=({after.ForwardMove:0.###},{after.LeftMove:0.###},{after.UpMove:0.###}); " +
-                $"postButtons=0x{after.Buttons0:X}; corrections={traversal.TopExitCorrectionCount}");
+                $"TOP-EXIT-KICK slot={state.Slot}; id={ladder.Id}; " +
+                $"position={Format(position)}; travelled={travelled:0.###}; " +
+                $"pushDirection={Format(traversal.TopExitPushDirection)}; " +
+                $"velocityApplied={applied}; velocityBefore={Format(before)}; " +
+                $"velocityAfter={Format(after)}; grounded={IsGrounded(pawn)}");
         }
     }
 
@@ -3654,67 +3688,64 @@ public sealed class LadderMapService
         }
     }
 
-    private static bool TryGuideTopExitHorizontalVelocity(
+    private bool RecoverTraversalToSafePoint(
         CCSPlayerPawn pawn,
-        Vector3 position,
-        Vector3 landingTarget,
-        float stopRadius,
-        float travelSpeed,
-        out Vector3 before,
-        out Vector3 after,
-        out float landingDistance)
+        int slot,
+        TraversalSession traversal,
+        PhysicalLadder ladder,
+        string reason,
+        bool preferTop)
     {
-        before = default;
-        after = default;
+        if (!Config.LadderTraversalRecoveryEnabled)
+            return false;
 
-        Vector3 towardLanding =
-            new(
-                landingTarget.X - position.X,
-                landingTarget.Y - position.Y,
-                0.0f);
+        Vector3 target;
 
-        landingDistance =
-            towardLanding.Length();
+        if (preferTop &&
+            ladder.ManualLanding != null)
+        {
+            target =
+                ladder.ManualLanding.ToVector3();
+        }
+        else if (ladder.HasBottomApproach)
+        {
+            target =
+                ladder.BottomEntry.ToVector3();
+        }
+        else
+        {
+            target =
+                ladder.BottomMount.ToVector3();
+        }
+
+        target.Z +=
+            Config.LadderTraversalRecoveryZOffset;
+
+        Vector3 before = default;
+        NativeValueReader.TryGetOrigin(
+            pawn,
+            out before);
 
         try
         {
-            before =
-                new Vector3(
-                    pawn.AbsVelocity.X,
-                    pawn.AbsVelocity.Y,
-                    pawn.AbsVelocity.Z);
+            pawn.Teleport(
+                position: target,
+                angles: null,
+                velocity: Vector3.Zero);
 
-            if (landingDistance <= stopRadius)
-            {
-                pawn.AbsVelocity.X = 0.0f;
-                pawn.AbsVelocity.Y = 0.0f;
-            }
-            else
-            {
-                Vector3 direction =
-                    HorizontalNormalised(
-                        towardLanding);
-
-                pawn.AbsVelocity.X =
-                    direction.X *
-                    travelSpeed;
-
-                pawn.AbsVelocity.Y =
-                    direction.Y *
-                    travelSpeed;
-            }
-
-            after =
-                new Vector3(
-                    pawn.AbsVelocity.X,
-                    pawn.AbsVelocity.Y,
-                    pawn.AbsVelocity.Z);
+            _info(
+                $"RECOVERY-TELEPORT map={_document.Map}; slot={slot}; id={ladder.Id}; " +
+                $"reason={reason}; from={Format(before)}; to={Format(target)}; " +
+                $"stage={traversal.Stage}");
 
             return true;
         }
-        catch
+        catch (Exception exception)
         {
-            after = before;
+            _warn(
+                exception,
+                $"Recovery teleport failed for slot {slot}, ladder {ladder.Id}.");
+
             return false;
         }
     }
@@ -5031,7 +5062,8 @@ public sealed class LadderMapService
         Approach,
         Mounting,
         Climb,
-        TopExit
+        TopExit,
+        PostExitGuard
     }
 
     private sealed class BotTracker
@@ -5180,6 +5212,7 @@ public sealed class LadderMapService
         public int ForwardHandoffCount { get; set; }
 
         public Vector3 ExitStartedPosition { get; set; }
+        public Vector3 TopExitPushDirection { get; set; }
         public Vector3 LastLadderNormal { get; set; }
         public bool HasLastLadderNormal { get; set; }
 

@@ -2062,6 +2062,23 @@ public sealed class LadderMapService
             return true;
         }
 
+        // ACQUIRE is only a snapshot of Valve's route. Never carry it for
+        // several seconds and then jump from a completely different approach.
+        if (traversal.Stage ==
+                TraversalStage.Approach &&
+            now - traversal.StageStartedAt >
+                Config.LadderTraversalApproachTimeoutSeconds)
+        {
+            _info(
+                $"APPROACH-EXPIRED map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                $"age={(now - traversal.StageStartedAt):0.###}s; position={Format(position)}; " +
+                "action=discard-and-wait-for-fresh-acquire");
+
+            tracker.Traversal = null;
+            tracker.SuppressTraversalUntilLadderExit = false;
+            return false;
+        }
+
         // Valve navigation owns the approach. The only intervention before a
         // real mount is one short Jump pulse near the trusted bottom mount.
         if (ShouldIssueJump(
@@ -3222,6 +3239,33 @@ public sealed class LadderMapService
 
         if (approach.LengthSquared() <
             0.25f)
+        {
+            return false;
+        }
+
+        Vector3 horizontalVelocity =
+            new(
+                velocity.X,
+                velocity.Y,
+                0.0f);
+
+        Vector3 velocityDirection =
+            HorizontalNormalised(
+                horizontalVelocity);
+
+        if (velocityDirection.LengthSquared() <
+            0.25f)
+        {
+            return false;
+        }
+
+        float approachDirectionDot =
+            Vector3.Dot(
+                velocityDirection,
+                approach);
+
+        if (approachDirectionDot <
+            Config.LadderTraversalApproachDirectionDotMinimum)
         {
             return false;
         }
@@ -4421,7 +4465,7 @@ public sealed class LadderMapService
 
         if (position.Z >
             mount.Z +
-            Config.LadderTraversalClimbAssistProgress)
+            Config.LadderTraversalMountedTakeoverMaxProgress)
         {
             return false;
         }
@@ -4603,8 +4647,9 @@ public sealed class LadderMapService
             return;
         }
 
-        // A real enemy is already a stronger/more natural Valve task than any
-        // synthetic post-ladder goal. Do not compete with combat AI.
+        // Only a currently visible live enemy is strong evidence that Valve
+        // already has a useful combat task. Enemy.Value alone can remain stale
+        // after the climb while the bot still holds the old ladder path.
         if (TryGetLiveBotEnemy(
                 pawn,
                 bot,
@@ -4811,6 +4856,11 @@ public sealed class LadderMapService
                     (byte)LifeState_t.LIFE_ALIVE ||
                 enemy.TeamNum ==
                     pawn.TeamNum)
+            {
+                return false;
+            }
+
+            if (!bot.IsEnemyVisible)
             {
                 return false;
             }
@@ -5295,20 +5345,53 @@ public sealed class LadderMapService
         out string matchMode,
         out float selectedNormalDot)
     {
-        PhysicalLadder? strict =
-            FindKnownAtPosition(
+        bool haveStrictNormal =
+            TryGetCurrentLadderNormal(
                 pawn,
-                position,
-                out selectedDeviation);
+                out Vector3 strictNormal);
+
+        PhysicalLadder? strict =
+            null;
+
+        float strictBestDistance =
+            float.PositiveInfinity;
+
+        foreach (PhysicalLadder ladder in
+                 _document.Ladders)
+        {
+            if (!ladder.ManualCertified ||
+                !ladder.HasBottomApproach ||
+                !IsUsableAlreadyMountedPosition(
+                    ladder,
+                    position))
+            {
+                continue;
+            }
+
+            float bottomDistance =
+                Distance2D(
+                    position,
+                    ladder.BottomMount.ToVector3());
+
+            if (bottomDistance <=
+                    Config.LadderTraversalIdentityMatchRadius &&
+                bottomDistance <
+                    strictBestDistance)
+            {
+                strict = ladder;
+                strictBestDistance =
+                    bottomDistance;
+            }
+        }
 
         if (strict != null)
         {
-            matchMode = "strict";
+            selectedDeviation =
+                strictBestDistance;
+            matchMode = "strict-geometry";
 
             selectedNormalDot =
-                TryGetCurrentLadderNormal(
-                    pawn,
-                    out Vector3 strictNormal)
+                haveStrictNormal
                     ? GetLadderNormalCompatibility(
                         strict,
                         position,
@@ -5510,6 +5593,41 @@ public sealed class LadderMapService
                 ? normal
                 : null;
 
+        float plannedDeviation =
+            GetTargetPathDeviation(
+                planned,
+                position);
+
+        if (plannedDeviation <=
+                Config.LadderTraversalIdentityMatchRadius &&
+            IsWithinKnownLadderVerticalSpan(
+                planned,
+                position))
+        {
+            float plannedDot =
+                actualNormal.HasValue
+                    ? GetLadderNormalCompatibility(
+                        planned,
+                        position,
+                        actualNormal.Value)
+                    : float.NaN;
+
+            if (actualNormal.HasValue &&
+                float.IsFinite(plannedDot) &&
+                plannedDot <
+                    Config.LadderTraversalNormalDotMinimum)
+            {
+                _info(
+                    $"MOUNT-NORMAL-DIAGNOSTIC map={_document.Map}; slot={slot}; plannedId={planned.Id}; " +
+                    $"position={Format(position)}; deviation={plannedDeviation:0.###}; " +
+                    $"actualNormal={Format(actualNormal.Value)}; plannedNormalDot={plannedDot:0.###}; " +
+                    $"requiredDot={Config.LadderTraversalNormalDotMinimum:0.###}; " +
+                    "action=accept-strict-geometry");
+            }
+
+            return planned;
+        }
+
         PhysicalLadder? closest =
             FindClosestKnownLadderAtPosition(
                 position,
@@ -5536,11 +5654,6 @@ public sealed class LadderMapService
 
             return null;
         }
-
-        float plannedDeviation =
-            GetTargetPathDeviation(
-                planned,
-                position);
 
         float selectedDot =
             actualNormal.HasValue

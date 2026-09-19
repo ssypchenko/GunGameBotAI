@@ -3459,8 +3459,8 @@ public sealed class LadderMapService
             bot,
             state);
 
-        MovementSnapshot before = default;
-        MovementSnapshot after = default;
+        MovementSnapshot before = new();
+        MovementSnapshot after = new();
 
         if (TryGetCsMovementServices(
                 pawn,

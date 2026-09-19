@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 20;
+    public override int Version { get; set; } = 21;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -168,9 +168,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // over several fast frames, verified, and re-applied if Valve takes it back.
     public int LadderTraversalNavigationMinimumWrites { get; set; } = 3;
     public float LadderTraversalNavigationRewriteIntervalSeconds { get; set; } = 0.03f;
-    public float LadderTraversalPostExitGoalHoldSeconds { get; set; } = 1.25f;
-    public float LadderTraversalPostExitStableSeconds { get; set; } = 0.30f;
+    public float LadderTraversalPostExitGoalHoldSeconds { get; set; } = 3.00f;
+    public float LadderTraversalPostExitStableSeconds { get; set; } = 0.50f;
     public float LadderTraversalPostExitStableMoveDistance { get; set; } = 24.0f;
+    public float LadderTraversalPostExitProgressEpsilon { get; set; } = 6.0f;
+    public float LadderTraversalPostExitStallRewriteSeconds { get; set; } = 0.40f;
     public float LadderTraversalPostExitGoalTolerance { get; set; } = 8.0f;
     public float LadderTraversalPostExitBadGoalRadius { get; set; } = 32.0f;
     public float LadderTraversalGoalMountedFallbackRadius { get; set; } = 32.0f;
@@ -207,6 +209,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // v16: only proactive ACQUIRE/JUMP on the ladder that just failed is
     // throttled. Other ladders, and already-mounted takeover, remain available.
     public float LadderTraversalProactiveFailureCooldownSeconds { get; set; } = 1.50f;
+
+    // Integrated GeometryProbe floor/hole diagnostics. Observation-only.
+    public bool GeometrySafetyDetectionEnabled { get; set; } = true;
 
     public bool CombatStrafeEnabled { get; set; } = true;
     public bool CounterStrafeEnabled { get; set; } = true;
@@ -344,9 +349,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalPostExitGoalChangeDistance = Clamp(LadderTraversalPostExitGoalChangeDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitGoalChangeDistance), warn);
         LadderTraversalNavigationMinimumWrites = Clamp(LadderTraversalNavigationMinimumWrites, 2, 8, 3, nameof(LadderTraversalNavigationMinimumWrites), warn);
         LadderTraversalNavigationRewriteIntervalSeconds = Clamp(LadderTraversalNavigationRewriteIntervalSeconds, 0.01f, 0.20f, 0.03f, nameof(LadderTraversalNavigationRewriteIntervalSeconds), warn);
-        LadderTraversalPostExitGoalHoldSeconds = Clamp(LadderTraversalPostExitGoalHoldSeconds, 0.25f, 4.0f, 1.25f, nameof(LadderTraversalPostExitGoalHoldSeconds), warn);
-        LadderTraversalPostExitStableSeconds = Clamp(LadderTraversalPostExitStableSeconds, 0.10f, 2.0f, 0.30f, nameof(LadderTraversalPostExitStableSeconds), warn);
+        LadderTraversalPostExitGoalHoldSeconds = Clamp(LadderTraversalPostExitGoalHoldSeconds, 0.25f, 6.0f, 3.00f, nameof(LadderTraversalPostExitGoalHoldSeconds), warn);
+        LadderTraversalPostExitStableSeconds = Clamp(LadderTraversalPostExitStableSeconds, 0.10f, 2.0f, 0.50f, nameof(LadderTraversalPostExitStableSeconds), warn);
         LadderTraversalPostExitStableMoveDistance = Clamp(LadderTraversalPostExitStableMoveDistance, 4.0f, 128.0f, 24.0f, nameof(LadderTraversalPostExitStableMoveDistance), warn);
+        LadderTraversalPostExitProgressEpsilon = Clamp(LadderTraversalPostExitProgressEpsilon, 1.0f, 24.0f, 6.0f, nameof(LadderTraversalPostExitProgressEpsilon), warn);
+        LadderTraversalPostExitStallRewriteSeconds = Clamp(LadderTraversalPostExitStallRewriteSeconds, 0.15f, 2.0f, 0.40f, nameof(LadderTraversalPostExitStallRewriteSeconds), warn);
         LadderTraversalPostExitGoalTolerance = Clamp(LadderTraversalPostExitGoalTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalPostExitGoalTolerance), warn);
         LadderTraversalPostExitBadGoalRadius = Clamp(LadderTraversalPostExitBadGoalRadius, 8.0f, 64.0f, 32.0f, nameof(LadderTraversalPostExitBadGoalRadius), warn);
         LadderTraversalGoalMountedFallbackRadius = Clamp(LadderTraversalGoalMountedFallbackRadius, 8.0f, 64.0f, 32.0f, nameof(LadderTraversalGoalMountedFallbackRadius), warn);
@@ -607,6 +614,19 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalGoalMountedFallbackRadius = 32.0f;
             LadderTraversalTrapRecoveryXYRadius = 12.0f;
             Version = 20;
+        }
+
+        if (Version < 21)
+        {
+            // v21 keeps post-ladder navigation under verified feedback control
+            // longer, restarts the hold window after every correction, and
+            // integrates the standalone GeometryProbe detector.
+            LadderTraversalPostExitGoalHoldSeconds = 3.00f;
+            LadderTraversalPostExitStableSeconds = 0.50f;
+            LadderTraversalPostExitProgressEpsilon = 6.0f;
+            LadderTraversalPostExitStallRewriteSeconds = 0.40f;
+            GeometrySafetyDetectionEnabled = true;
+            Version = 21;
         }
     }
 

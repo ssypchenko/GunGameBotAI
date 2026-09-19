@@ -43,6 +43,20 @@ public sealed class GeometryProbePlugin : BasePlugin
     private const float LadderZoneRadius = 96.0f;
     private const float LadderZoneBelowPadding = 48.0f;
     private const float LadderZoneAbovePadding = 64.0f;
+
+    // Floor-loss compares an unsupported off-ladder sample against the bot's
+    // own most recent supported-ground sample. Because supported state is
+    // refreshed every probe while walking on real floor, this catches both an
+    // immediate lip fall and a later step back into the same hole.
+    private const float FloorLossRecentSupportSeconds = 0.50f;
+
+    // A geometry trap is intentionally stricter than the broad ladder zone:
+    // close to a known shaft, unsupported, no nearby floor, almost stationary,
+    // and persistent for a short time.
+    private const float GeometryTrapRadius = 48.0f;
+    private const float GeometryTrapMaxSpeed = 12.0f;
+    private const float GeometryTrapConfirmSeconds = 0.40f;
+    private const float GeometryTrapRepeatSeconds = 1.00f;
     private static readonly (string Name, float X, float Y)[] NearbyDirections =
     {
         ("E", 1.0f, 0.0f),
@@ -71,7 +85,7 @@ public sealed class GeometryProbePlugin : BasePlugin
     private bool _enabled = true;
 
     public override string ModuleName => "Geometry Probe";
-    public override string ModuleVersion => "0.2.0";
+    public override string ModuleVersion => "0.3.0";
     public override string ModuleAuthor => "Sergey / ChatGPT";
     public override string ModuleDescription =>
         "Diagnostic-only bot floor/drop collision probe.";
@@ -284,6 +298,25 @@ public sealed class GeometryProbePlugin : BasePlugin
                 current,
                 grounded);
 
+            ProbeFloorLoss(
+                controller,
+                pawn,
+                state,
+                origin,
+                velocity,
+                current,
+                grounded,
+                onLadder);
+
+            ProbeGeometryTrap(
+                controller,
+                pawn,
+                state,
+                origin,
+                velocity,
+                current,
+                grounded);
+
             ProbeFallingState(
                 controller,
                 pawn,
@@ -292,6 +325,13 @@ public sealed class GeometryProbePlugin : BasePlugin
                 velocity,
                 current,
                 grounded);
+
+            UpdateSupportedGroundState(
+                state,
+                origin,
+                current,
+                grounded,
+                onLadder);
 
             // While MOVETYPE_LADDER is active, floor depths are not meaningful
             // for the actual climb. We still log contact/detach transitions.
@@ -466,6 +506,268 @@ public sealed class GeometryProbePlugin : BasePlugin
             firstPoint,
             $"radius={NearbyRadius:0.#}; direction={firstName}; dangerousSamples={dangerousSamples}/8; " +
             $"floorDrop={FormatDrop(firstDrop)}; grounded={grounded}");
+    }
+
+    private void ProbeFloorLoss(
+        CCSPlayerController controller,
+        CCSPlayerPawn pawn,
+        BotProbeState state,
+        Vector origin,
+        Vector velocity,
+        FloorSample current,
+        bool grounded,
+        bool onLadder)
+    {
+        // Losing floor while MOVETYPE_LADDER is expected and is not evidence of
+        // broken geometry. We only diagnose loss after the pawn is back on WALK.
+        if (onLadder ||
+            !state.HasSupportedGround)
+        {
+            return;
+        }
+
+        float now =
+            Server.CurrentTime;
+
+        if (now - state.LastSupportedAt >
+            FloorLossRecentSupportSeconds)
+        {
+            return;
+        }
+
+        bool stillSupported =
+            grounded &&
+            current.Hit &&
+            current.Depth <=
+                SupportedFloorDepth;
+
+        if (stillSupported)
+        {
+            state.FloorLossActive = false;
+            return;
+        }
+
+        bool floorLost =
+            !current.Hit ||
+            current.Depth >
+                DangerousDrop;
+
+        if (!floorLost)
+            return;
+
+        if (!TryGetNearestLadder(
+                origin,
+                out KnownLadder? ladder,
+                out float distance2D) ||
+            ladder == null ||
+            distance2D >
+                LadderZoneRadius)
+        {
+            return;
+        }
+
+        bool verticalMatch =
+            origin.Z >=
+                ladder.BottomZ -
+                LadderZoneBelowPadding &&
+            origin.Z <=
+                ladder.TopZ +
+                LadderZoneAbovePadding;
+
+        if (!verticalMatch)
+            return;
+
+        if (state.FloorLossActive &&
+            state.LastFloorLossLadderId ==
+                ladder.Id &&
+            now - state.LastFloorLossLogAt <
+                0.50f)
+        {
+            return;
+        }
+
+        state.FloorLossActive = true;
+        state.LastFloorLossLadderId = ladder.Id;
+        state.LastFloorLossLogAt = now;
+
+        Logger.LogInformation(
+            "[GeometryProbe] LADDER-FLOOR-LOSS slot={Slot}; name={Name}; " +
+            "lastSafePosition={LastSafePosition}; lastSafeFloor={LastSafeFloor}; " +
+            "position={Position}; velocity={Velocity}; floor={Floor}; grounded={Grounded}; " +
+            "moveType={MoveType}; elapsedSinceSafe={Elapsed:0.###}s; " +
+            "ladderId={LadderId}; ladderXY={Distance:0.###}; ladderZ={BottomZ:0.###}..{TopZ:0.###}",
+            controller.Slot,
+            controller.PlayerName,
+            Format(state.LastSupportedPosition),
+            FormatFloor(state.LastSupportedFloor),
+            Format(origin),
+            Format(velocity),
+            FormatFloor(current),
+            grounded,
+            pawn.MoveType,
+            now - state.LastSupportedAt,
+            ladder.Id,
+            distance2D,
+            ladder.BottomZ,
+            ladder.TopZ);
+    }
+
+    private void ProbeGeometryTrap(
+        CCSPlayerController controller,
+        CCSPlayerPawn pawn,
+        BotProbeState state,
+        Vector origin,
+        Vector velocity,
+        FloorSample current,
+        bool grounded)
+    {
+        float now =
+            Server.CurrentTime;
+
+        if (!TryGetNearestLadder(
+                origin,
+                out KnownLadder? ladder,
+                out float distance2D) ||
+            ladder == null ||
+            distance2D >
+                GeometryTrapRadius)
+        {
+            ResetTrapCandidate(
+                state);
+
+            return;
+        }
+
+        bool verticalMatch =
+            origin.Z >=
+                ladder.BottomZ -
+                LadderZoneBelowPadding &&
+            origin.Z <=
+                ladder.TopZ +
+                LadderZoneAbovePadding;
+
+        float speed =
+            MathF.Sqrt(
+                velocity.X * velocity.X +
+                velocity.Y * velocity.Y +
+                velocity.Z * velocity.Z);
+
+        bool noUsableFloor =
+            !current.Hit ||
+            current.Depth >
+                DangerousDrop;
+
+        bool trappedNow =
+            verticalMatch &&
+            !grounded &&
+            noUsableFloor &&
+            speed <=
+                GeometryTrapMaxSpeed;
+
+        if (!trappedNow)
+        {
+            ResetTrapCandidate(
+                state);
+
+            return;
+        }
+
+        if (!float.IsFinite(
+                state.TrapCandidateSince) ||
+            state.TrapCandidateLadderId !=
+                ladder.Id)
+        {
+            state.TrapCandidateSince = now;
+            state.TrapCandidateLadderId = ladder.Id;
+            state.TrapFirstPosition =
+                new Vector(
+                    origin.X,
+                    origin.Y,
+                    origin.Z);
+
+            return;
+        }
+
+        float trappedFor =
+            now -
+            state.TrapCandidateSince;
+
+        if (trappedFor <
+            GeometryTrapConfirmSeconds)
+        {
+            return;
+        }
+
+        if (state.GeometryTrapActive &&
+            state.LastGeometryTrapLadderId ==
+                ladder.Id &&
+            now - state.LastGeometryTrapLogAt <
+                GeometryTrapRepeatSeconds)
+        {
+            return;
+        }
+
+        state.GeometryTrapActive = true;
+        state.LastGeometryTrapLadderId = ladder.Id;
+        state.LastGeometryTrapLogAt = now;
+
+        Logger.LogInformation(
+            "[GeometryProbe] GEOMETRY-TRAP slot={Slot}; name={Name}; " +
+            "firstPosition={FirstPosition}; position={Position}; velocity={Velocity}; speed={Speed:0.###}; " +
+            "floor={Floor}; grounded={Grounded}; moveType={MoveType}; trappedFor={TrappedFor:0.###}s; " +
+            "ladderId={LadderId}; ladderXY={Distance:0.###}; " +
+            "deltaBottomZ={DeltaBottom:0.###}; deltaTopZ={DeltaTop:0.###}",
+            controller.Slot,
+            controller.PlayerName,
+            Format(state.TrapFirstPosition),
+            Format(origin),
+            Format(velocity),
+            speed,
+            FormatFloor(current),
+            grounded,
+            pawn.MoveType,
+            trappedFor,
+            ladder.Id,
+            distance2D,
+            origin.Z - ladder.BottomZ,
+            origin.Z - ladder.TopZ);
+    }
+
+    private static void ResetTrapCandidate(
+        BotProbeState state)
+    {
+        state.TrapCandidateSince =
+            float.NegativeInfinity;
+        state.TrapCandidateLadderId = -1;
+        state.GeometryTrapActive = false;
+    }
+
+    private static void UpdateSupportedGroundState(
+        BotProbeState state,
+        Vector origin,
+        FloorSample current,
+        bool grounded,
+        bool onLadder)
+    {
+        if (onLadder ||
+            !grounded ||
+            !current.Hit ||
+            current.Depth >
+                SupportedFloorDepth)
+        {
+            return;
+        }
+
+        state.HasSupportedGround = true;
+        state.LastSupportedAt =
+            Server.CurrentTime;
+        state.LastSupportedPosition =
+            new Vector(
+                origin.X,
+                origin.Y,
+                origin.Z);
+        state.LastSupportedFloor = current;
+        state.FloorLossActive = false;
     }
 
     private void ProbeFallingState(
@@ -1063,6 +1365,22 @@ public sealed class GeometryProbePlugin : BasePlugin
 
         public bool FallingHazardActive { get; set; }
         public float LastFallingLogAt { get; set; } = float.NegativeInfinity;
+
+        public bool HasSupportedGround { get; set; }
+        public float LastSupportedAt { get; set; } = float.NegativeInfinity;
+        public Vector LastSupportedPosition { get; set; } = new();
+        public FloorSample LastSupportedFloor { get; set; }
+
+        public bool FloorLossActive { get; set; }
+        public int LastFloorLossLadderId { get; set; } = -1;
+        public float LastFloorLossLogAt { get; set; } = float.NegativeInfinity;
+
+        public float TrapCandidateSince { get; set; } = float.NegativeInfinity;
+        public int TrapCandidateLadderId { get; set; } = -1;
+        public Vector TrapFirstPosition { get; set; } = new();
+        public bool GeometryTrapActive { get; set; }
+        public int LastGeometryTrapLadderId { get; set; } = -1;
+        public float LastGeometryTrapLogAt { get; set; } = float.NegativeInfinity;
 
         public bool InLadderZone { get; set; }
         public int LastLadderZoneId { get; set; } = -1;

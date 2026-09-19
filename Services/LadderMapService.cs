@@ -4974,7 +4974,10 @@ public sealed class LadderMapService
 
         bool viewStale =
             IsPostExitViewStale(
-                bot);
+                pawn,
+                bot,
+                out float botLookPitch,
+                out float pawnPitch);
 
         if (viewStale)
         {
@@ -4989,21 +4992,20 @@ public sealed class LadderMapService
                 _info(
                     $"POST-LADDER-VIEW-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
-                    $"lookPitch={NormaliseAngleDegrees(bot.LookPitch):0.###}; " +
-                    $"corrections={traversal.PostExitViewCorrectionCount}; action=hold-bot-view");
+                    $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
+                    $"corrections={traversal.PostExitViewCorrectionCount}; action=correct-real-pitch");
             }
 
-            traversal.PostExitGoalIssuedAt = now;
             traversal.PostExitNavigationStableSince =
                 float.NegativeInfinity;
-        }
 
-        HoldBotNavigationView(
-            pawn,
-            bot,
-            position,
-            traversal.PostExitGoal,
-            now);
+            HoldBotNavigationView(
+                pawn,
+                bot,
+                position,
+                traversal.PostExitGoal,
+                now);
+        }
 
         float goalDistanceFromBot =
             Distance2D(
@@ -5049,10 +5051,12 @@ public sealed class LadderMapService
 
             if (correctionAfterInitialHold)
             {
-                traversal.PostExitGoalIssuedAt = now;
-
                 if (!goalMatches || badGoal)
                 {
+                    // Only a real goal takeover restarts the goal-hold window.
+                    // A movement stall is allowed to request another repath
+                    // without making the hold timer impossible to complete.
+                    traversal.PostExitGoalIssuedAt = now;
                     traversal.PostExitGoalRevertCount++;
 
                     _info(
@@ -5074,7 +5078,7 @@ public sealed class LadderMapService
                         $"goalDistance={goalDistanceFromBot:0.###}; horizontalSpeed={horizontalSpeed:0.###}; " +
                         $"stalledFor={Config.LadderTraversalPostExitStallRewriteSeconds:0.###}s; " +
                         $"corrections={traversal.PostExitStallCorrectionCount}; " +
-                        "action=reapply-goal-repath-view-and-restart-hold");
+                        "action=reapply-goal-repath-without-resetting-hold");
                 }
             }
 
@@ -5084,7 +5088,9 @@ public sealed class LadderMapService
                 state,
                 position,
                 traversal.PostExitGoal,
-                "post-ladder goal hold");
+                "post-ladder goal hold",
+                forceViewReset:
+                    traversal.PostExitGoalWriteCount == 0);
 
             traversal.PostExitGoalLastWriteAt = now;
             traversal.PostExitGoalWriteCount++;
@@ -5111,7 +5117,10 @@ public sealed class LadderMapService
 
         bool viewStable =
             !IsPostExitViewStale(
-                bot);
+                pawn,
+                bot,
+                out _,
+                out _);
 
         if (minimumWritesDone &&
             heldLongEnough &&
@@ -5152,7 +5161,8 @@ public sealed class LadderMapService
         BotRuntimeState state,
         Vector3 position,
         Vector3 target,
-        string reason)
+        string reason,
+        bool forceViewReset = false)
     {
         PrepareBotForMovement(
             bot,
@@ -5167,30 +5177,76 @@ public sealed class LadderMapService
             state.Slot,
             reason);
 
-        HoldBotNavigationView(
-            pawn,
-            bot,
-            position,
-            target,
-            Server.CurrentTime);
+        // EyeAnglesUnderPathFinderControl=true is normal once Valve starts
+        // processing the fresh route. Do not fight that ownership every tick.
+        // Reset the view only for the first handoff write or when the actual
+        // pitch has genuinely drifted back toward the stale ladder look.
+        if (forceViewReset ||
+            IsPostExitViewStale(
+                pawn,
+                bot,
+                out _,
+                out _))
+        {
+            HoldBotNavigationView(
+                pawn,
+                bot,
+                position,
+                target,
+                Server.CurrentTime);
+        }
     }
 
     private bool IsPostExitViewStale(
-        CCSBot bot)
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        out float botLookPitch,
+        out float pawnPitch)
     {
+        botLookPitch = 0.0f;
+        pawnPitch = 0.0f;
+
+        bool botPitchKnown = false;
+        bool pawnPitchKnown = false;
+
         try
         {
-            return
-                bot.EyeAnglesUnderPathFinderControl ||
-                MathF.Abs(
-                    NormaliseAngleDegrees(
-                        bot.LookPitch)) >
-                Config.LadderTraversalPostExitViewPitchTolerance;
+            botLookPitch =
+                NormaliseAngleDegrees(
+                    bot.LookPitch);
+
+            botPitchKnown =
+                float.IsFinite(
+                    botLookPitch);
         }
         catch
         {
-            return true;
+            // Native bot state can disappear during death/map teardown.
         }
+
+        try
+        {
+            pawnPitch =
+                NormaliseAngleDegrees(
+                    pawn.EyeAngles.X);
+
+            pawnPitchKnown =
+                float.IsFinite(
+                    pawnPitch);
+        }
+        catch
+        {
+            // Pawn view can disappear during death/map teardown.
+        }
+
+        float tolerance =
+            Config.LadderTraversalPostExitViewPitchTolerance;
+
+        return
+            (botPitchKnown &&
+             MathF.Abs(botLookPitch) > tolerance) ||
+            (pawnPitchKnown &&
+             MathF.Abs(pawnPitch) > tolerance);
     }
 
     private void HoldBotNavigationView(
@@ -5391,7 +5447,8 @@ public sealed class LadderMapService
             state,
             position,
             target,
-            $"post-traversal {reason}");
+            $"post-traversal {reason}",
+            forceViewReset: true);
     }
 
     private bool MaintainPostTraversalNavigationHold(
@@ -5448,7 +5505,10 @@ public sealed class LadderMapService
 
         bool viewStale =
             IsPostExitViewStale(
-                bot);
+                pawn,
+                bot,
+                out float botLookPitch,
+                out float pawnPitch);
 
         if (goalWrong ||
             viewStale)
@@ -5464,20 +5524,32 @@ public sealed class LadderMapService
                 _info(
                     $"POST-TRAVERSAL-HOLD-RECAPTURE map={_document.Map}; slot={state.Slot}; " +
                     $"goalWrong={goalWrong}; eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
-                    $"lookPitch={NormaliseAngleDegrees(bot.LookPitch):0.###}; " +
+                    $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
                     $"corrections={hold.CorrectionCount}; reason={hold.Reason}");
             }
         }
 
-        ApplyNavigationHoldWrite(
-            pawn,
-            bot,
-            state,
-            position,
-            hold.Target,
-            $"post-traversal {hold.Reason}");
+        if (goalWrong)
+        {
+            ApplyNavigationHoldWrite(
+                pawn,
+                bot,
+                state,
+                position,
+                hold.Target,
+                $"post-traversal {hold.Reason}");
 
-        hold.WriteCount++;
+            hold.WriteCount++;
+        }
+        else if (viewStale)
+        {
+            HoldBotNavigationView(
+                pawn,
+                bot,
+                position,
+                hold.Target,
+                now);
+        }
 
         return true;
     }
@@ -6402,7 +6474,8 @@ public sealed class LadderMapService
                 state,
                 target,
                 navigationTarget,
-                "ladder trap recovery");
+                "ladder trap recovery",
+                forceViewReset: true);
 
             ScheduleRepeatedNavigationWrites(
                 state.Slot,
@@ -6457,12 +6530,19 @@ public sealed class LadderMapService
                     slot,
                     reason);
 
-                HoldBotNavigationView(
-                    pawn,
-                    bot,
-                    position,
-                    target,
-                    Server.CurrentTime);
+                if (IsPostExitViewStale(
+                        pawn,
+                        bot,
+                        out _,
+                        out _))
+                {
+                    HoldBotNavigationView(
+                        pawn,
+                        bot,
+                        position,
+                        target,
+                        Server.CurrentTime);
+                }
             }
 
             ScheduleRepeatedNavigationWrites(

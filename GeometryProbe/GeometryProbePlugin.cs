@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
@@ -36,6 +37,12 @@ public sealed class GeometryProbePlugin : BasePlugin
 
     // Eight radial samples let us see holes next to an idle/stationary bot.
     private const float NearbyRadius = 20.0f;
+
+    // Diagnostic ladder-zone context loaded from GunGameBotAI's existing
+    // ladder_maps JSON. It is used only to label/filter logs, never to move bots.
+    private const float LadderZoneRadius = 96.0f;
+    private const float LadderZoneBelowPadding = 48.0f;
+    private const float LadderZoneAbovePadding = 64.0f;
     private static readonly (string Name, float X, float Y)[] NearbyDirections =
     {
         ("E", 1.0f, 0.0f),
@@ -49,6 +56,8 @@ public sealed class GeometryProbePlugin : BasePlugin
     };
 
     private readonly Dictionary<int, BotProbeState> _states = new();
+    private readonly List<KnownLadder> _knownLadders = new();
+    private string _ladderMapSource = "none";
 
     private readonly TraceOptions _floorTraceOptions = new()
     {
@@ -62,24 +71,51 @@ public sealed class GeometryProbePlugin : BasePlugin
     private bool _enabled = true;
 
     public override string ModuleName => "Geometry Probe";
-    public override string ModuleVersion => "0.1.0";
+    public override string ModuleVersion => "0.2.0";
     public override string ModuleAuthor => "Sergey / ChatGPT";
     public override string ModuleDescription =>
         "Diagnostic-only bot floor/drop collision probe.";
 
     public override void Load(bool hotReload)
     {
+        RegisterListener<Listeners.OnMapStart>(OnMapStart);
+
+        LoadKnownLadders(
+            Server.MapName);
+
         StartTimer();
 
         Logger.LogInformation(
             "[GeometryProbe] Loaded. Diagnostic probing ENABLED. " +
-            "No movement or entity state will be modified.");
+            "No movement or entity state will be modified. knownLadders={KnownLadders}; source={Source}",
+            _knownLadders.Count,
+            _ladderMapSource);
     }
 
     public override void Unload(bool hotReload)
     {
         StopTimer();
+        RemoveListener<Listeners.OnMapStart>(OnMapStart);
         _states.Clear();
+        _knownLadders.Clear();
+    }
+
+    private void OnMapStart(string mapName)
+    {
+        _states.Clear();
+
+        LoadKnownLadders(
+            mapName);
+
+        // The diagnostic timer uses STOP_ON_MAPCHANGE, so create a new one for
+        // the new map.
+        StartTimer();
+
+        Logger.LogInformation(
+            "[GeometryProbe] MAP map={Map}; knownLadders={KnownLadders}; source={Source}",
+            mapName,
+            _knownLadders.Count,
+            _ladderMapSource);
     }
 
     [ConsoleCommand("css_geometryprobe", "Enable/disable GeometryProbe: css_geometryprobe 0|1")]
@@ -109,8 +145,9 @@ public sealed class GeometryProbePlugin : BasePlugin
     {
         command.ReplyToCommand(
             $"[GeometryProbe] enabled={_enabled}; trackedBots={_states.Count}; " +
-            $"interval={ProbeIntervalSeconds:0.###}s; traceDepth={DownTraceDepth:0.#}; " +
-            $"dangerousDrop={DangerousDrop:0.#}.");
+            $"knownLadders={_knownLadders.Count}; interval={ProbeIntervalSeconds:0.###}s; " +
+            $"traceDepth={DownTraceDepth:0.#}; dangerousDrop={DangerousDrop:0.#}; " +
+            $"ladderSource={_ladderMapSource}.");
     }
 
     private void StartTimer()
@@ -199,11 +236,12 @@ public sealed class GeometryProbePlugin : BasePlugin
                 state.Announced = true;
 
                 Logger.LogInformation(
-                    "[GeometryProbe] TRACK slot={Slot}; name={Name}; position={Position}; moveType={MoveType}",
+                    "[GeometryProbe] TRACK slot={Slot}; name={Name}; position={Position}; moveType={MoveType}; {Ladder}",
                     slot,
                     controller.PlayerName,
                     Format(origin),
-                    pawn.MoveType);
+                    pawn.MoveType,
+                    DescribeNearestLadder(origin));
             }
 
             bool onLadder =
@@ -214,14 +252,15 @@ public sealed class GeometryProbePlugin : BasePlugin
                 state.WasOnLadder != onLadder)
             {
                 Logger.LogInformation(
-                    "[GeometryProbe] {Event} slot={Slot}; name={Name}; position={Position}; velocity={Velocity}",
+                    "[GeometryProbe] {Event} slot={Slot}; name={Name}; position={Position}; velocity={Velocity}; {Ladder}",
                     onLadder
                         ? "LADDER-CONTACT"
                         : "LADDER-DETACH",
                     slot,
                     controller.PlayerName,
                     Format(origin),
-                    Format(velocity));
+                    Format(velocity),
+                    DescribeNearestLadder(origin));
             }
 
             state.HasMoveType = true;
@@ -235,6 +274,15 @@ public sealed class GeometryProbePlugin : BasePlugin
             bool grounded =
                 IsGrounded(
                     pawn);
+
+            LogLadderZone(
+                controller,
+                pawn,
+                state,
+                origin,
+                velocity,
+                current,
+                grounded);
 
             ProbeFallingState(
                 controller,
@@ -456,13 +504,14 @@ public sealed class GeometryProbePlugin : BasePlugin
 
         Logger.LogInformation(
             "[GeometryProbe] FALLING-OVER-HOLE slot={Slot}; name={Name}; " +
-            "position={Position}; velocity={Velocity}; floor={Floor}; moveType={MoveType}",
+            "position={Position}; velocity={Velocity}; floor={Floor}; moveType={MoveType}; {Ladder}",
             controller.Slot,
             controller.PlayerName,
             Format(origin),
             Format(velocity),
             FormatFloor(current),
-            pawn.MoveType);
+            pawn.MoveType,
+            DescribeNearestLadder(origin));
     }
 
     private void LogHazard(
@@ -497,7 +546,7 @@ public sealed class GeometryProbePlugin : BasePlugin
         Logger.LogInformation(
             "[GeometryProbe] {Kind} slot={Slot}; name={Name}; position={Position}; " +
             "velocity={Velocity}; currentFloor={CurrentFloor}; probe={Probe}; " +
-            "probeFloor={ProbeFloor}; {Extra}",
+            "probeFloor={ProbeFloor}; {Extra}; {Ladder}",
             kind,
             controller.Slot,
             controller.PlayerName,
@@ -506,7 +555,370 @@ public sealed class GeometryProbePlugin : BasePlugin
             FormatFloor(current),
             Format(probePoint),
             FormatFloor(probeFloor),
-            extra);
+            extra,
+            DescribeNearestLadder(origin));
+    }
+
+    private void LogLadderZone(
+        CCSPlayerController controller,
+        CCSPlayerPawn pawn,
+        BotProbeState state,
+        Vector origin,
+        Vector velocity,
+        FloorSample current,
+        bool grounded)
+    {
+        if (!TryGetNearestLadder(
+                origin,
+                out KnownLadder? ladder,
+                out float distance2D) ||
+            ladder == null)
+        {
+            return;
+        }
+
+        bool verticalMatch =
+            origin.Z >=
+                ladder.BottomZ -
+                LadderZoneBelowPadding &&
+            origin.Z <=
+                ladder.TopZ +
+                LadderZoneAbovePadding;
+
+        if (!verticalMatch ||
+            distance2D >
+                LadderZoneRadius)
+        {
+            state.InLadderZone = false;
+            return;
+        }
+
+        float now =
+            Server.CurrentTime;
+
+        bool entering =
+            !state.InLadderZone ||
+            state.LastLadderZoneId !=
+                ladder.Id;
+
+        if (!entering &&
+            now - state.LastLadderZoneLogAt <
+                0.50f)
+        {
+            return;
+        }
+
+        state.InLadderZone = true;
+        state.LastLadderZoneId = ladder.Id;
+        state.LastLadderZoneLogAt = now;
+
+        Logger.LogInformation(
+            "[GeometryProbe] LADDER-ZONE slot={Slot}; name={Name}; " +
+            "position={Position}; velocity={Velocity}; floor={Floor}; grounded={Grounded}; " +
+            "moveType={MoveType}; ladderId={LadderId}; ladderXY={Distance:0.###}; " +
+            "ladderZ={BottomZ:0.###}..{TopZ:0.###}",
+            controller.Slot,
+            controller.PlayerName,
+            Format(origin),
+            Format(velocity),
+            FormatFloor(current),
+            grounded,
+            pawn.MoveType,
+            ladder.Id,
+            distance2D,
+            ladder.BottomZ,
+            ladder.TopZ);
+    }
+
+    private void LoadKnownLadders(
+        string mapName)
+    {
+        _knownLadders.Clear();
+        _ladderMapSource = "none";
+
+        if (string.IsNullOrWhiteSpace(
+                mapName))
+        {
+            return;
+        }
+
+        try
+        {
+            DirectoryInfo? moduleDirectory =
+                new(
+                    ModuleDirectory);
+
+            DirectoryInfo? pluginsDirectory =
+                moduleDirectory.Parent;
+
+            if (pluginsDirectory == null ||
+                !pluginsDirectory.Exists)
+            {
+                return;
+            }
+
+            string fileName =
+                SanitiseMapName(
+                    mapName) +
+                ".json";
+
+            List<string> candidates =
+                new();
+
+            string direct =
+                Path.Combine(
+                    pluginsDirectory.FullName,
+                    "GunGameBotAI",
+                    "ladder_maps",
+                    fileName);
+
+            if (File.Exists(direct))
+                candidates.Add(direct);
+
+            foreach (DirectoryInfo directory in
+                     pluginsDirectory.EnumerateDirectories())
+            {
+                string candidate =
+                    Path.Combine(
+                        directory.FullName,
+                        "ladder_maps",
+                        fileName);
+
+                if (File.Exists(candidate) &&
+                    !candidates.Contains(
+                        candidate,
+                        StringComparer.OrdinalIgnoreCase))
+                {
+                    candidates.Add(candidate);
+                }
+            }
+
+            string? path =
+                candidates.FirstOrDefault();
+
+            if (path == null)
+            {
+                Logger.LogInformation(
+                    "[GeometryProbe] No GunGameBotAI ladder map found for map={Map}. " +
+                    "Geometry detection remains active without ladder labels.",
+                    mapName);
+
+                return;
+            }
+
+            using JsonDocument document =
+                JsonDocument.Parse(
+                    File.ReadAllText(path));
+
+            if (!document.RootElement.TryGetProperty(
+                    "Ladders",
+                    out JsonElement ladders) ||
+                ladders.ValueKind !=
+                    JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (JsonElement item in
+                     ladders.EnumerateArray())
+            {
+                if (!TryReadInt(
+                        item,
+                        "Id",
+                        out int id) ||
+                    !TryReadPoint(
+                        item,
+                        "BottomMount",
+                        out float x,
+                        out float y,
+                        out float z))
+                {
+                    continue;
+                }
+
+                float bottomZ =
+                    TryReadFloat(
+                        item,
+                        "BottomZ",
+                        out float parsedBottomZ)
+                        ? parsedBottomZ
+                        : z;
+
+                float topZ =
+                    TryReadFloat(
+                        item,
+                        "TopZ",
+                        out float parsedTopZ)
+                        ? parsedTopZ
+                        : z;
+
+                if (topZ < bottomZ)
+                    (bottomZ, topZ) =
+                        (topZ, bottomZ);
+
+                _knownLadders.Add(
+                    new KnownLadder(
+                        id,
+                        x,
+                        y,
+                        bottomZ,
+                        topZ));
+            }
+
+            _ladderMapSource = path;
+        }
+        catch (Exception exception)
+        {
+            _ladderMapSource = "load-failed";
+
+            Logger.LogWarning(
+                exception,
+                "[GeometryProbe] Could not load GunGameBotAI ladder map for {Map}. " +
+                "Geometry detection remains active without ladder labels.",
+                mapName);
+        }
+    }
+
+    private bool TryGetNearestLadder(
+        Vector origin,
+        out KnownLadder? ladder,
+        out float distance2D)
+    {
+        ladder = null;
+        distance2D =
+            float.PositiveInfinity;
+
+        foreach (KnownLadder candidate in
+                 _knownLadders)
+        {
+            float dx =
+                origin.X -
+                candidate.X;
+
+            float dy =
+                origin.Y -
+                candidate.Y;
+
+            float distance =
+                MathF.Sqrt(
+                    dx * dx +
+                    dy * dy);
+
+            if (distance >=
+                distance2D)
+            {
+                continue;
+            }
+
+            ladder = candidate;
+            distance2D = distance;
+        }
+
+        return ladder != null;
+    }
+
+    private string DescribeNearestLadder(
+        Vector origin)
+    {
+        if (!TryGetNearestLadder(
+                origin,
+                out KnownLadder? ladder,
+                out float distance2D) ||
+            ladder == null)
+        {
+            return "nearestLadder=none";
+        }
+
+        bool inZone =
+            distance2D <=
+                LadderZoneRadius &&
+            origin.Z >=
+                ladder.BottomZ -
+                LadderZoneBelowPadding &&
+            origin.Z <=
+                ladder.TopZ +
+                LadderZoneAbovePadding;
+
+        return
+            $"nearestLadder={ladder.Id}; ladderXY={distance2D:0.###}; " +
+            $"ladderZ={ladder.BottomZ:0.###}..{ladder.TopZ:0.###}; " +
+            $"inLadderZone={inZone}";
+    }
+
+    private static bool TryReadInt(
+        JsonElement parent,
+        string propertyName,
+        out int value)
+    {
+        value = 0;
+
+        return
+            parent.TryGetProperty(
+                propertyName,
+                out JsonElement element) &&
+            element.TryGetInt32(
+                out value);
+    }
+
+    private static bool TryReadFloat(
+        JsonElement parent,
+        string propertyName,
+        out float value)
+    {
+        value = 0.0f;
+
+        return
+            parent.TryGetProperty(
+                propertyName,
+                out JsonElement element) &&
+            element.TryGetSingle(
+                out value);
+    }
+
+    private static bool TryReadPoint(
+        JsonElement parent,
+        string propertyName,
+        out float x,
+        out float y,
+        out float z)
+    {
+        x = 0.0f;
+        y = 0.0f;
+        z = 0.0f;
+
+        return
+            parent.TryGetProperty(
+                propertyName,
+                out JsonElement point) &&
+            TryReadFloat(
+                point,
+                "X",
+                out x) &&
+            TryReadFloat(
+                point,
+                "Y",
+                out y) &&
+            TryReadFloat(
+                point,
+                "Z",
+                out z);
+    }
+
+    private static string SanitiseMapName(
+        string mapName)
+    {
+        HashSet<char> invalid =
+            new(
+                Path.GetInvalidFileNameChars());
+
+        return new string(
+            mapName
+                .Select(
+                    character =>
+                        invalid.Contains(character)
+                            ? '_'
+                            : character)
+                .ToArray());
     }
 
     private FloorSample ProbeFloor(
@@ -651,5 +1063,16 @@ public sealed class GeometryProbePlugin : BasePlugin
 
         public bool FallingHazardActive { get; set; }
         public float LastFallingLogAt { get; set; } = float.NegativeInfinity;
+
+        public bool InLadderZone { get; set; }
+        public int LastLadderZoneId { get; set; } = -1;
+        public float LastLadderZoneLogAt { get; set; } = float.NegativeInfinity;
     }
+
+    private sealed record KnownLadder(
+        int Id,
+        float X,
+        float Y,
+        float BottomZ,
+        float TopZ);
 }

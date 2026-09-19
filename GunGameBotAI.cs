@@ -28,6 +28,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly GrenadeLevelService _grenadeLevel;
     private readonly WeaponActivationService _weaponActivation;
     private readonly KnifeRushService _knifeRush;
+    private readonly GeometrySafetyService _geometrySafety;
     private LadderMapService? _ladderMap;
     private readonly Dictionary<string, float> _lastErrorAt = new();
     private const float BotSpawnGraceSeconds = 0.40f;
@@ -65,10 +66,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _grenadeLevel = new GrenadeLevelService(_corrections);
         _weaponActivation = new WeaponActivationService(new NativeSelectItemWeaponSwitchBackend(), _corrections);
         _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
+        _geometrySafety = new GeometrySafetyService(
+            message => Logger.LogInformation("[GunGameBotAI][GEOMETRY] {Message}", message));
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.13";
+    public override string ModuleVersion => "0.7.14";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -156,6 +159,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         StopSharedTimers();
         _ladderMap?.Shutdown();
         _ladderMap = null;
+        _geometrySafety.Reset();
         ReleaseAllKnownButtonPulses();
         _enabled = false;
         _buttonPulses.CancelAll();
@@ -330,6 +334,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
+
+                _geometrySafety.Observe(
+                    controller,
+                    pawn,
+                    _ladderMap?.Ladders ??
+                        Array.Empty<PhysicalLadder>(),
+                    now);
 
                 bool ladderTraversalActive =
                     _ladderMap?.ObserveAndMaybeStartTraversal(
@@ -749,6 +760,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         _botSpawnGrace.Remove(playerSlot);
         _ladderMap?.RemoveSlot(playerSlot, "disconnect");
+        _geometrySafety.RemoveSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
 
@@ -806,6 +818,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
             _botSpawnGrace.Remove(slot);
             _ladderMap?.RemoveSlot(slot, "player-death");
+            _geometrySafety.RemoveSlot(slot);
             _registry.Remove(slot);
         }
 
@@ -1154,6 +1167,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _registry.ResetAll();
         _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();
+        _geometrySafety.Reset();
         _knifeRush.ResetStatistics();
     }
 
@@ -1168,6 +1182,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _combatMovement.Config = Config;
         _grenadeLevel.Config = Config;
         _knifeRush.Config = Config;
+        _geometrySafety.Config = Config;
     }
 
     private void PersistConfig(CommandInfo command)
@@ -1204,7 +1219,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +
             $"learning=manual-only; manualTeach={(_ladderMap?.ManualTeachingActive == true ? "enabled" : "disabled")}; " +
-            $"traversal={Config.LadderEntryJumpEnabled}.");
+            $"traversal={Config.LadderEntryJumpEnabled}; " +
+            $"geometrySafety={Config.GeometrySafetyDetectionEnabled}; geometryTracked={_geometrySafety.TrackedCount}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
 

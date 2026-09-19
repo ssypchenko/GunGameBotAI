@@ -68,7 +68,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.11";
+    public override string ModuleVersion => "0.7.12";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -938,6 +938,36 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] Reloaded ladder map '{_ladderMap.CurrentMap}'; physicalLadders={_ladderMap.LadderCount}.");
     }
 
+    [ConsoleCommand("css_ggbotai_ladder_teach", "Show or set explicit manual ladder teaching mode.")]
+    [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnLadderTeachCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (_ladderMap == null)
+        {
+            command.ReplyToCommand("[GunGameBotAI] Ladder map service is unavailable.");
+            return;
+        }
+
+        if (command.ArgCount < 2)
+        {
+            command.ReplyToCommand(
+                $"[GunGameBotAI] manual ladder teaching={(_ladderMap.ManualTeachingActive ? "enabled" : "disabled")}.");
+            return;
+        }
+
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_ladder_teach 0|1");
+            return;
+        }
+
+        _ladderMap.SetManualTeachingActive(enabled);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] manual ladder teaching={(enabled ? "enabled" : "disabled")}; " +
+            $"trusted JSON persistence={(enabled ? "ARMED" : "LOCKED")}.");
+    }
+
     [ConsoleCommand("css_ggbotai_ladder_jump", "Enable or disable proactive learned-ladder traversal.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnLadderJumpCommand(CCSPlayerController? player, CommandInfo command)
@@ -1173,7 +1203,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +
-            $"learning=manual-only; traversal={Config.LadderEntryJumpEnabled}.");
+            $"learning=manual-only; manualTeach={(_ladderMap?.ManualTeachingActive == true ? "enabled" : "disabled")}; " +
+            $"traversal={Config.LadderEntryJumpEnabled}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
 

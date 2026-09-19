@@ -243,6 +243,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _buttonPulses.Cancel(slot);
         _registry.Remove(slot);
         _ladderMap?.RemoveSlot(slot, "spawn-grace");
+        _geometrySafety.RemoveSlot(slot);
     }
 
     private bool IsBotInSpawnGrace(
@@ -880,6 +881,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
             _botSpawnGrace.Remove(slot);
             _ladderMap?.RemoveSlot(slot, "bot-takeover");
+            _geometrySafety.RemoveSlot(slot);
             _registry.DeactivateActuator(slot);
         }
 

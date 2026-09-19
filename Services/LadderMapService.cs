@@ -6457,10 +6457,12 @@ public sealed class LadderMapService
                     slot,
                     reason);
 
-                WriteViewTowardNavigationTarget(
+                HoldBotNavigationView(
                     pawn,
+                    bot,
                     position,
-                    target);
+                    target,
+                    Server.CurrentTime);
             }
 
             ScheduleRepeatedNavigationWrites(

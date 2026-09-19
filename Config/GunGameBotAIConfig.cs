@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 16;
+    public override int Version { get; set; } = 17;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -78,9 +78,18 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalAcquireDistance { get; set; } = 80.0f;
     public float LadderTraversalEntryMaxVerticalDelta { get; set; } = 40.0f;
     public float LadderTraversalApproachDot { get; set; } = 0.35f;
+
+    // v17: TowardDot alone can still be high on a side approach. Require the
+    // bot velocity to follow the learned human approach vector as well.
+    public float LadderTraversalApproachDirectionDotMinimum { get; set; } = 0.85f;
+
     public float LadderTraversalCorridorHalfWidth { get; set; } = 24.0f;
     public float LadderTraversalJumpLeadDistance { get; set; } = 24.0f;
     public float LadderTraversalJumpWindow { get; set; } = 8.0f;
+
+    // Successful entries occurred around 25 units. The bad overshoot case
+    // triggered near the previous 32-unit edge.
+    public float LadderTraversalJumpMaximumAlongDistance { get; set; } = 28.0f;
     public int LadderEntryJumpPulseTicks { get; set; } = 3;
 
     // Traversal control. The human trace showed the full successful movement
@@ -265,9 +274,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalAcquireDistance = Clamp(LadderTraversalAcquireDistance, 32.0f, 180.0f, 80.0f, nameof(LadderTraversalAcquireDistance), warn);
         LadderTraversalEntryMaxVerticalDelta = Clamp(LadderTraversalEntryMaxVerticalDelta, 8.0f, 128.0f, 40.0f, nameof(LadderTraversalEntryMaxVerticalDelta), warn);
         LadderTraversalApproachDot = Clamp(LadderTraversalApproachDot, -1.0f, 1.0f, 0.35f, nameof(LadderTraversalApproachDot), warn);
+        LadderTraversalApproachDirectionDotMinimum = Clamp(LadderTraversalApproachDirectionDotMinimum, 0.0f, 1.0f, 0.85f, nameof(LadderTraversalApproachDirectionDotMinimum), warn);
         LadderTraversalCorridorHalfWidth = Clamp(LadderTraversalCorridorHalfWidth, 8.0f, 64.0f, 24.0f, nameof(LadderTraversalCorridorHalfWidth), warn);
         LadderTraversalJumpLeadDistance = Clamp(LadderTraversalJumpLeadDistance, 8.0f, 64.0f, 24.0f, nameof(LadderTraversalJumpLeadDistance), warn);
         LadderTraversalJumpWindow = Clamp(LadderTraversalJumpWindow, 3.0f, 24.0f, 8.0f, nameof(LadderTraversalJumpWindow), warn);
+        LadderTraversalJumpMaximumAlongDistance = Clamp(LadderTraversalJumpMaximumAlongDistance, 8.0f, 48.0f, 28.0f, nameof(LadderTraversalJumpMaximumAlongDistance), warn);
         LadderEntryJumpPulseTicks = Clamp(LadderEntryJumpPulseTicks, 1, 12, 3, nameof(LadderEntryJumpPulseTicks), warn);
 
         LadderTraversalMountTimeoutSeconds = Clamp(LadderTraversalMountTimeoutSeconds, 0.5f, 4.0f, 1.50f, nameof(LadderTraversalMountTimeoutSeconds), warn);
@@ -517,6 +528,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // identity radius.
             LadderTraversalProactiveFailureCooldownSeconds = 1.50f;
             Version = 16;
+        }
+
+        if (Version < 17)
+        {
+            // Version 17 hardens side-entry behaviour and narrows the proactive
+            // jump trigger while preserving already-mounted takeover.
+            LadderTraversalApproachDirectionDotMinimum = 0.85f;
+            LadderTraversalJumpMaximumAlongDistance = 28.0f;
+            Version = 17;
         }
     }
 

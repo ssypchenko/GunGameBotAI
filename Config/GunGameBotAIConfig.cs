@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 15;
+    public override int Version { get; set; } = 16;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -168,7 +168,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Legacy/general geometry tolerance retained for learning/manual matching.
     public float LadderTraversalMountValidationRadius { get; set; } = 36.0f;
     public float LadderTraversalReferenceHardDeviation { get; set; } = 48.0f;
+    // Legacy global failure cooldown retained for config compatibility only.
+    // v16 no longer blocks all ladders after one failure.
     public float LadderTraversalFailureCooldownSeconds { get; set; } = 8.0f;
+
+    // v16: only proactive ACQUIRE/JUMP on the ladder that just failed is
+    // throttled. Other ladders, and already-mounted takeover, remain available.
+    public float LadderTraversalProactiveFailureCooldownSeconds { get; set; } = 1.50f;
 
     public bool CombatStrafeEnabled { get; set; } = true;
     public bool CounterStrafeEnabled { get; set; } = true;
@@ -316,6 +322,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalMountValidationRadius = Clamp(LadderTraversalMountValidationRadius, 12.0f, 96.0f, 36.0f, nameof(LadderTraversalMountValidationRadius), warn);
         LadderTraversalReferenceHardDeviation = Clamp(LadderTraversalReferenceHardDeviation, LadderTraversalMountValidationRadius, 160.0f, Math.Max(48.0f, LadderTraversalMountValidationRadius), nameof(LadderTraversalReferenceHardDeviation), warn);
         LadderTraversalFailureCooldownSeconds = Clamp(LadderTraversalFailureCooldownSeconds, 1.0f, 30.0f, 8.0f, nameof(LadderTraversalFailureCooldownSeconds), warn);
+        LadderTraversalProactiveFailureCooldownSeconds = Clamp(LadderTraversalProactiveFailureCooldownSeconds, 0.10f, 5.0f, 1.50f, nameof(LadderTraversalProactiveFailureCooldownSeconds), warn);
 
         KnifeRushChancePercent = Clamp(KnifeRushChancePercent, 0, 100, 50, nameof(KnifeRushChancePercent), warn);
         KnifeRushTriggerDistance = Clamp(KnifeRushTriggerDistance, 100.0f, 1000.0f, 400.0f, nameof(KnifeRushTriggerDistance), warn);
@@ -500,6 +507,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalPostExitEnemySpawnGoalEnabled = true;
             LadderTraversalPostExitGoalChangeDistance = 24.0f;
             Version = 15;
+        }
+
+        if (Version < 16)
+        {
+            // Version 16 replaces the global failure cooldown with a short
+            // per-ladder proactive cooldown, and adds a guarded recovery match
+            // for real MOVETYPE_LADDER contacts just outside the strict
+            // identity radius.
+            LadderTraversalProactiveFailureCooldownSeconds = 1.50f;
+            Version = 16;
         }
     }
 

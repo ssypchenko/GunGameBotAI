@@ -1370,6 +1370,19 @@ public sealed class LadderMapService
         }
 
         if (tracker.Traversal == null &&
+            onLadder &&
+            Config.Debug)
+        {
+            DiagnoseUnmanagedLadderContact(
+                pawn,
+                bot,
+                state,
+                tracker,
+                position,
+                now);
+        }
+
+        if (tracker.Traversal == null &&
             Config.LadderEntryJumpEnabled &&
             now >= tracker.TraversalCooldownUntil)
         {
@@ -1395,6 +1408,13 @@ public sealed class LadderMapService
                         position,
                         mountedDeviation,
                         now);
+
+                    LogBotPathState(
+                        bot,
+                        pawn,
+                        state.Slot,
+                        mountedKnown.Id,
+                        "already-mounted");
                 }
             }
             else
@@ -1418,6 +1438,13 @@ public sealed class LadderMapService
                         perpendicular,
                         towardDot,
                         now);
+
+                    LogBotPathState(
+                        bot,
+                        pawn,
+                        state.Slot,
+                        candidate.Id,
+                        "acquire");
                 }
             }
         }
@@ -1591,6 +1618,13 @@ public sealed class LadderMapService
                     ladder,
                     position,
                     now);
+
+                LogBotPathState(
+                    bot,
+                    pawn,
+                    state.Slot,
+                    ladder.Id,
+                    "mount");
             }
         }
 
@@ -1734,6 +1768,13 @@ public sealed class LadderMapService
                         velocity,
                         now))
                 {
+                    LogBotPathState(
+                        bot,
+                        pawn,
+                        state.Slot,
+                        ladder.Id,
+                        "top-exit-start");
+
                     ApplyTopExitKick(
                         pawn,
                         state,
@@ -1889,6 +1930,13 @@ public sealed class LadderMapService
                     $"kickElapsed={kickElapsed:0.###}s; velocity={Format(velocity)}; " +
                     "action=valve-ai");
 
+                LogBotPathState(
+                    bot,
+                    pawn,
+                    state.Slot,
+                    ladder.Id,
+                    "top-exit-handoff");
+
                 return true;
             }
 
@@ -1935,6 +1983,13 @@ public sealed class LadderMapService
             if (guardElapsed >=
                 Config.LadderTraversalPostExitGuardSeconds)
             {
+                LogBotPathState(
+                    bot,
+                    pawn,
+                    state.Slot,
+                    ladder.Id,
+                    "pre-success");
+
                 CompleteTraversal(
                     pawn,
                     state.Slot,
@@ -4404,6 +4459,100 @@ public sealed class LadderMapService
         }
     }
 
+    private void DiagnoseUnmanagedLadderContact(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState state,
+        BotTracker tracker,
+        Vector3 position,
+        float now)
+    {
+        if (now - tracker.LastUnmanagedLadderDiagnosticAt < 0.50f)
+            return;
+
+        tracker.LastUnmanagedLadderDiagnosticAt = now;
+
+        PhysicalLadder? mountedKnown =
+            FindKnownAtPosition(
+                pawn,
+                position,
+                out float mountedDeviation);
+
+        bool usable =
+            mountedKnown != null &&
+            mountedKnown.HasBottomApproach &&
+            IsUsableAlreadyMountedPosition(
+                mountedKnown,
+                position);
+
+        float cooldownRemaining =
+            MathF.Max(
+                0.0f,
+                tracker.TraversalCooldownUntil -
+                now);
+
+        _info(
+            $"UNMANAGED-LADDER-CONTACT map={_document.Map}; slot={state.Slot}; " +
+            $"position={Format(position)}; nearestId={(mountedKnown?.Id.ToString() ?? "none")}; " +
+            $"deviation={(float.IsFinite(mountedDeviation) ? mountedDeviation.ToString("0.###") : "n/a")}; " +
+            $"usable={usable}; suppress={tracker.SuppressTraversalUntilLadderExit}; " +
+            $"cooldownRemaining={cooldownRemaining:0.###}s; moveType={pawn.MoveType}");
+
+        LogBotPathState(
+            bot,
+            pawn,
+            state.Slot,
+            mountedKnown?.Id ?? -1,
+            "unmanaged-ladder");
+    }
+
+    private void LogBotPathState(
+        CCSBot bot,
+        CCSPlayerPawn pawn,
+        int slot,
+        int ladderId,
+        string phase)
+    {
+        if (!Config.Debug)
+            return;
+
+        try
+        {
+            CounterStrikeSharp.API.Modules.Utils.Vector goal =
+                bot.GoalPosition;
+
+            CounterStrikeSharp.API.Modules.Utils.Vector lookAt =
+                bot.LookAtSpot;
+
+            _info(
+                $"BOT-PATH map={_document.Map}; phase={phase}; slot={slot}; id={ladderId}; " +
+                $"moveType={pawn.MoveType}; pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
+                $"goal={FormatSchemaVector(goal)}; eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
+                $"running={bot.IsRunning}; stopping={bot.IsStopping}; crouching={bot.IsCrouching}; " +
+                $"stuck={bot.IsStuck}; stuckTimestamp={bot.StuckTimestamp:0.###}; " +
+                $"forwardSpeed={bot.ForwardSpeed:0.###}; leftSpeed={bot.LeftSpeed:0.###}; " +
+                $"verticalSpeed={bot.VerticalSpeed:0.###}; lookPitch={bot.LookPitch:0.###}; " +
+                $"lookYaw={bot.LookYaw:0.###}; lookAt={FormatSchemaVector(lookAt)}; " +
+                $"aimingAtEnemy={bot.IsAimingAtEnemy}; enemyVisible={bot.IsEnemyVisible}");
+        }
+        catch (Exception exception)
+        {
+            _info(
+                $"BOT-PATH map={_document.Map}; phase={phase}; slot={slot}; id={ladderId}; " +
+                $"state=unavailable; error={exception.Message}");
+        }
+    }
+
+    private static string FormatSchemaVector(
+        CounterStrikeSharp.API.Modules.Utils.Vector? value)
+    {
+        if (value == null)
+            return "n/a";
+
+        return
+            $"({value.X:0.###},{value.Y:0.###},{value.Z:0.###})";
+    }
+
     private PhysicalLadder? FindApproachingKnownLadder(
         Vector3 position,
         Vector3 velocity,
@@ -5049,6 +5198,8 @@ public sealed class LadderMapService
 
         public bool SuppressTraversalUntilLadderExit { get; set; }
         public float TraversalCooldownUntil { get; set; } =
+            float.NegativeInfinity;
+        public float LastUnmanagedLadderDiagnosticAt { get; set; } =
             float.NegativeInfinity;
     }
 

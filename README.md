@@ -23,6 +23,7 @@ included until its exact signature is verified against the target live build.
 - `css_ggbotai_enable` — show runtime state.
 - `css_ggbotai_enable 0|1` — soft-disable or enable the managed runtime.
 - `css_ggbotai_status` — show runtime, timer, bot, mode, and weapon-backend state.
+- `css_ggbotai_ladder_teach 0|1` — explicitly unlock/lock trusted human ladder persistence. Teaching is OFF after plugin load and cannot be armed by configuration.
 - `css_ggbotai_debug 0|1` — toggle diagnostic logging.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.

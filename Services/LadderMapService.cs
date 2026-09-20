@@ -5242,11 +5242,20 @@ public sealed class LadderMapService
         float tolerance =
             Config.LadderTraversalPostExitViewPitchTolerance;
 
+        // The live trace proved pawn.EyeAngles.X is not a reliable signal for
+        // stale bot look state after a ladder handoff. It can sit at quantised
+        // values such as +/-8.111, +/-12.207 or even larger animation/view
+        // offsets while CCSBot.LookPitch and the visible aim are already sane.
+        // Using pawn pitch here caused a false recapture loop that repeatedly
+        // snapped yaw back to our navigation target and produced weapon jitter.
+        //
+        // Keep pawnPitch only as a diagnostic output. The CCSBot look state is
+        // the authoritative trigger for a real stale ladder-look correction.
+        _ = pawnPitchKnown;
+
         return
-            (botPitchKnown &&
-             MathF.Abs(botLookPitch) > tolerance) ||
-            (pawnPitchKnown &&
-             MathF.Abs(pawnPitch) > tolerance);
+            botPitchKnown &&
+            MathF.Abs(botLookPitch) > tolerance;
     }
 
     private void HoldBotNavigationView(

@@ -2125,7 +2125,7 @@ public sealed class LadderMapService
 
             if (guardElapsed >=
                     Config.LadderTraversalPostExitGuardSeconds &&
-                traversal.PostExitNavigationResolved)
+                IsGrounded(pawn))
             {
                 LogBotPathState(
                     bot,
@@ -2134,6 +2134,11 @@ public sealed class LadderMapService
                     ladder.Id,
                     "pre-success");
 
+                string successReason =
+                    traversal.PostExitNavigationResolved
+                        ? "top-exit-navigation-stable"
+                        : "top-exit-safe-release";
+
                 CompleteTraversal(
                     pawn,
                     state.Slot,
@@ -2141,7 +2146,7 @@ public sealed class LadderMapService
                     ladder,
                     position,
                     progress,
-                    "top-exit-navigation-stable",
+                    successReason,
                     now);
 
                 return true;
@@ -3224,25 +3229,11 @@ public sealed class LadderMapService
                 now);
         }
 
-        if (traversal != null &&
-            traversal.PostExitGoalIssued)
-        {
-            tracker.PostTraversalNavigation =
-                new PostTraversalNavigationSession
-                {
-                    Target = traversal.PostExitGoal,
-                    StartedAt = now,
-                    ExpiresAt =
-                        now +
-                        Config.LadderTraversalPostTraversalHoldSeconds,
-                    Reason = "post-success"
-                };
-
-            _info(
-                $"POST-TRAVERSAL-HOLD-START map={_document.Map}; slot={slot}; id={ladder.Id}; " +
-                $"target={Format(traversal.PostExitGoal)}; seconds={Config.LadderTraversalPostTraversalHoldSeconds:0.###}; " +
-                "reason=post-success");
-        }
+        // A successful physical ladder traversal is the handoff boundary.
+        // Do not carry a temporary post-exit goal into another multi-second
+        // watchdog: that kept already-safe bots under plugin ownership and
+        // prevented Valve from selecting its next normal task.
+        tracker.PostTraversalNavigation = null;
 
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
@@ -4934,14 +4925,43 @@ public sealed class LadderMapService
             if (!readyForFallback)
                 return;
 
-            if (!Config.LadderTraversalPostExitEnemySpawnGoalEnabled ||
-                !TryGetOpposingSpawnGoal(
-                    pawn,
-                    position,
-                    out Vector3 target,
-                    out string spawnClass))
+            Vector3 target;
+            string goalSource;
+
+            // Prefer the human-taught safe landing on the same upper floor.
+            // Live traces showed that forcing a spawn goal hundreds of units
+            // below the bot can pull Source 2 straight back into the just-used
+            // ladder path and, in one case, coincided with the pawn appearing
+            // at the remote goal coordinates. Keep post-exit repair local.
+            if (ladder.ManualLanding != null)
             {
-                return;
+                target =
+                    ladder.ManualLanding.ToVector3();
+
+                if (!float.IsFinite(target.X) ||
+                    !float.IsFinite(target.Y) ||
+                    !float.IsFinite(target.Z))
+                {
+                    return;
+                }
+
+                goalSource =
+                    "manual-landing";
+            }
+            else
+            {
+                if (!Config.LadderTraversalPostExitEnemySpawnGoalEnabled ||
+                    !TryGetOpposingSpawnGoal(
+                        pawn,
+                        position,
+                        out target,
+                        out string spawnClass))
+                {
+                    return;
+                }
+
+                goalSource =
+                    $"spawn:{spawnClass}";
             }
 
             traversal.PostExitGoalIssued = true;
@@ -4955,9 +4975,9 @@ public sealed class LadderMapService
 
             _info(
                 $"POST-LADDER-GOAL map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                $"spawnClass={spawnClass}; target={Format(target)}; from={Format(position)}; " +
+                $"source={goalSource}; target={Format(target)}; from={Format(position)}; " +
                 $"pathIndexBefore={bot.PathIndex}; oldGoal={Format(currentGoal)}; " +
-                "action=begin-repeated-goal-hold");
+                "action=begin-local-egress-hold");
         }
 
         if (!traversal.PostExitGoalIssued)
@@ -4977,11 +4997,20 @@ public sealed class LadderMapService
                 pawn,
                 bot,
                 out float botLookPitch,
-                out float pawnPitch);
+                out float pawnPitch,
+                out bool hardPawnPitchStale);
 
         if (viewStale)
         {
             traversal.PostExitViewCorrectionCount++;
+
+            bool botPitchStale =
+                MathF.Abs(botLookPitch) >
+                    Config.LadderTraversalPostExitViewPitchTolerance;
+
+            bool pitchOnly =
+                hardPawnPitchStale &&
+                !botPitchStale;
 
             if (now -
                     traversal.PostExitLastViewDiagnosticAt >=
@@ -4993,18 +5022,28 @@ public sealed class LadderMapService
                     $"POST-LADDER-VIEW-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
                     $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
-                    $"corrections={traversal.PostExitViewCorrectionCount}; action=correct-real-pitch");
+                    $"corrections={traversal.PostExitViewCorrectionCount}; " +
+                    $"action={(pitchOnly ? "correct-pawn-pitch-only" : "correct-bot-view")}");
             }
 
             traversal.PostExitNavigationStableSince =
                 float.NegativeInfinity;
 
-            HoldBotNavigationView(
-                pawn,
-                bot,
-                position,
-                traversal.PostExitGoal,
-                now);
+            if (pitchOnly)
+            {
+                CorrectPawnPitchOnly(
+                    pawn,
+                    bot);
+            }
+            else
+            {
+                HoldBotNavigationView(
+                    pawn,
+                    bot,
+                    position,
+                    traversal.PostExitGoal,
+                    now);
+            }
         }
 
         float goalDistanceFromBot =
@@ -5120,6 +5159,7 @@ public sealed class LadderMapService
                 pawn,
                 bot,
                 out _,
+                out _,
                 out _);
 
         if (minimumWritesDone &&
@@ -5179,14 +5219,7 @@ public sealed class LadderMapService
 
         // EyeAnglesUnderPathFinderControl=true is normal once Valve starts
         // processing the fresh route. Do not fight that ownership every tick.
-        // Reset the view only for the first handoff write or when the actual
-        // pitch has genuinely drifted back toward the stale ladder look.
-        if (forceViewReset ||
-            IsPostExitViewStale(
-                pawn,
-                bot,
-                out _,
-                out _))
+        if (forceViewReset)
         {
             HoldBotNavigationView(
                 pawn,
@@ -5194,6 +5227,37 @@ public sealed class LadderMapService
                 position,
                 target,
                 Server.CurrentTime);
+
+            return;
+        }
+
+        if (IsPostExitViewStale(
+                pawn,
+                bot,
+                out float botLookPitch,
+                out _,
+                out bool hardPawnPitchStale))
+        {
+            bool botPitchStale =
+                MathF.Abs(botLookPitch) >
+                    Config.LadderTraversalPostExitViewPitchTolerance;
+
+            if (hardPawnPitchStale &&
+                !botPitchStale)
+            {
+                CorrectPawnPitchOnly(
+                    pawn,
+                    bot);
+            }
+            else
+            {
+                HoldBotNavigationView(
+                    pawn,
+                    bot,
+                    position,
+                    target,
+                    Server.CurrentTime);
+            }
         }
     }
 
@@ -5201,10 +5265,12 @@ public sealed class LadderMapService
         CCSPlayerPawn pawn,
         CCSBot bot,
         out float botLookPitch,
-        out float pawnPitch)
+        out float pawnPitch,
+        out bool hardPawnPitchStale)
     {
         botLookPitch = 0.0f;
         pawnPitch = 0.0f;
+        hardPawnPitchStale = false;
 
         bool botPitchKnown = false;
         bool pawnPitchKnown = false;
@@ -5226,36 +5292,94 @@ public sealed class LadderMapService
 
         try
         {
-            pawnPitch =
+            float eyePitch =
                 NormaliseAngleDegrees(
                     pawn.EyeAngles.X);
 
-            pawnPitchKnown =
+            float viewPitch =
+                NormaliseAngleDegrees(
+                    pawn.V_angle.X);
+
+            bool eyeKnown =
                 float.IsFinite(
-                    pawnPitch);
+                    eyePitch);
+
+            bool viewKnown =
+                float.IsFinite(
+                    viewPitch);
+
+            if (eyeKnown || viewKnown)
+            {
+                pawnPitchKnown = true;
+
+                if (!eyeKnown)
+                {
+                    pawnPitch = viewPitch;
+                }
+                else if (!viewKnown)
+                {
+                    pawnPitch = eyePitch;
+                }
+                else
+                {
+                    pawnPitch =
+                        MathF.Abs(viewPitch) >
+                            MathF.Abs(eyePitch)
+                            ? viewPitch
+                            : eyePitch;
+                }
+            }
         }
         catch
         {
             // Pawn view can disappear during death/map teardown.
         }
 
-        float tolerance =
+        float botTolerance =
             Config.LadderTraversalPostExitViewPitchTolerance;
 
-        // The live trace proved pawn.EyeAngles.X is not a reliable signal for
-        // stale bot look state after a ladder handoff. It can sit at quantised
-        // values such as +/-8.111, +/-12.207 or even larger animation/view
-        // offsets while CCSBot.LookPitch and the visible aim are already sane.
-        // Using pawn pitch here caused a false recapture loop that repeatedly
-        // snapped yaw back to our navigation target and produced weapon jitter.
-        //
-        // Keep pawnPitch only as a diagnostic output. The CCSBot look state is
-        // the authoritative trigger for a real stale ladder-look correction.
-        _ = pawnPitchKnown;
+        if (pawnPitchKnown)
+        {
+            hardPawnPitchStale =
+                MathF.Abs(pawnPitch) >=
+                    Config.LadderTraversalPostExitPawnPitchHardTolerance;
+        }
+
+        bool botPitchStale =
+            botPitchKnown &&
+            MathF.Abs(botLookPitch) >
+                botTolerance;
 
         return
-            botPitchKnown &&
-            MathF.Abs(botLookPitch) > tolerance;
+            botPitchStale ||
+            hardPawnPitchStale;
+    }
+
+    private static void CorrectPawnPitchOnly(
+        CCSPlayerPawn pawn,
+        CCSBot bot)
+    {
+        try
+        {
+            bot.LookPitch = 0.0f;
+            bot.LookPitchVel = 0.0f;
+        }
+        catch
+        {
+            // Native bot state can disappear during death/map teardown.
+        }
+
+        try
+        {
+            // Preserve yaw completely. The previous full view recapture changed
+            // yaw every frame and was the direct source of weapon jitter.
+            pawn.EyeAngles.X = 0.0f;
+            pawn.V_angle.X = 0.0f;
+        }
+        catch
+        {
+            // Retry only if a later sample is still an extreme pitch.
+        }
     }
 
     private void HoldBotNavigationView(
@@ -5517,7 +5641,8 @@ public sealed class LadderMapService
                 pawn,
                 bot,
                 out float botLookPitch,
-                out float pawnPitch);
+                out float pawnPitch,
+                out bool hardPawnPitchStale);
 
         if (goalWrong ||
             viewStale)
@@ -5552,12 +5677,26 @@ public sealed class LadderMapService
         }
         else if (viewStale)
         {
-            HoldBotNavigationView(
-                pawn,
-                bot,
-                position,
-                hold.Target,
-                now);
+            bool botPitchStale =
+                MathF.Abs(botLookPitch) >
+                    Config.LadderTraversalPostExitViewPitchTolerance;
+
+            if (hardPawnPitchStale &&
+                !botPitchStale)
+            {
+                CorrectPawnPitchOnly(
+                    pawn,
+                    bot);
+            }
+            else
+            {
+                HoldBotNavigationView(
+                    pawn,
+                    bot,
+                    position,
+                    hold.Target,
+                    now);
+            }
         }
 
         return true;

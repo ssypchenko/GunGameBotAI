@@ -29,6 +29,14 @@ public sealed class LadderMapService
     private const float PreviousSampleMaxAge = 0.35f;
     private const float BottomSampleTolerance = 14.0f;
 
+    // Do not declare the climb complete while the live trace still shows the
+    // old Valve ladder view returning. A real Valve ladder completion advances
+    // PathIndex; alternatively, a quiet period with no hard pawn-pitch relapse
+    // is accepted as evidence that a fresh repath cleared the private ladder
+    // pointer even when the exposed PathIndex happens to remain unchanged.
+    private const float PostExitHardPitchQuietBeforeReleaseSeconds = 0.75f;
+    private const float PostExitReleaseDeferLogIntervalSeconds = 0.50f;
+
     // Manual teaching samples the human every server frame in normal operation.
     // Keep a short off-ladder history so BottomEntry is a useful point before
     // the mount rather than merely the last frame 0.1-0.5 units from the ladder.
@@ -2127,6 +2135,54 @@ public sealed class LadderMapService
                     Config.LadderTraversalPostExitGuardSeconds &&
                 IsGrounded(pawn))
             {
+                bool pathIndexAdvanced =
+                    traversal.PostExitHandoffPathIndex >= 0 &&
+                    bot.PathIndex !=
+                        traversal.PostExitHandoffPathIndex;
+
+                float hardPitchAge =
+                    float.IsFinite(
+                        traversal.PostExitLastHardPawnPitchAt)
+                        ? now -
+                          traversal.PostExitLastHardPawnPitchAt
+                        : float.PositiveInfinity;
+
+                bool hardPitchQuiet =
+                    hardPitchAge >=
+                    PostExitHardPitchQuietBeforeReleaseSeconds;
+
+                bool releaseReady =
+                    traversal.PostExitNavigationResolved ||
+                    pathIndexAdvanced ||
+                    hardPitchQuiet;
+
+                if (!releaseReady)
+                {
+                    if (now -
+                            traversal.PostExitLastReleaseDeferLogAt >=
+                        PostExitReleaseDeferLogIntervalSeconds)
+                    {
+                        traversal.PostExitLastReleaseDeferLogAt = now;
+
+                        _info(
+                            $"POST-LADDER-RELEASE-DEFER map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                            $"handoffPathIndex={traversal.PostExitHandoffPathIndex}; currentPathIndex={bot.PathIndex}; " +
+                            $"handoffPathLadderEnd={(float.IsFinite(traversal.PostExitHandoffPathLadderEnd) ? traversal.PostExitHandoffPathLadderEnd.ToString("0.###") : "n/a")}; " +
+                            $"currentPathLadderEnd={bot.PathLadderEnd:0.###}; hardPitchAge={hardPitchAge:0.###}s; " +
+                            $"navigationResolved={traversal.PostExitNavigationResolved}; " +
+                            "action=keep-post-exit-guard-until-valve-clears-ladder-state");
+
+                        LogBotPathState(
+                            bot,
+                            pawn,
+                            state.Slot,
+                            ladder.Id,
+                            "release-deferred");
+                    }
+
+                    return true;
+                }
+
                 LogBotPathState(
                     bot,
                     pawn,
@@ -2137,11 +2193,12 @@ public sealed class LadderMapService
                 string successReason =
                     traversal.PostExitNavigationResolved
                         ? "top-exit-navigation-stable"
-                        : "top-exit-safe-release";
+                        : pathIndexAdvanced
+                            ? "top-exit-valve-path-advanced"
+                            : "top-exit-view-stable-release";
 
                 CompleteTraversal(
                     pawn,
-                    bot,
                     state.Slot,
                     tracker,
                     ladder,
@@ -3160,6 +3217,8 @@ public sealed class LadderMapService
         traversal.PostExitStallCorrectionCount = 0;
         traversal.PostExitViewCorrectionCount = 0;
         traversal.PostExitLastViewDiagnosticAt = float.NegativeInfinity;
+        traversal.PostExitLastHardPawnPitchAt = float.NegativeInfinity;
+        traversal.PostExitLastReleaseDeferLogAt = float.NegativeInfinity;
         traversal.PostExitGoalIssued = false;
         traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
         traversal.PostExitGoalLastWriteAt = float.NegativeInfinity;
@@ -3197,7 +3256,6 @@ public sealed class LadderMapService
 
     private void CompleteTraversal(
         CCSPlayerPawn pawn,
-        CCSBot bot,
         int slot,
         BotTracker tracker,
         PhysicalLadder ladder,
@@ -3211,13 +3269,6 @@ public sealed class LadderMapService
 
         if (traversal != null)
         {
-            ReleaseStalePostExitLadderPathIfNeeded(
-                pawn,
-                bot,
-                slot,
-                ladder,
-                position);
-
             ReleaseHumanClimbControl(
                 pawn,
                 traversal);
@@ -3252,110 +3303,6 @@ public sealed class LadderMapService
         // a legitimate move toward another ladder should remain available.
         tracker.ProactiveFailureCooldownByLadder.Remove(
             ladder.Id);
-    }
-
-    private void ReleaseStalePostExitLadderPathIfNeeded(
-        CCSPlayerPawn pawn,
-        CCSBot bot,
-        int slot,
-        PhysicalLadder ladder,
-        Vector3 position)
-    {
-        if (ladder.ManualLanding == null)
-            return;
-
-        if (TryGetLiveBotEnemy(
-                pawn,
-                bot,
-                out _) &&
-            bot.IsAimingAtEnemy)
-        {
-            return;
-        }
-
-        bool viewStale =
-            IsPostExitViewStale(
-                pawn,
-                bot,
-                out float botLookPitch,
-                out float pawnPitch,
-                out bool hardPawnPitchStale);
-
-        if (!viewStale ||
-            !hardPawnPitchStale)
-        {
-            return;
-        }
-
-        Vector3 landing =
-            ladder.ManualLanding.ToVector3();
-
-        if (!float.IsFinite(landing.X) ||
-            !float.IsFinite(landing.Y) ||
-            !float.IsFinite(landing.Z))
-        {
-            return;
-        }
-
-        float horizontalDistance =
-            Distance2D(
-                position,
-                landing);
-
-        if (horizontalDistance >
-            Config.LadderManualLandingMaxHorizontalDistance)
-        {
-            _info(
-                $"POST-LADDER-STALE-PATH-RELEASE-SKIP map={_document.Map}; slot={slot}; id={ladder.Id}; " +
-                $"position={Format(position)}; landing={Format(landing)}; distance={horizontalDistance:0.###}; " +
-                $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; reason=landing-too-far");
-
-            return;
-        }
-
-        Vector3 releasePosition =
-            landing;
-
-        releasePosition.Z +=
-            Config.LadderTraversalRecoveryZOffset;
-
-        bool teleported = false;
-
-        try
-        {
-            pawn.Teleport(
-                position: releasePosition,
-                angles: null,
-                velocity: Vector3.Zero);
-
-            teleported = true;
-        }
-        catch
-        {
-            // Pitch/repath cleanup below is still useful even if the tiny safe
-            // reposition cannot be applied during teardown.
-        }
-
-        CorrectPawnPitchOnly(
-            pawn,
-            bot);
-
-        RequestImmediateBotRepath(
-            bot,
-            slot,
-            "post-ladder stale path release");
-
-        ScheduleRepeatedRepathWrites(
-            slot,
-            Config.LadderTraversalNavigationMinimumWrites - 1,
-            "post-ladder stale path release");
-
-        _info(
-            $"POST-LADDER-STALE-PATH-RELEASE map={_document.Map}; slot={slot}; id={ladder.Id}; " +
-            $"from={Format(position)}; to={Format(releasePosition)}; teleported={teleported}; " +
-            $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
-            $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
-            $"action=safe-landing-repath-release");
     }
 
     private void FailTraversal(
@@ -5148,6 +5095,11 @@ public sealed class LadderMapService
             traversal.PostExitNavigationStableSince =
                 float.NegativeInfinity;
 
+            if (hardPawnPitchStale)
+            {
+                traversal.PostExitLastHardPawnPitchAt = now;
+            }
+
             // A stale internal ladder path can immediately restore the vertical
             // ladder view after a pawn-angle write. Do not fight it every tick:
             // that only produces visible weapon/head shaking. Correct at most
@@ -5454,11 +5406,6 @@ public sealed class LadderMapService
         {
             bot.LookPitch = 0.0f;
             bot.LookPitchVel = 0.0f;
-
-            // Separate from LookPitch in CCSBot. This is the vertical component
-            // used by the bot's look-around state and may survive a ladder
-            // handoff even when LookPitch itself is already near zero.
-            bot.LookUpAngle = 0.0f;
         }
         catch
         {
@@ -7503,6 +7450,10 @@ public sealed class LadderMapService
         public int PostExitStallCorrectionCount { get; set; }
         public int PostExitViewCorrectionCount { get; set; }
         public float PostExitLastViewDiagnosticAt { get; set; } =
+            float.NegativeInfinity;
+        public float PostExitLastHardPawnPitchAt { get; set; } =
+            float.NegativeInfinity;
+        public float PostExitLastReleaseDeferLogAt { get; set; } =
             float.NegativeInfinity;
 
         public bool PostExitGoalIssued { get; set; }

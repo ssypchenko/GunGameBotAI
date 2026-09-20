@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 22;
+    public override int Version { get; set; } = 23;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -174,6 +174,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalPostExitProgressEpsilon { get; set; } = 6.0f;
     public float LadderTraversalPostExitStallRewriteSeconds { get; set; } = 0.40f;
     public float LadderTraversalPostExitViewPitchTolerance { get; set; } = 8.0f;
+    public float LadderTraversalPostExitPawnPitchHardTolerance { get; set; } = 60.0f;
     public float LadderTraversalPostExitViewLookDistance { get; set; } = 512.0f;
     public float LadderTraversalPostTraversalHoldSeconds { get; set; } = 4.0f;
     public float LadderTraversalPostExitGoalTolerance { get; set; } = 8.0f;
@@ -358,6 +359,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         LadderTraversalPostExitProgressEpsilon = Clamp(LadderTraversalPostExitProgressEpsilon, 1.0f, 24.0f, 6.0f, nameof(LadderTraversalPostExitProgressEpsilon), warn);
         LadderTraversalPostExitStallRewriteSeconds = Clamp(LadderTraversalPostExitStallRewriteSeconds, 0.15f, 2.0f, 0.40f, nameof(LadderTraversalPostExitStallRewriteSeconds), warn);
         LadderTraversalPostExitViewPitchTolerance = Clamp(LadderTraversalPostExitViewPitchTolerance, 2.0f, 30.0f, 8.0f, nameof(LadderTraversalPostExitViewPitchTolerance), warn);
+        LadderTraversalPostExitPawnPitchHardTolerance = Clamp(LadderTraversalPostExitPawnPitchHardTolerance, 45.0f, 89.0f, 60.0f, nameof(LadderTraversalPostExitPawnPitchHardTolerance), warn);
         LadderTraversalPostExitViewLookDistance = Clamp(LadderTraversalPostExitViewLookDistance, 64.0f, 2048.0f, 512.0f, nameof(LadderTraversalPostExitViewLookDistance), warn);
         LadderTraversalPostTraversalHoldSeconds = Clamp(LadderTraversalPostTraversalHoldSeconds, 1.0f, 10.0f, 4.0f, nameof(LadderTraversalPostTraversalHoldSeconds), warn);
         LadderTraversalPostExitGoalTolerance = Clamp(LadderTraversalPostExitGoalTolerance, 2.0f, 32.0f, 8.0f, nameof(LadderTraversalPostExitGoalTolerance), warn);
@@ -644,6 +646,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             LadderTraversalPostExitViewLookDistance = 512.0f;
             LadderTraversalPostTraversalHoldSeconds = 4.0f;
             Version = 22;
+        }
+
+        if (Version < 23)
+        {
+            // v23 distinguishes real extreme pawn pitch from ordinary
+            // animation/view offsets. Minor pawn-angle drift must never
+            // recapture yaw/pathfinder ownership again.
+            LadderTraversalPostExitPawnPitchHardTolerance = 60.0f;
+            Version = 23;
         }
     }
 

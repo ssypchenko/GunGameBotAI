@@ -3216,9 +3216,7 @@ public sealed class LadderMapService
                 bot,
                 slot,
                 ladder,
-                traversal,
-                position,
-                now);
+                position);
 
             ReleaseHumanClimbControl(
                 pawn,
@@ -3261,9 +3259,7 @@ public sealed class LadderMapService
         CCSBot bot,
         int slot,
         PhysicalLadder ladder,
-        TraversalSession traversal,
-        Vector3 position,
-        float now)
+        Vector3 position)
     {
         if (ladder.ManualLanding == null)
             return;

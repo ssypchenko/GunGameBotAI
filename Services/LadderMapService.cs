@@ -5168,8 +5168,7 @@ public sealed class LadderMapService
         BotRuntimeState state,
         Vector3 position,
         Vector3 target,
-        string reason,
-        bool forceViewReset = false)
+        string reason)
     {
         PrepareBotForMovement(
             bot,
@@ -5184,20 +5183,9 @@ public sealed class LadderMapService
             state.Slot,
             reason);
 
-        // Navigation writes must not take yaw/pathfinder look ownership.
-        // Any post-ladder view repair is pitch-only.
-        if (forceViewReset ||
-            IsPostExitViewStale(
-                pawn,
-                bot,
-                out _,
-                out _,
-                out _))
-        {
-            CorrectPawnPitchOnly(
-                pawn,
-                bot);
-        }
+        // Never rewrite view/pitch from navigation recovery. A vertical look
+        // may be legitimate combat aim, and live traces showed that pitch
+        // correction does not clear the underlying stale ladder state.
     }
 
     private bool IsPostExitViewStale(
@@ -6632,8 +6620,7 @@ public sealed class LadderMapService
                 state,
                 target,
                 navigationTarget,
-                "ladder trap recovery",
-                forceViewReset: true);
+                "ladder trap recovery");
 
             ScheduleRepeatedNavigationWrites(
                 state.Slot,
@@ -6688,17 +6675,6 @@ public sealed class LadderMapService
                     slot,
                     reason);
 
-                if (IsPostExitViewStale(
-                        pawn,
-                        bot,
-                        out _,
-                        out _,
-                        out _))
-                {
-                    CorrectPawnPitchOnly(
-                        pawn,
-                        bot);
-                }
             }
 
             ScheduleRepeatedNavigationWrites(

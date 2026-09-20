@@ -6681,15 +6681,30 @@ public sealed class LadderMapService
                 if (IsPostExitViewStale(
                         pawn,
                         bot,
+                        out float botLookPitch,
                         out _,
-                        out _))
+                        out bool hardPawnPitchStale))
                 {
-                    HoldBotNavigationView(
-                        pawn,
-                        bot,
-                        position,
-                        target,
-                        Server.CurrentTime);
+                    bool botPitchStale =
+                        MathF.Abs(botLookPitch) >
+                            Config.LadderTraversalPostExitViewPitchTolerance;
+
+                    if (hardPawnPitchStale &&
+                        !botPitchStale)
+                    {
+                        CorrectPawnPitchOnly(
+                            pawn,
+                            bot);
+                    }
+                    else
+                    {
+                        HoldBotNavigationView(
+                            pawn,
+                            bot,
+                            position,
+                            target,
+                            Server.CurrentTime);
+                    }
                 }
             }
 

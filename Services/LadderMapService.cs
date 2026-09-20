@@ -39,7 +39,7 @@ public sealed class LadderMapService
     private const float PostExitPassiveReleaseSeconds = 2.25f;
     private const float PostExitStateDiagnosticIntervalSeconds = 0.50f;
     private const float PostExitGroundedConfirmSeconds = 0.10f;
-    private const float PostLadderObserverSeconds = 8.0f;
+    private const float PostLadderObserverSeconds = 12.0f;
 
     // Manual teaching samples the human every server frame in normal operation.
     // Keep a short off-ladder history so BottomEntry is a useful point before
@@ -2089,11 +2089,26 @@ public sealed class LadderMapService
                     $"heightAboveTop={(position.Z - ladder.TopZ):0.###}; " +
                     "action=ladder-ascent-and-detach-complete");
 
+                bool hiddenPathLadderReleased =
+                    TryReleaseHiddenPathLadderPointer(
+                        bot,
+                        state.Slot,
+                        ladder.Id,
+                        "physical-top-exit");
+
+                if (hiddenPathLadderReleased)
+                {
+                    RequestImmediateBotRepath(
+                        bot,
+                        state.Slot,
+                        "physical top exit cleared stale path ladder");
+                }
+
                 _info(
                     $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
                     $"kickElapsed={kickElapsed:0.###}s; velocity={Format(velocity)}; " +
-                    "action=valve-ai");
+                    $"hiddenPathLadderReleased={hiddenPathLadderReleased}; action=valve-ai");
 
                 LogBotPathState(
                     bot,
@@ -5513,7 +5528,7 @@ public sealed class LadderMapService
             _info(
                 $"POST-LADDER-OBSERVER-END map={_document.Map}; slot={state.Slot}; " +
                 $"reason=timeout; source={observer.Reason}; sawHardPitch={observer.SawHardPitch}; " +
-                $"samples={observer.CorrectionCount}");
+                $"sawHiddenPathLadder={observer.SawHiddenPathLadder}; samples={observer.CorrectionCount}");
 
             tracker.PostTraversalNavigation = null;
             return false;
@@ -5532,6 +5547,22 @@ public sealed class LadderMapService
                 pawn,
                 bot,
                 out int enemyIndex);
+
+        bool hiddenPathLadderKnown =
+            TryReadHiddenPathLadderPointer(
+                bot,
+                out _,
+                out ulong hiddenPathLadderPointer);
+
+        bool hiddenPathLadderActive =
+            hiddenPathLadderKnown &&
+            hiddenPathLadderPointer != 0;
+
+        if (hiddenPathLadderActive)
+        {
+            observer.SawHiddenPathLadder = true;
+            observer.LastHiddenPathLadderAt = now;
+        }
 
         if (hardPawnPitchStale &&
             !hasVisibleEnemy)
@@ -5573,18 +5604,22 @@ public sealed class LadderMapService
                 $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; goal={goal}; " +
                 $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; botLookPitch={botLookPitch:0.###}; " +
                 $"pawnPitch={pawnPitch:0.###}; viewStale={viewStale}; hardPawnPitch={hardPawnPitchStale}; " +
+                $"hiddenPathLadder={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderPointer:X16}" : "unknown")}; " +
                 $"enemyVisible={hasVisibleEnemy}; enemyIndex={(hasVisibleEnemy ? enemyIndex : -1)}; " +
                 $"aimingAtEnemy={bot.IsAimingAtEnemy}; attacking={bot.IsAttacking}; " +
                 $"hiddenLadder={GetHiddenLadderMemorySnapshot(bot)}; source={observer.Reason}; " +
                 "action=observe-only");
         }
 
-        if (observer.SawHardPitch &&
-            !hardPawnPitchStale &&
-            !hasVisibleEnemy &&
+        bool hiddenLadderReleased =
+            observer.SawHiddenPathLadder &&
+            hiddenPathLadderKnown &&
+            !hiddenPathLadderActive &&
             now -
-                observer.LastHardPitchAt >=
-            0.20f)
+                observer.LastHiddenPathLadderAt >=
+            0.20f;
+
+        if (hiddenLadderReleased)
         {
             _info(
                 $"POST-LADDER-OBSERVER-RECOVERED map={_document.Map}; slot={state.Slot}; " +
@@ -5592,7 +5627,7 @@ public sealed class LadderMapService
                 $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
                 $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
                 $"hiddenLadder={GetHiddenLadderMemorySnapshot(bot)}; source={observer.Reason}; " +
-                "action=valve-view-recovered-no-plugin-write");
+                "action=hidden-path-ladder-pointer-cleared");
 
             tracker.PostTraversalNavigation = null;
         }
@@ -5905,6 +5940,130 @@ public sealed class LadderMapService
             _info(
                 $"BOT-PATH map={_document.Map}; phase={phase}; slot={slot}; id={ladderId}; " +
                 $"state=unavailable; error={exception.Message}");
+        }
+    }
+
+    private static bool TryReadHiddenPathLadderPointer(
+        CCSBot bot,
+        out int pointerOffset,
+        out ulong pointerValue)
+    {
+        pointerOffset = 0;
+        pointerValue = 0;
+
+        try
+        {
+            if (bot.Handle == 0)
+                return false;
+
+            int waitingOffset =
+                Schema.GetSchemaOffset(
+                    "CCSBot",
+                    "m_isWaitingBehindFriend");
+
+            int ladderEndOffset =
+                Schema.GetSchemaOffset(
+                    "CCSBot",
+                    "m_pathLadderEnd");
+
+            // Current CS2 keeps 0x2B bytes of non-schema ladder state between
+            // these two schema fields. Live traces across several physical
+            // ladders show the 8-byte value at m_pathLadderEnd-0xC is the
+            // ladder-specific pointer which becomes zero at the exact frame
+            // Valve stops applying its -60 degree ladder look.
+            //
+            // Refuse to touch memory if Valve changes this relative layout.
+            if (waitingOffset <= 0 ||
+                ladderEndOffset - waitingOffset != 0x2C)
+            {
+                return false;
+            }
+
+            pointerOffset =
+                ladderEndOffset - 0x0C;
+
+            if ((pointerOffset & 0x7) != 0 ||
+                pointerOffset <= waitingOffset ||
+                pointerOffset + sizeof(long) >
+                    ladderEndOffset)
+            {
+                pointerOffset = 0;
+                return false;
+            }
+
+            pointerValue =
+                unchecked(
+                    (ulong)Marshal.ReadInt64(
+                        bot.Handle,
+                        pointerOffset));
+
+            return true;
+        }
+        catch
+        {
+            pointerOffset = 0;
+            pointerValue = 0;
+            return false;
+        }
+    }
+
+    private bool TryReleaseHiddenPathLadderPointer(
+        CCSBot bot,
+        int slot,
+        int ladderId,
+        string reason)
+    {
+        if (!TryReadHiddenPathLadderPointer(
+                bot,
+                out int pointerOffset,
+                out ulong pointerValue))
+        {
+            _info(
+                $"POST-LADDER-NATIVE-RELEASE-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                $"reason={reason}; action=hidden-layout-unavailable");
+            return false;
+        }
+
+        if (pointerValue == 0)
+        {
+            _info(
+                $"POST-LADDER-NATIVE-RELEASE map={_document.Map}; slot={slot}; id={ladderId}; " +
+                $"offset=0x{pointerOffset:X}; before=0x0000000000000000; after=0x0000000000000000; " +
+                $"reason={reason}; action=already-clear");
+            return true;
+        }
+
+        try
+        {
+            Marshal.WriteInt64(
+                bot.Handle,
+                pointerOffset,
+                0L);
+
+            ulong after =
+                unchecked(
+                    (ulong)Marshal.ReadInt64(
+                        bot.Handle,
+                        pointerOffset));
+
+            bool cleared =
+                after == 0;
+
+            _info(
+                $"POST-LADDER-NATIVE-RELEASE map={_document.Map}; slot={slot}; id={ladderId}; " +
+                $"offset=0x{pointerOffset:X}; before=0x{pointerValue:X16}; after=0x{after:X16}; " +
+                $"reason={reason}; action={(cleared ? "clear-stale-m_pathLadder" : "write-not-stable")}");
+
+            return cleared;
+        }
+        catch (Exception exception)
+        {
+            _info(
+                $"POST-LADDER-NATIVE-RELEASE-FAIL map={_document.Map}; slot={slot}; id={ladderId}; " +
+                $"offset=0x{pointerOffset:X}; before=0x{pointerValue:X16}; reason={reason}; " +
+                $"error={exception.Message}");
+
+            return false;
         }
     }
 
@@ -7230,6 +7389,9 @@ public sealed class LadderMapService
         public int CorrectionCount { get; set; }
         public bool SawHardPitch { get; set; }
         public float LastHardPitchAt { get; set; } =
+            float.NegativeInfinity;
+        public bool SawHiddenPathLadder { get; set; }
+        public float LastHiddenPathLadderAt { get; set; } =
             float.NegativeInfinity;
         public float LastDiagnosticAt { get; set; } =
             float.NegativeInfinity;

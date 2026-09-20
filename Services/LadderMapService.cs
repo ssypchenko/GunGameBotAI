@@ -2089,26 +2089,19 @@ public sealed class LadderMapService
                     $"heightAboveTop={(position.Z - ladder.TopZ):0.###}; " +
                     "action=ladder-ascent-and-detach-complete");
 
-                bool hiddenPathLadderReleased =
-                    TryReleaseHiddenPathLadderPointer(
+                bool hiddenPathLadderKnown =
+                    TryReadHiddenPathLadderPointer(
                         bot,
-                        state.Slot,
-                        ladder.Id,
-                        "physical-top-exit");
-
-                if (hiddenPathLadderReleased)
-                {
-                    RequestImmediateBotRepath(
-                        bot,
-                        state.Slot,
-                        "physical top exit cleared stale path ladder");
-                }
+                        out int hiddenPathLadderOffset,
+                        out ulong hiddenPathLadderPointer);
 
                 _info(
                     $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
                     $"kickElapsed={kickElapsed:0.###}s; velocity={Format(velocity)}; " +
-                    $"hiddenPathLadderReleased={hiddenPathLadderReleased}; action=valve-ai");
+                    $"hiddenPathLadder={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderPointer:X16}" : "unknown")}; " +
+                    $"hiddenPathLadderOffset={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderOffset:X}" : "unknown")}; " +
+                    "action=valve-ai-read-only");
 
                 LogBotPathState(
                     bot,
@@ -6003,66 +5996,6 @@ public sealed class LadderMapService
         {
             pointerOffset = 0;
             pointerValue = 0;
-            return false;
-        }
-    }
-
-    private bool TryReleaseHiddenPathLadderPointer(
-        CCSBot bot,
-        int slot,
-        int ladderId,
-        string reason)
-    {
-        if (!TryReadHiddenPathLadderPointer(
-                bot,
-                out int pointerOffset,
-                out ulong pointerValue))
-        {
-            _info(
-                $"POST-LADDER-NATIVE-RELEASE-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
-                $"reason={reason}; action=hidden-layout-unavailable");
-            return false;
-        }
-
-        if (pointerValue == 0)
-        {
-            _info(
-                $"POST-LADDER-NATIVE-RELEASE map={_document.Map}; slot={slot}; id={ladderId}; " +
-                $"offset=0x{pointerOffset:X}; before=0x0000000000000000; after=0x0000000000000000; " +
-                $"reason={reason}; action=already-clear");
-            return true;
-        }
-
-        try
-        {
-            Marshal.WriteInt64(
-                bot.Handle,
-                pointerOffset,
-                0L);
-
-            ulong after =
-                unchecked(
-                    (ulong)Marshal.ReadInt64(
-                        bot.Handle,
-                        pointerOffset));
-
-            bool cleared =
-                after == 0;
-
-            _info(
-                $"POST-LADDER-NATIVE-RELEASE map={_document.Map}; slot={slot}; id={ladderId}; " +
-                $"offset=0x{pointerOffset:X}; before=0x{pointerValue:X16}; after=0x{after:X16}; " +
-                $"reason={reason}; action={(cleared ? "clear-stale-m_pathLadder" : "write-not-stable")}");
-
-            return cleared;
-        }
-        catch (Exception exception)
-        {
-            _info(
-                $"POST-LADDER-NATIVE-RELEASE-FAIL map={_document.Map}; slot={slot}; id={ladderId}; " +
-                $"offset=0x{pointerOffset:X}; before=0x{pointerValue:X16}; reason={reason}; " +
-                $"error={exception.Message}");
-
             return false;
         }
     }

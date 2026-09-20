@@ -3234,7 +3234,6 @@ public sealed class LadderMapService
         traversal.PostExitLastViewDiagnosticAt = float.NegativeInfinity;
         traversal.PostExitLastHardPawnPitchAt = float.NegativeInfinity;
         traversal.PostExitLastReleaseDeferLogAt = float.NegativeInfinity;
-        traversal.PostExitEyeControlReleasedByPlugin = false;
         traversal.PostExitGoalIssued = false;
         traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
         traversal.PostExitGoalLastWriteAt = float.NegativeInfinity;
@@ -4873,8 +4872,7 @@ public sealed class LadderMapService
         if (TryGetLiveBotEnemy(
                 pawn,
                 bot,
-                out int enemyIndex) &&
-            bot.IsAimingAtEnemy)
+                out int enemyIndex))
         {
             if (!traversal.PostExitNavigationResolved)
             {
@@ -4884,9 +4882,12 @@ public sealed class LadderMapService
                 _info(
                     $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"source=visible-enemy; enemyIndex={enemyIndex}; position={Format(position)}; " +
-                    "action=leave-valve");
+                    $"aimingAtEnemy={bot.IsAimingAtEnemy}; attacking={bot.IsAttacking}; " +
+                    "action=leave-valve-no-view-repair");
             }
 
+            // A visible live enemy is a legitimate reason to look up or down.
+            // Never classify pitch as stale while Valve is engaging combat.
             return;
         }
 
@@ -4967,34 +4968,17 @@ public sealed class LadderMapService
                 out float pawnPitch,
                 out bool hardPawnPitchStale);
 
-        if (hardPawnPitchStale)
+        if (viewStale)
         {
-            traversal.PostExitLastHardPawnPitchAt = now;
-
-            bool performedOneShotRelease = false;
-
-            if (!traversal.PostExitEyeControlReleasedByPlugin)
+            if (hardPawnPitchStale)
             {
-                traversal.PostExitEyeControlReleasedByPlugin = true;
-
-                try
-                {
-                    bot.EyeAnglesUnderPathFinderControl = false;
-                }
-                catch
-                {
-                    // Bot native state can disappear during teardown.
-                }
-
-                // Exactly one pitch reset. Do not fight Valve every 0.25s:
-                // the repeated writes were the visible head/weapon shake.
-                CorrectPawnPitchOnly(
-                    pawn,
-                    bot);
-
-                performedOneShotRelease = true;
+                traversal.PostExitLastHardPawnPitchAt = now;
             }
 
+            // Pitch is diagnostic only. Live 0.7.22 traces showed that a
+            // one-shot pitch reset merely causes one weapon/head movement and
+            // Valve immediately restores the ladder pitch on the next update.
+            // It also risks interfering with legitimate vertical combat aim.
             if (now -
                     traversal.PostExitLastViewDiagnosticAt >=
                 PostExitStateDiagnosticIntervalSeconds)
@@ -5007,21 +4991,9 @@ public sealed class LadderMapService
                     $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
                     $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
                     $"hardPawnPitch={hardPawnPitchStale}; samples={traversal.PostExitViewCorrectionCount}; " +
-                    $"action={(performedOneShotRelease ? "single-eye-release-and-pitch-reset" : "observe-only")}");
+                    $"enemyVisible={bot.IsEnemyVisible}; aimingAtEnemy={bot.IsAimingAtEnemy}; " +
+                    $"attacking={bot.IsAttacking}; action=observe-only-no-view-write");
             }
-        }
-        else if (viewStale &&
-                 now -
-                     traversal.PostExitLastViewDiagnosticAt >=
-                 PostExitStateDiagnosticIntervalSeconds)
-        {
-            traversal.PostExitLastViewDiagnosticAt = now;
-
-            _info(
-                $"POST-LADDER-VIEW-STALE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
-                $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
-                "hardPawnPitch=False; action=observe-only");
         }
 
         bool realValveProgress =
@@ -7295,7 +7267,6 @@ public sealed class LadderMapService
             float.NegativeInfinity;
         public float PostExitLastReleaseDeferLogAt { get; set; } =
             float.NegativeInfinity;
-        public bool PostExitEyeControlReleasedByPlugin { get; set; }
 
         public bool PostExitGoalIssued { get; set; }
         public float PostExitGoalIssuedAt { get; set; } =

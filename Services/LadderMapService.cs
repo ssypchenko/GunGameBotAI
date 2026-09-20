@@ -2140,6 +2140,14 @@ public sealed class LadderMapService
                     bot.PathIndex !=
                         traversal.PostExitHandoffPathIndex;
 
+                bool pathLadderEndChanged =
+                    float.IsFinite(
+                        traversal.PostExitHandoffPathLadderEnd) &&
+                    MathF.Abs(
+                        bot.PathLadderEnd -
+                        traversal.PostExitHandoffPathLadderEnd) >=
+                    1.0f;
+
                 float hardPitchAge =
                     float.IsFinite(
                         traversal.PostExitLastHardPawnPitchAt)
@@ -2154,6 +2162,7 @@ public sealed class LadderMapService
                 bool releaseReady =
                     traversal.PostExitNavigationResolved ||
                     pathIndexAdvanced ||
+                    pathLadderEndChanged ||
                     hardPitchQuiet;
 
                 if (!releaseReady)
@@ -2168,8 +2177,8 @@ public sealed class LadderMapService
                             $"POST-LADDER-RELEASE-DEFER map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                             $"handoffPathIndex={traversal.PostExitHandoffPathIndex}; currentPathIndex={bot.PathIndex}; " +
                             $"handoffPathLadderEnd={(float.IsFinite(traversal.PostExitHandoffPathLadderEnd) ? traversal.PostExitHandoffPathLadderEnd.ToString("0.###") : "n/a")}; " +
-                            $"currentPathLadderEnd={bot.PathLadderEnd:0.###}; hardPitchAge={hardPitchAge:0.###}s; " +
-                            $"navigationResolved={traversal.PostExitNavigationResolved}; " +
+                            $"currentPathLadderEnd={bot.PathLadderEnd:0.###}; pathLadderEndChanged={pathLadderEndChanged}; " +
+                            $"hardPitchAge={hardPitchAge:0.###}s; navigationResolved={traversal.PostExitNavigationResolved}; " +
                             "action=keep-post-exit-guard-until-valve-clears-ladder-state");
 
                         LogBotPathState(
@@ -2195,7 +2204,9 @@ public sealed class LadderMapService
                         ? "top-exit-navigation-stable"
                         : pathIndexAdvanced
                             ? "top-exit-valve-path-advanced"
-                            : "top-exit-view-stable-release";
+                            : pathLadderEndChanged
+                                ? "top-exit-valve-ladder-end-changed"
+                                : "top-exit-view-stable-release";
 
                 CompleteTraversal(
                     pawn,

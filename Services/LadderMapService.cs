@@ -2141,6 +2141,7 @@ public sealed class LadderMapService
 
                 CompleteTraversal(
                     pawn,
+                    bot,
                     state.Slot,
                     tracker,
                     ladder,
@@ -3196,6 +3197,7 @@ public sealed class LadderMapService
 
     private void CompleteTraversal(
         CCSPlayerPawn pawn,
+        CCSBot bot,
         int slot,
         BotTracker tracker,
         PhysicalLadder ladder,
@@ -3209,6 +3211,15 @@ public sealed class LadderMapService
 
         if (traversal != null)
         {
+            ReleaseStalePostExitLadderPathIfNeeded(
+                pawn,
+                bot,
+                slot,
+                ladder,
+                traversal,
+                position,
+                now);
+
             ReleaseHumanClimbControl(
                 pawn,
                 traversal);
@@ -3243,6 +3254,112 @@ public sealed class LadderMapService
         // a legitimate move toward another ladder should remain available.
         tracker.ProactiveFailureCooldownByLadder.Remove(
             ladder.Id);
+    }
+
+    private void ReleaseStalePostExitLadderPathIfNeeded(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        int slot,
+        PhysicalLadder ladder,
+        TraversalSession traversal,
+        Vector3 position,
+        float now)
+    {
+        if (ladder.ManualLanding == null)
+            return;
+
+        if (TryGetLiveBotEnemy(
+                pawn,
+                bot,
+                out _) &&
+            bot.IsAimingAtEnemy)
+        {
+            return;
+        }
+
+        bool viewStale =
+            IsPostExitViewStale(
+                pawn,
+                bot,
+                out float botLookPitch,
+                out float pawnPitch,
+                out bool hardPawnPitchStale);
+
+        if (!viewStale ||
+            !hardPawnPitchStale)
+        {
+            return;
+        }
+
+        Vector3 landing =
+            ladder.ManualLanding.ToVector3();
+
+        if (!float.IsFinite(landing.X) ||
+            !float.IsFinite(landing.Y) ||
+            !float.IsFinite(landing.Z))
+        {
+            return;
+        }
+
+        float horizontalDistance =
+            Distance2D(
+                position,
+                landing);
+
+        if (horizontalDistance >
+            Config.LadderManualLandingMaxHorizontalDistance)
+        {
+            _info(
+                $"POST-LADDER-STALE-PATH-RELEASE-SKIP map={_document.Map}; slot={slot}; id={ladder.Id}; " +
+                $"position={Format(position)}; landing={Format(landing)}; distance={horizontalDistance:0.###}; " +
+                $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; reason=landing-too-far");
+
+            return;
+        }
+
+        Vector3 releasePosition =
+            landing;
+
+        releasePosition.Z +=
+            Config.LadderTraversalRecoveryZOffset;
+
+        bool teleported = false;
+
+        try
+        {
+            pawn.Teleport(
+                position: releasePosition,
+                angles: null,
+                velocity: Vector3.Zero);
+
+            teleported = true;
+        }
+        catch
+        {
+            // Pitch/repath cleanup below is still useful even if the tiny safe
+            // reposition cannot be applied during teardown.
+        }
+
+        CorrectPawnPitchOnly(
+            pawn,
+            bot);
+
+        RequestImmediateBotRepath(
+            bot,
+            slot,
+            "post-ladder stale path release");
+
+        ScheduleRepeatedRepathWrites(
+            slot,
+            Config.LadderTraversalNavigationMinimumWrites - 1,
+            "post-ladder stale path release");
+
+        _info(
+            $"POST-LADDER-STALE-PATH-RELEASE map={_document.Map}; slot={slot}; id={ladder.Id}; " +
+            $"from={Format(position)}; to={Format(releasePosition)}; teleported={teleported}; " +
+            $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
+            $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
+            $"action=safe-landing-repath-release");
     }
 
     private void FailTraversal(
@@ -5032,31 +5149,31 @@ public sealed class LadderMapService
 
         if (viewStale)
         {
-            traversal.PostExitViewCorrectionCount++;
+            traversal.PostExitNavigationStableSince =
+                float.NegativeInfinity;
 
+            // A stale internal ladder path can immediately restore the vertical
+            // ladder view after a pawn-angle write. Do not fight it every tick:
+            // that only produces visible weapon/head shaking. Correct at most
+            // four times per second until the normal path release succeeds.
             if (now -
                     traversal.PostExitLastViewDiagnosticAt >=
                 0.25f)
             {
                 traversal.PostExitLastViewDiagnosticAt = now;
+                traversal.PostExitViewCorrectionCount++;
 
                 _info(
                     $"POST-LADDER-VIEW-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
                     $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
                     $"hardPawnPitch={hardPawnPitchStale}; " +
-                    $"corrections={traversal.PostExitViewCorrectionCount}; action=correct-pitch-only");
+                    $"corrections={traversal.PostExitViewCorrectionCount}; action=correct-pitch-rate-limited");
+
+                CorrectPawnPitchOnly(
+                    pawn,
+                    bot);
             }
-
-            traversal.PostExitNavigationStableSince =
-                float.NegativeInfinity;
-
-            // Post-ladder view repair is now strictly pitch-only. Live traces
-            // showed that changing yaw/pathfinder look ownership caused visible
-            // weapon shaking even when the vertical correction itself was valid.
-            CorrectPawnPitchOnly(
-                pawn,
-                bot);
         }
 
         float goalDistanceFromBot =
@@ -5341,6 +5458,11 @@ public sealed class LadderMapService
         {
             bot.LookPitch = 0.0f;
             bot.LookPitchVel = 0.0f;
+
+            // Separate from LookPitch in CCSBot. This is the vertical component
+            // used by the bot's look-around state and may survive a ladder
+            // handoff even when LookPitch itself is already near zero.
+            bot.LookUpAngle = 0.0f;
         }
         catch
         {
@@ -5932,6 +6054,15 @@ public sealed class LadderMapService
             CounterStrikeSharp.API.Modules.Utils.Vector lookAt =
                 bot.LookAtSpot;
 
+            CounterStrikeSharp.API.Modules.Utils.Vector targetSpot =
+                bot.TargetSpot;
+
+            QAngle aimGoal =
+                bot.AimGoal;
+
+            QAngle aimError =
+                bot.AimError;
+
             _info(
                 $"BOT-PATH map={_document.Map}; phase={phase}; slot={slot}; id={ladderId}; " +
                 $"moveType={pawn.MoveType}; pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
@@ -5940,7 +6071,11 @@ public sealed class LadderMapService
                 $"stuck={bot.IsStuck}; stuckTimestamp={bot.StuckTimestamp:0.###}; " +
                 $"forwardSpeed={bot.ForwardSpeed:0.###}; leftSpeed={bot.LeftSpeed:0.###}; " +
                 $"verticalSpeed={bot.VerticalSpeed:0.###}; lookPitch={bot.LookPitch:0.###}; " +
-                $"lookYaw={bot.LookYaw:0.###}; lookAt={FormatSchemaVector(lookAt)}; " +
+                $"lookYaw={bot.LookYaw:0.###}; lookUpAngle={bot.LookUpAngle:0.###}; " +
+                $"lookAheadAngle={bot.LookAheadAngle:0.###}; forwardAngle={bot.ForwardAngle:0.###}; " +
+                $"aimGoal=({aimGoal.X:0.###},{aimGoal.Y:0.###},{aimGoal.Z:0.###}); " +
+                $"aimError=({aimError.X:0.###},{aimError.Y:0.###},{aimError.Z:0.###}); " +
+                $"targetSpot={FormatSchemaVector(targetSpot)}; lookAt={FormatSchemaVector(lookAt)}; " +
                 $"aimingAtEnemy={bot.IsAimingAtEnemy}; enemyVisible={bot.IsEnemyVisible}");
         }
         catch (Exception exception)

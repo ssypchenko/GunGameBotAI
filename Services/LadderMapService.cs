@@ -2079,6 +2079,16 @@ public sealed class LadderMapService
                     traversal,
                     now);
 
+                traversal.PostExitPhysicalDetachConfirmed = true;
+                traversal.PostExitPhysicalDetachAt = now;
+                traversal.PostExitPhysicalDetachPosition = position;
+
+                _info(
+                    $"TRAVERSAL-PHYSICAL-EXIT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"position={Format(position)}; moveType={pawn.MoveType}; topZ={ladder.TopZ:0.###}; " +
+                    $"heightAboveTop={(position.Z - ladder.TopZ):0.###}; " +
+                    "action=ladder-ascent-and-detach-complete");
+
                 _info(
                     $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
@@ -3324,6 +3334,9 @@ public sealed class LadderMapService
         traversal.PostExitLandingObservedAt = float.NegativeInfinity;
         traversal.PostExitLandingPosition = default;
         traversal.PostExitGroundedSince = float.NegativeInfinity;
+        traversal.PostExitPhysicalDetachConfirmed = false;
+        traversal.PostExitPhysicalDetachAt = float.NegativeInfinity;
+        traversal.PostExitPhysicalDetachPosition = default;
         traversal.PostExitPhysicalSuccessConfirmed = false;
         traversal.PostExitPhysicalSuccessAt = float.NegativeInfinity;
         traversal.PostExitPhysicalSuccessPosition = default;
@@ -3440,15 +3453,28 @@ public sealed class LadderMapService
             pawn,
             traversal);
 
+        bool postExitAfterPhysicalDetach =
+            traversal.Stage == TraversalStage.PostExitGuard &&
+            traversal.PostExitPhysicalDetachConfirmed;
+
+        string failureEvent =
+            postExitAfterPhysicalDetach
+                ? "TRAVERSAL-POSTEXIT-FAIL"
+                : "TRAVERSAL-FAIL";
+
         _info(
-            $"TRAVERSAL-FAIL map={_document.Map}; slot={slot}; " +
+            $"{failureEvent} map={_document.Map}; slot={slot}; " +
             $"id={(ladder?.Id.ToString() ?? traversal.LadderId.ToString())}; " +
-            $"reason={reason}; elapsed={(now - traversal.StartedAt):0.###}s");
+            $"reason={reason}; physicalDetach={traversal.PostExitPhysicalDetachConfirmed}; " +
+            $"elapsed={(now - traversal.StartedAt):0.###}s");
 
         LogClimbResult(
             slot,
             traversal,
-            outcome: "fail",
+            outcome:
+                postExitAfterPhysicalDetach
+                    ? "climb-success-postexit-fail"
+                    : "fail",
             reason,
             now);
 
@@ -3496,14 +3522,26 @@ public sealed class LadderMapService
             ladder?.Id ??
             traversal.LadderId;
 
-        tracker.ProactiveFailureCooldownByLadder[failedLadderId] =
-            now +
-            Config.LadderTraversalProactiveFailureCooldownSeconds;
+        if (!postExitAfterPhysicalDetach)
+        {
+            tracker.ProactiveFailureCooldownByLadder[failedLadderId] =
+                now +
+                Config.LadderTraversalProactiveFailureCooldownSeconds;
 
-        _info(
-            $"LADDER-PROACTIVE-COOLDOWN map={_document.Map}; slot={slot}; id={failedLadderId}; " +
-            $"seconds={Config.LadderTraversalProactiveFailureCooldownSeconds:0.###}; " +
-            "scope=this-ladder-acquire-only");
+            _info(
+                $"LADDER-PROACTIVE-COOLDOWN map={_document.Map}; slot={slot}; id={failedLadderId}; " +
+                $"seconds={Config.LadderTraversalProactiveFailureCooldownSeconds:0.###}; " +
+                "scope=this-ladder-acquire-only");
+        }
+        else
+        {
+            tracker.ProactiveFailureCooldownByLadder.Remove(
+                failedLadderId);
+
+            _info(
+                $"LADDER-PROACTIVE-COOLDOWN-SKIP map={_document.Map}; slot={slot}; id={failedLadderId}; " +
+                "reason=physical-ladder-exit-already-succeeded");
+        }
     }
 
     private bool ShouldIssueJump(
@@ -7389,6 +7427,10 @@ public sealed class LadderMapService
         public Vector3 PostExitLandingPosition { get; set; }
         public float PostExitGroundedSince { get; set; } =
             float.NegativeInfinity;
+        public bool PostExitPhysicalDetachConfirmed { get; set; }
+        public float PostExitPhysicalDetachAt { get; set; } =
+            float.NegativeInfinity;
+        public Vector3 PostExitPhysicalDetachPosition { get; set; }
         public bool PostExitPhysicalSuccessConfirmed { get; set; }
         public float PostExitPhysicalSuccessAt { get; set; } =
             float.NegativeInfinity;

@@ -4869,6 +4869,19 @@ public sealed class LadderMapService
                     traversal.PostExitLandingPosition)
                 : 0.0f;
 
+        float currentHorizontalSpeed =
+            0.0f;
+
+        if (NativeValueReader.TryGetVelocity(
+                pawn,
+                out Vector3 postExitVelocity))
+        {
+            currentHorizontalSpeed =
+                MathF.Sqrt(
+                    postExitVelocity.X * postExitVelocity.X +
+                    postExitVelocity.Y * postExitVelocity.Y);
+        }
+
         // Give repeated repath a short opportunity to produce a real new path.
         // If it does and the bot is already moving away, accept it without
         // imposing our own destination.
@@ -4924,6 +4937,23 @@ public sealed class LadderMapService
 
             if (!readyForFallback)
                 return;
+
+            // If Valve has already produced real horizontal motion and its
+            // current goal is not pointing back at a known ladder bottom,
+            // leave it alone. The local ManualLanding goal is only a bootstrap
+            // for a stalled or clearly unsafe post-ladder handoff.
+            if (!badGoal &&
+                currentHorizontalSpeed >= 20.0f)
+            {
+                traversal.PostExitNavigationResolved = true;
+
+                _info(
+                    $"POST-LADDER-TARGET map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"source=valve-moving; speed={currentHorizontalSpeed:0.###}; " +
+                    $"goal={Format(currentGoal)}; action=leave-valve");
+
+                return;
+            }
 
             Vector3 target;
             string goalSource;
@@ -5029,21 +5059,12 @@ public sealed class LadderMapService
             traversal.PostExitNavigationStableSince =
                 float.NegativeInfinity;
 
-            if (pitchOnly)
-            {
-                CorrectPawnPitchOnly(
-                    pawn,
-                    bot);
-            }
-            else
-            {
-                HoldBotNavigationView(
-                    pawn,
-                    bot,
-                    position,
-                    traversal.PostExitGoal,
-                    now);
-            }
+            // Post-ladder view repair is now strictly pitch-only. Live traces
+            // showed that changing yaw/pathfinder look ownership caused visible
+            // weapon shaking even when the vertical correction itself was valid.
+            CorrectPawnPitchOnly(
+                pawn,
+                bot);
         }
 
         float goalDistanceFromBot =
@@ -5052,17 +5073,7 @@ public sealed class LadderMapService
                 traversal.PostExitGoal);
 
         float horizontalSpeed =
-            0.0f;
-
-        if (NativeValueReader.TryGetVelocity(
-                pawn,
-                out Vector3 currentVelocity))
-        {
-            horizontalSpeed =
-                MathF.Sqrt(
-                    currentVelocity.X * currentVelocity.X +
-                    currentVelocity.Y * currentVelocity.Y);
-        }
+            currentHorizontalSpeed;
 
         bool navigationStalled =
             goalDistanceFromBot > 48.0f &&
@@ -5070,40 +5081,44 @@ public sealed class LadderMapService
             now - traversal.PostExitLastMovementAt >=
                 Config.LadderTraversalPostExitStallRewriteSeconds;
 
-        bool mustWrite =
+        bool initialGoalWritesPending =
             traversal.PostExitGoalWriteCount <
-                Config.LadderTraversalNavigationMinimumWrites ||
-            !goalMatches ||
+                Config.LadderTraversalNavigationMinimumWrites;
+
+        // After the short bootstrap burst, do not fight every normal Valve goal
+        // change. Re-apply only for a known bad ladder goal or a real movement
+        // stall. This prevents 20-30 goal/repath rewrites per second.
+        bool mustWrite =
+            initialGoalWritesPending ||
             badGoal ||
             navigationStalled;
 
+        float writeInterval =
+            initialGoalWritesPending
+                ? Config.LadderTraversalNavigationRewriteIntervalSeconds
+                : Config.LadderTraversalPostExitStallRewriteSeconds;
+
         if (mustWrite &&
             now - traversal.PostExitGoalLastWriteAt >=
-                Config.LadderTraversalNavigationRewriteIntervalSeconds)
+                writeInterval)
         {
             bool correctionAfterInitialHold =
-                traversal.PostExitGoalWriteCount >=
-                    Config.LadderTraversalNavigationMinimumWrites &&
-                (!goalMatches ||
-                 badGoal ||
+                !initialGoalWritesPending &&
+                (badGoal ||
                  navigationStalled);
 
             if (correctionAfterInitialHold)
             {
-                if (!goalMatches || badGoal)
+                if (badGoal)
                 {
-                    // Only a real goal takeover restarts the goal-hold window.
-                    // A movement stall is allowed to request another repath
-                    // without making the hold timer impossible to complete.
-                    traversal.PostExitGoalIssuedAt = now;
                     traversal.PostExitGoalRevertCount++;
 
                     _info(
                         $"POST-LADDER-GOAL-REVERT map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                         $"observedGoal={Format(currentGoal)}; target={Format(traversal.PostExitGoal)}; " +
-                        $"goalError={goalError:0.###}; badLadderId={(badGoal ? badGoalLadderId.ToString() : "none")}; " +
-                        $"badLadderDistance={(badGoal ? badGoalDistance.ToString("0.###") : "n/a")}; " +
-                        $"reverts={traversal.PostExitGoalRevertCount}; action=reapply-and-restart-hold");
+                        $"goalError={goalError:0.###}; badLadderId={badGoalLadderId}; " +
+                        $"badLadderDistance={badGoalDistance:0.###}; " +
+                        $"reverts={traversal.PostExitGoalRevertCount}; action=reapply-bad-goal-rate-limited");
                 }
 
                 if (navigationStalled)
@@ -5127,9 +5142,8 @@ public sealed class LadderMapService
                 state,
                 position,
                 traversal.PostExitGoal,
-                "post-ladder goal hold",
-                forceViewReset:
-                    traversal.PostExitGoalWriteCount == 0);
+                "post-ladder goal bootstrap",
+                forceViewReset: false);
 
             traversal.PostExitGoalLastWriteAt = now;
             traversal.PostExitGoalWriteCount++;
@@ -5217,47 +5231,19 @@ public sealed class LadderMapService
             state.Slot,
             reason);
 
-        // EyeAnglesUnderPathFinderControl=true is normal once Valve starts
-        // processing the fresh route. Do not fight that ownership every tick.
-        if (forceViewReset)
-        {
-            HoldBotNavigationView(
+        // Navigation writes must not take yaw/pathfinder look ownership.
+        // Any post-ladder view repair is pitch-only.
+        if (forceViewReset ||
+            IsPostExitViewStale(
                 pawn,
                 bot,
-                position,
-                target,
-                Server.CurrentTime);
-
-            return;
-        }
-
-        if (IsPostExitViewStale(
-                pawn,
-                bot,
-                out float botLookPitch,
                 out _,
-                out bool hardPawnPitchStale))
+                out _,
+                out _))
         {
-            bool botPitchStale =
-                MathF.Abs(botLookPitch) >
-                    Config.LadderTraversalPostExitViewPitchTolerance;
-
-            if (hardPawnPitchStale &&
-                !botPitchStale)
-            {
-                CorrectPawnPitchOnly(
-                    pawn,
-                    bot);
-            }
-            else
-            {
-                HoldBotNavigationView(
-                    pawn,
-                    bot,
-                    position,
-                    target,
-                    Server.CurrentTime);
-            }
+            CorrectPawnPitchOnly(
+                pawn,
+                bot);
         }
     }
 
@@ -5549,39 +5535,34 @@ public sealed class LadderMapService
         float now,
         string reason)
     {
-        if (!TryGetOpposingSpawnGoal(
-                pawn,
-                position,
-                out Vector3 target,
-                out string spawnClass))
-        {
-            return;
-        }
+        // Recovery teleport already places the pawn on the known safe side of
+        // the ladder. Do not start another multi-second goal/view ownership
+        // session from there. A short repath burst plus one pitch-only cleanup
+        // is enough to hand the bot back to Valve.
+        tracker.PostTraversalNavigation = null;
 
-        tracker.PostTraversalNavigation =
-            new PostTraversalNavigationSession
-            {
-                Target = target,
-                StartedAt = now,
-                ExpiresAt =
-                    now +
-                    Config.LadderTraversalPostTraversalHoldSeconds,
-                Reason = reason
-            };
+        CorrectPawnPitchOnly(
+            pawn,
+            bot);
+
+        PrepareBotForMovement(
+            bot,
+            state);
+
+        RequestImmediateBotRepath(
+            bot,
+            state.Slot,
+            $"post-traversal recovery {reason}");
+
+        ScheduleRepeatedRepathWrites(
+            state.Slot,
+            Config.LadderTraversalNavigationMinimumWrites - 1,
+            $"post-traversal recovery {reason}");
 
         _info(
-            $"POST-TRAVERSAL-HOLD-START map={_document.Map}; slot={state.Slot}; " +
-            $"target={Format(target)}; spawnClass={spawnClass}; " +
-            $"seconds={Config.LadderTraversalPostTraversalHoldSeconds:0.###}; reason={reason}");
-
-        ApplyNavigationHoldWrite(
-            pawn,
-            bot,
-            state,
-            position,
-            target,
-            $"post-traversal {reason}",
-            forceViewReset: true);
+            $"POST-TRAVERSAL-REPATH map={_document.Map}; slot={state.Slot}; " +
+            $"position={Format(position)}; writes={Config.LadderTraversalNavigationMinimumWrites}; " +
+            $"reason={reason}; action=pitch-reset-and-release-valve");
     }
 
     private bool MaintainPostTraversalNavigationHold(
@@ -5677,26 +5658,9 @@ public sealed class LadderMapService
         }
         else if (viewStale)
         {
-            bool botPitchStale =
-                MathF.Abs(botLookPitch) >
-                    Config.LadderTraversalPostExitViewPitchTolerance;
-
-            if (hardPawnPitchStale &&
-                !botPitchStale)
-            {
-                CorrectPawnPitchOnly(
-                    pawn,
-                    bot);
-            }
-            else
-            {
-                HoldBotNavigationView(
-                    pawn,
-                    bot,
-                    position,
-                    hold.Target,
-                    now);
-            }
+            CorrectPawnPitchOnly(
+                pawn,
+                bot);
         }
 
         return true;
@@ -6681,30 +6645,13 @@ public sealed class LadderMapService
                 if (IsPostExitViewStale(
                         pawn,
                         bot,
-                        out float botLookPitch,
                         out _,
-                        out bool hardPawnPitchStale))
+                        out _,
+                        out _))
                 {
-                    bool botPitchStale =
-                        MathF.Abs(botLookPitch) >
-                            Config.LadderTraversalPostExitViewPitchTolerance;
-
-                    if (hardPawnPitchStale &&
-                        !botPitchStale)
-                    {
-                        CorrectPawnPitchOnly(
-                            pawn,
-                            bot);
-                    }
-                    else
-                    {
-                        HoldBotNavigationView(
-                            pawn,
-                            bot,
-                            position,
-                            target,
-                            Server.CurrentTime);
-                    }
+                    CorrectPawnPitchOnly(
+                        pawn,
+                        bot);
                 }
             }
 

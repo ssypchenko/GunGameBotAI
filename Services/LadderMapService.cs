@@ -5034,14 +5034,6 @@ public sealed class LadderMapService
         {
             traversal.PostExitViewCorrectionCount++;
 
-            bool botPitchStale =
-                MathF.Abs(botLookPitch) >
-                    Config.LadderTraversalPostExitViewPitchTolerance;
-
-            bool pitchOnly =
-                hardPawnPitchStale &&
-                !botPitchStale;
-
             if (now -
                     traversal.PostExitLastViewDiagnosticAt >=
                 0.25f)
@@ -5052,8 +5044,8 @@ public sealed class LadderMapService
                     $"POST-LADDER-VIEW-RECAPTURE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
                     $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
-                    $"corrections={traversal.PostExitViewCorrectionCount}; " +
-                    $"action={(pitchOnly ? "correct-pawn-pitch-only" : "correct-bot-view")}");
+                    $"hardPawnPitch={hardPawnPitchStale}; " +
+                    $"corrections={traversal.PostExitViewCorrectionCount}; action=correct-pitch-only");
             }
 
             traversal.PostExitNavigationStableSince =

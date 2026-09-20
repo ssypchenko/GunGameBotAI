@@ -5462,19 +5462,10 @@ public sealed class LadderMapService
                 LastDiagnosticAt = float.NegativeInfinity
             };
 
-        PrepareBotForMovement(
-            bot,
-            state);
-
-        RequestImmediateBotRepath(
-            bot,
-            state.Slot,
-            $"post-ladder observer {reason}");
-
         _info(
             $"POST-LADDER-OBSERVER-START map={_document.Map}; slot={state.Slot}; " +
             $"position={Format(position)}; reason={reason}; duration={PostLadderObserverSeconds:0.###}s; " +
-            "action=repath-throttle-unlocked-once-no-goal-no-view-write");
+            "action=strict-read-only-no-goal-no-view-no-repath-write");
     }
 
     private bool MaintainPostTraversalNavigationHold(

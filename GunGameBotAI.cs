@@ -29,6 +29,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly WeaponActivationService _weaponActivation;
     private readonly KnifeRushService _knifeRush;
     private readonly GeometrySafetyService _geometrySafety;
+    private readonly StuckMonitorService _stuckMonitor;
     private LadderMapService? _ladderMap;
     private readonly Dictionary<string, float> _lastErrorAt = new();
     private const float BotSpawnGraceSeconds = 0.40f;
@@ -68,10 +69,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
         _geometrySafety = new GeometrySafetyService(
             message => Logger.LogInformation("[GunGameBotAI][GEOMETRY] {Message}", message));
+        _stuckMonitor = new StuckMonitorService(
+            message => Logger.LogInformation("[GunGameBotAI][StuckMonitor] {Message}", message));
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.29";
+    public override string ModuleVersion => "0.7.30";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -160,6 +163,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.Shutdown();
         _ladderMap = null;
         _geometrySafety.Reset();
+        _stuckMonitor.Reset();
         ReleaseAllKnownButtonPulses();
         _enabled = false;
         _buttonPulses.CancelAll();
@@ -244,6 +248,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _registry.Remove(slot);
         _ladderMap?.RemoveSlot(slot, "spawn-grace");
         _geometrySafety.RemoveSlot(slot);
+        _stuckMonitor.RemoveSlot(slot);
     }
 
     private bool IsBotInSpawnGrace(
@@ -291,6 +296,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             return;
 
         float now = Server.CurrentTime;
+        bool freezePeriod = IsFreezePeriod();
+        string mapName = Server.MapName;
 
         foreach (CCSPlayerController player in Utilities.GetPlayers())
         {
@@ -322,6 +329,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     bot == null)
                 {
                     _buttonPulses.Cancel(slot);
+                    _stuckMonitor.RemoveSlot(slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -332,6 +340,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 if (state.HasBeenControlledByPlayerThisRound)
                 {
                     _buttonPulses.Cancel(slot);
+                    _stuckMonitor.RemoveSlot(slot);
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
@@ -372,6 +381,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         BotBehaviorMode.LadderTraversal,
                         "learned physical ladder traversal owns movement");
 
+                    _stuckMonitor.RemoveSlot(slot);
                     _registry.ActivateActuator(slot);
                     continue;
                 }
@@ -381,6 +391,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     pawn,
                     bot,
                     state,
+                    now);
+
+                _stuckMonitor.Observe(
+                    controller,
+                    pawn,
+                    bot,
+                    state,
+                    mapName,
+                    freezePeriod,
+                    IsStuckMonitorControlledMode(state.Mode),
                     now);
 
                 if (_buttonPulses.HasPending(slot))
@@ -762,6 +782,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _botSpawnGrace.Remove(playerSlot);
         _ladderMap?.RemoveSlot(playerSlot, "disconnect");
         _geometrySafety.RemoveSlot(playerSlot);
+        _stuckMonitor.RemoveSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
 
@@ -820,6 +841,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _botSpawnGrace.Remove(slot);
             _ladderMap?.RemoveSlot(slot, "player-death");
             _geometrySafety.RemoveSlot(slot);
+            _stuckMonitor.RemoveSlot(slot);
             _registry.Remove(slot);
         }
 
@@ -882,6 +904,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _botSpawnGrace.Remove(slot);
             _ladderMap?.RemoveSlot(slot, "bot-takeover");
             _geometrySafety.RemoveSlot(slot);
+            _stuckMonitor.RemoveSlot(slot);
             _registry.DeactivateActuator(slot);
         }
 
@@ -1006,6 +1029,29 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         Config.LadderLearningEnabled = false;
         command.ReplyToCommand(
             "[GunGameBotAI] ladder learning=manual-only; bots never create persistent ladder records.");
+    }
+
+    [ConsoleCommand("css_ggbotai_stuck_monitor", "Enable or disable observation-only stuck monitoring.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnStuckMonitorCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_stuck_monitor 0|1");
+            return;
+        }
+
+        Config.StuckMonitorEnabled = enabled;
+        _stuckMonitor.Config = Config;
+
+        if (!enabled)
+            _stuckMonitor.Reset();
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] stuck monitor={(enabled ? "enabled" : "disabled")}; " +
+            "mode=observe-only.");
     }
 
     [ConsoleCommand("css_ggbotai_debug", "Enable or disable focused GunGameBotAI diagnostics.")]
@@ -1156,6 +1202,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _registry.Clear();
         _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();
+        _stuckMonitor.Reset();
 
         if (!enabled)
             _knifeRush.ResetStatistics();
@@ -1170,6 +1217,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();
         _geometrySafety.Reset();
+        _stuckMonitor.Reset();
         _knifeRush.ResetStatistics();
     }
 
@@ -1185,6 +1233,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _grenadeLevel.Config = Config;
         _knifeRush.Config = Config;
         _geometrySafety.Config = Config;
+        _stuckMonitor.Config = Config;
+
+        if (!Config.StuckMonitorEnabled)
+            _stuckMonitor.Reset();
     }
 
     private void PersistConfig(CommandInfo command)
@@ -1222,7 +1274,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +
             $"learning=manual-only; manualTeach={(_ladderMap?.ManualTeachingActive == true ? "enabled" : "disabled")}; " +
             $"traversal={Config.LadderEntryJumpEnabled}; " +
-            $"geometrySafety={Config.GeometrySafetyDetectionEnabled}; geometryTracked={_geometrySafety.TrackedCount}.");
+            $"geometrySafety={Config.GeometrySafetyDetectionEnabled}; geometryTracked={_geometrySafety.TrackedCount}; " +
+            $"stuckMonitor={Config.StuckMonitorEnabled}; stuckTracked={_stuckMonitor.TrackedCount}; stuckActive={_stuckMonitor.ActiveEventCount}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
 
@@ -1271,6 +1324,38 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 $"successes={ladder.SuccessfulTraversals}; problems={ladder.ProblemCount}; " +
                 $"assisted={ladder.AssistedSuccesses}/{ladder.AssistedTraversals}.");
         }
+    }
+
+    private static bool IsStuckMonitorControlledMode(
+        BotBehaviorMode mode) =>
+        mode is
+            BotBehaviorMode.KnifeLevel or
+            BotBehaviorMode.GrenadeLevel or
+            BotBehaviorMode.OpportunisticKnifeRush or
+            BotBehaviorMode.LadderTraversal;
+
+    private static bool IsFreezePeriod()
+    {
+        try
+        {
+            foreach (CCSGameRulesProxy proxy in
+                     Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>(
+                         "cs_gamerules"))
+            {
+                CCSGameRules? gameRules =
+                    proxy.GameRules;
+
+                if (gameRules != null)
+                    return gameRules.FreezePeriod;
+            }
+        }
+        catch
+        {
+            // Missing game-rules state during map transitions must never affect
+            // normal bot behaviour. The monitor simply skips this exclusion.
+        }
+
+        return false;
     }
 
     private void DebugLog(string message)

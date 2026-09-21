@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 23;
+    public override int Version { get; set; } = 24;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -30,6 +30,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     public bool IdleRepathEnabled { get; set; } = true;
     public float IdleRepathSeconds { get; set; } = 4.0f;
+
+    // Observation-only Stage 1 diagnostics. Never performs recovery actions.
+    public bool StuckMonitorEnabled { get; set; } = true;
 
     // ---------------------------------------------------------------------
     // Persistent physical ladder learning / traversal
@@ -655,6 +658,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // recapture yaw/pathfinder ownership again.
             LadderTraversalPostExitPawnPitchHardTolerance = 60.0f;
             Version = 23;
+        }
+
+        if (Version < 24)
+        {
+            // v24 adds Stage 1 observation-only stuck diagnostics.
+            // No movement/repath/recovery behaviour is introduced.
+            StuckMonitorEnabled = true;
+            Version = 24;
         }
     }
 

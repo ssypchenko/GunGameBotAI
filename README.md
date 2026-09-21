@@ -25,6 +25,7 @@ included until its exact signature is verified against the target live build.
 - `css_ggbotai_status` — show runtime, timer, bot, mode, and weapon-backend state.
 - `css_ggbotai_ladder_teach 0|1` — explicitly unlock/lock trusted human ladder persistence. Teaching is OFF after plugin load and cannot be armed by configuration.
 - `css_ggbotai_debug 0|1` — toggle diagnostic logging.
+- `css_ggbotai_stuck_monitor 0|1` — enable/disable observation-only stuck monitoring.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.
 - `css_ggbotai_reload` — reload the plugin configuration.
@@ -38,8 +39,9 @@ server-side integration.
 ## Behaviour
 
 The decision loop applies bounded aggression fields, classifies the current
-GunGame weapon, handles knife and grenade levels, detects idle/stuck bots, and
-keeps special movement in a separate fast actuator loop. Knife Rush rolls once
+GunGame weapon, handles knife and grenade levels, performs bounded idle repath,
+and observes sustained stuck events without applying stuck recovery. Special
+movement remains in a separate fast actuator loop. Knife Rush rolls once
 per valid enemy encounter, uses trigger/abort hysteresis, and restores the
 previous weapon when the public switch path permits it.
 

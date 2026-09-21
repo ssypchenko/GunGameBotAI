@@ -40,7 +40,6 @@ public sealed class LadderMapService
     private const float PostExitPassiveReleaseSeconds = 2.25f;
     private const float PostExitStateDiagnosticIntervalSeconds = 0.50f;
     private const float PostExitGroundedConfirmSeconds = 0.10f;
-    private const float PostLadderObserverSeconds = 12.0f;
 
     // Verified against the current Linux libserver.so supplied from the live
     // server (Build ID 87080dfef52bd1f894a9b4e9890bbf599c165559).
@@ -1439,56 +1438,6 @@ public sealed class LadderMapService
         bool onLadder =
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER;
 
-        if (onLadder &&
-            tracker.PostTraversalNavigation != null)
-        {
-            tracker.PostTraversalNavigation = null;
-        }
-
-        if (!onLadder &&
-            tracker.Traversal == null &&
-            tracker.PostTraversalNavigationRequested)
-        {
-            tracker.PostTraversalNavigationRequested = false;
-
-            string observerReason =
-                string.IsNullOrWhiteSpace(
-                    tracker.PostTraversalNavigationRequestReason)
-                    ? "post-ladder"
-                    : tracker.PostTraversalNavigationRequestReason;
-
-            tracker.PostTraversalNavigationRequestReason =
-                string.Empty;
-
-            StartPostTraversalNavigationHold(
-                pawn,
-                bot,
-                state,
-                tracker,
-                position,
-                now,
-                observerReason);
-        }
-
-        if (!onLadder &&
-            tracker.Traversal == null &&
-            tracker.PostTraversalNavigation != null &&
-            MaintainPostTraversalNavigationHold(
-                pawn,
-                bot,
-                state,
-                tracker,
-                position,
-                now))
-        {
-            tracker.HasSample = true;
-            tracker.PreviousOnLadder = false;
-            tracker.PreviousPosition = position;
-            tracker.PreviousVelocity = velocity;
-            tracker.PreviousSampleAt = now;
-            return true;
-        }
-
         bool wasOnLadder =
             tracker.HasSample &&
             tracker.PreviousOnLadder;
@@ -1653,8 +1602,7 @@ public sealed class LadderMapService
         tracker.PreviousSampleAt = now;
 
         return
-            tracker.Traversal != null ||
-            tracker.PostTraversalNavigation != null;
+            tracker.Traversal != null;
     }
 
     /// <summary>
@@ -2148,25 +2096,14 @@ public sealed class LadderMapService
                 traversal.PostExitNativeDismountRequested =
                     nativeDismountRequested;
 
-                if (nativeDismountRequested)
+                if (Config.Debug)
                 {
-                    traversal.PostExitNativeDismountRequestedAt = now;
+                    _debug(
+                        $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                        $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
+                        $"kickElapsed={kickElapsed:0.###}s; nativeDismountRequested={nativeDismountRequested}; " +
+                        "movementOwner=valve");
                 }
-
-                bool hiddenPathLadderKnown =
-                    TryReadHiddenPathLadderPointer(
-                        bot,
-                        out int hiddenPathLadderOffset,
-                        out ulong hiddenPathLadderPointer);
-
-                _info(
-                    $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                    $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
-                    $"kickElapsed={kickElapsed:0.###}s; velocity={Format(velocity)}; " +
-                    $"nativeDismountRequested={nativeDismountRequested}; " +
-                    $"hiddenPathLadder={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderPointer:X16}" : "unknown")}; " +
-                    $"hiddenPathLadderOffset={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderOffset:X}" : "unknown")}; " +
-                    "action=valve-ai-native-dismount");
 
                 LogBotPathState(
                     bot,
@@ -2205,24 +2142,6 @@ public sealed class LadderMapService
 
             bool groundedNow =
                 IsGrounded(pawn);
-
-            if (traversal.PostExitNativeDismountRequested &&
-                !traversal.PostExitNativeDismountCompleted &&
-                TryReadHiddenPathLadderPointer(
-                    bot,
-                    out _,
-                    out ulong nativeDismountPointer) &&
-                nativeDismountPointer == 0)
-            {
-                traversal.PostExitNativeDismountCompleted = true;
-                traversal.PostExitNativeDismountCompletedAt = now;
-
-                _info(
-                    $"POST-LADDER-NATIVE-DISMOUNT-COMPLETE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                    $"elapsed={(now - traversal.PostExitNativeDismountRequestedAt):0.###}s; " +
-                    $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
-                    $"moveType={pawn.MoveType}; action=valve-cleared-path-ladder");
-            }
 
             bool onTopSurface =
                 groundedNow &&
@@ -3434,9 +3353,6 @@ public sealed class LadderMapService
         traversal.PostExitLastMovementPosition = default;
         traversal.PostExitLastMovementAt = float.NegativeInfinity;
         traversal.PostExitStallCorrectionCount = 0;
-        traversal.PostExitViewCorrectionCount = 0;
-        traversal.PostExitLastViewDiagnosticAt = float.NegativeInfinity;
-        traversal.PostExitLastHardPawnPitchAt = float.NegativeInfinity;
         traversal.PostExitLastReleaseDeferLogAt = float.NegativeInfinity;
         traversal.PostExitGoalIssued = false;
         traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
@@ -3508,14 +3424,6 @@ public sealed class LadderMapService
                 now);
         }
 
-        // A successful physical ladder traversal ends movement ownership.
-        // Keep only a read-only post-ladder observer so we can see exactly
-        // when Valve clears the stale ladder/view state without steering the bot.
-        tracker.PostTraversalNavigation = null;
-        tracker.PostTraversalNavigationRequested = true;
-        tracker.PostTraversalNavigationRequestReason =
-            $"success:{reason}";
-
         tracker.Traversal = null;
         tracker.SuppressTraversalUntilLadderExit = true;
 
@@ -3580,22 +3488,13 @@ public sealed class LadderMapService
                     TraversalStage.TopExit or
                     TraversalStage.PostExitGuard;
 
-            bool recovered =
-                RecoverTraversalToSafePoint(
-                    pawn,
-                    slot,
-                    traversal,
-                    ladder,
-                    reason,
-                    preferTop);
-
-            if (recovered &&
-                preferTop)
-            {
-                tracker.PostTraversalNavigationRequested = true;
-                tracker.PostTraversalNavigationRequestReason =
-                    $"recovery:{reason}";
-            }
+            RecoverTraversalToSafePoint(
+                pawn,
+                slot,
+                traversal,
+                ladder,
+                reason,
+                preferTop);
         }
 
         if (traversal.Stage ==
@@ -5194,42 +5093,6 @@ public sealed class LadderMapService
                     postExitVelocity.Y * postExitVelocity.Y);
         }
 
-        bool viewStale =
-            IsPostExitViewStale(
-                pawn,
-                bot,
-                out float botLookPitch,
-                out float pawnPitch,
-                out bool hardPawnPitchStale);
-
-        if (viewStale)
-        {
-            if (hardPawnPitchStale)
-            {
-                traversal.PostExitLastHardPawnPitchAt = now;
-            }
-
-            // Pitch is diagnostic only. Live 0.7.22 traces showed that a
-            // one-shot pitch reset merely causes one weapon/head movement and
-            // Valve immediately restores the ladder pitch on the next update.
-            // It also risks interfering with legitimate vertical combat aim.
-            if (now -
-                    traversal.PostExitLastViewDiagnosticAt >=
-                PostExitStateDiagnosticIntervalSeconds)
-            {
-                traversal.PostExitLastViewDiagnosticAt = now;
-                traversal.PostExitViewCorrectionCount++;
-
-                _info(
-                    $"POST-LADDER-VIEW-STALE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
-                    $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; " +
-                    $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
-                    $"hardPawnPitch={hardPawnPitchStale}; samples={traversal.PostExitViewCorrectionCount}; " +
-                    $"enemyVisible={bot.IsEnemyVisible}; aimingAtEnemy={bot.IsAimingAtEnemy}; " +
-                    $"attacking={bot.IsAttacking}; action=observe-only-no-view-write");
-            }
-        }
-
         bool realValveProgress =
             pathIndexChanged ||
             pathLadderEndChanged ||
@@ -5278,439 +5141,6 @@ public sealed class LadderMapService
         // Never rewrite view/pitch from navigation recovery. A vertical look
         // may be legitimate combat aim, and live traces showed that pitch
         // correction does not clear the underlying stale ladder state.
-    }
-
-    private bool IsPostExitViewStale(
-        CCSPlayerPawn pawn,
-        CCSBot bot,
-        out float botLookPitch,
-        out float pawnPitch,
-        out bool hardPawnPitchStale)
-    {
-        botLookPitch = 0.0f;
-        pawnPitch = 0.0f;
-        hardPawnPitchStale = false;
-
-        bool botPitchKnown = false;
-        bool pawnPitchKnown = false;
-
-        try
-        {
-            botLookPitch =
-                NormaliseAngleDegrees(
-                    bot.LookPitch);
-
-            botPitchKnown =
-                float.IsFinite(
-                    botLookPitch);
-        }
-        catch
-        {
-            // Native bot state can disappear during death/map teardown.
-        }
-
-        try
-        {
-            float eyePitch =
-                NormaliseAngleDegrees(
-                    pawn.EyeAngles.X);
-
-            float viewPitch =
-                NormaliseAngleDegrees(
-                    pawn.V_angle.X);
-
-            bool eyeKnown =
-                float.IsFinite(
-                    eyePitch);
-
-            bool viewKnown =
-                float.IsFinite(
-                    viewPitch);
-
-            if (eyeKnown || viewKnown)
-            {
-                pawnPitchKnown = true;
-
-                if (!eyeKnown)
-                {
-                    pawnPitch = viewPitch;
-                }
-                else if (!viewKnown)
-                {
-                    pawnPitch = eyePitch;
-                }
-                else
-                {
-                    pawnPitch =
-                        MathF.Abs(viewPitch) >
-                            MathF.Abs(eyePitch)
-                            ? viewPitch
-                            : eyePitch;
-                }
-            }
-        }
-        catch
-        {
-            // Pawn view can disappear during death/map teardown.
-        }
-
-        float botTolerance =
-            Config.LadderTraversalPostExitViewPitchTolerance;
-
-        if (pawnPitchKnown)
-        {
-            hardPawnPitchStale =
-                MathF.Abs(pawnPitch) >=
-                    Config.LadderTraversalPostExitPawnPitchHardTolerance;
-        }
-
-        bool botPitchStale =
-            botPitchKnown &&
-            MathF.Abs(botLookPitch) >
-                botTolerance;
-
-        return
-            botPitchStale ||
-            hardPawnPitchStale;
-    }
-
-    private static void CorrectPawnPitchOnly(
-        CCSPlayerPawn pawn,
-        CCSBot bot)
-    {
-        try
-        {
-            bot.LookPitch = 0.0f;
-            bot.LookPitchVel = 0.0f;
-        }
-        catch
-        {
-            // Native bot state can disappear during death/map teardown.
-        }
-
-        try
-        {
-            // Preserve yaw completely. The previous full view recapture changed
-            // yaw every frame and was the direct source of weapon jitter.
-            pawn.EyeAngles.X = 0.0f;
-            pawn.V_angle.X = 0.0f;
-        }
-        catch
-        {
-            // Retry only if a later sample is still an extreme pitch.
-        }
-    }
-
-    private void HoldBotNavigationView(
-        CCSPlayerPawn pawn,
-        CCSBot bot,
-        Vector3 position,
-        Vector3 target,
-        float now)
-    {
-        Vector3 direction =
-            new(
-                target.X - position.X,
-                target.Y - position.Y,
-                0.0f);
-
-        if (direction.LengthSquared() <
-            1.0f)
-        {
-            return;
-        }
-
-        direction =
-            Vector3.Normalize(
-                direction);
-
-        float yawDegrees =
-            MathF.Atan2(
-                direction.Y,
-                direction.X) *
-            (180.0f / MathF.PI);
-
-        try
-        {
-            bot.EyeAnglesUnderPathFinderControl = false;
-            bot.LookPitch = 0.0f;
-            bot.LookPitchVel = 0.0f;
-            bot.LookYaw = yawDegrees;
-            bot.LookYawVel = 0.0f;
-            bot.InhibitLookAroundTimestamp =
-                now +
-                0.20f;
-
-            CounterStrikeSharp.API.Modules.Utils.Vector lookAt =
-                bot.LookAtSpot;
-
-            lookAt.X =
-                position.X +
-                direction.X *
-                Config.LadderTraversalPostExitViewLookDistance;
-            lookAt.Y =
-                position.Y +
-                direction.Y *
-                Config.LadderTraversalPostExitViewLookDistance;
-            lookAt.Z =
-                position.Z +
-                64.0f;
-
-            bot.LookAtSpotTimestamp = now;
-            bot.LookAtSpotDuration = 0.25f;
-            bot.LookAtSpotClearIfClose = false;
-            bot.LookAtSpotAttack = false;
-        }
-        catch
-        {
-            // Native bot state can disappear during death/map teardown.
-        }
-
-        WritePawnView(
-            pawn,
-            0.0f,
-            yawDegrees);
-    }
-
-    private static float NormaliseAngleDegrees(
-        float angle)
-    {
-        while (angle > 180.0f)
-            angle -= 360.0f;
-
-        while (angle < -180.0f)
-            angle += 360.0f;
-
-        return angle;
-    }
-
-    private static bool TryReadBotGoalPosition(
-        CCSBot bot,
-        out Vector3 goal)
-    {
-        goal = default;
-
-        try
-        {
-            CounterStrikeSharp.API.Modules.Utils.Vector value =
-                bot.GoalPosition;
-
-            goal =
-                new Vector3(
-                    value.X,
-                    value.Y,
-                    value.Z);
-
-            return
-                float.IsFinite(goal.X) &&
-                float.IsFinite(goal.Y) &&
-                float.IsFinite(goal.Z);
-        }
-        catch
-        {
-            goal = default;
-            return false;
-        }
-    }
-
-    private bool IsGoalNearKnownLadderBottom(
-        Vector3 goal,
-        out int ladderId,
-        out float distance)
-    {
-        ladderId = -1;
-        distance = float.PositiveInfinity;
-
-        foreach (PhysicalLadder ladder in
-                 _document.Ladders)
-        {
-            if (!ladder.ManualCertified)
-                continue;
-
-            Vector3 bottom =
-                ladder.BottomMount.ToVector3();
-
-            if (MathF.Abs(
-                    goal.Z -
-                    bottom.Z) >
-                40.0f)
-            {
-                continue;
-            }
-
-            float candidateDistance =
-                Distance2D(
-                    goal,
-                    bottom);
-
-            if (candidateDistance <
-                distance)
-            {
-                distance =
-                    candidateDistance;
-                ladderId =
-                    ladder.Id;
-            }
-        }
-
-        return
-            ladderId >= 0 &&
-            distance <=
-                Config.LadderTraversalPostExitBadGoalRadius;
-    }
-
-    private void StartPostTraversalNavigationHold(
-        CCSPlayerPawn pawn,
-        CCSBot bot,
-        BotRuntimeState state,
-        BotTracker tracker,
-        Vector3 position,
-        float now,
-        string reason)
-    {
-        // This session is intentionally observation-only. Previous versions
-        // reset pitch and rewrote goals here; live traces showed those writes
-        // caused the visible weapon dip and could fight legitimate combat aim.
-        tracker.PostTraversalNavigation =
-            new PostTraversalNavigationSession
-            {
-                StartedAt = now,
-                ExpiresAt = now + PostLadderObserverSeconds,
-                Reason = reason,
-                LastDiagnosticAt = float.NegativeInfinity
-            };
-
-        _info(
-            $"POST-LADDER-OBSERVER-START map={_document.Map}; slot={state.Slot}; " +
-            $"position={Format(position)}; reason={reason}; duration={PostLadderObserverSeconds:0.###}s; " +
-            "action=strict-read-only-no-goal-no-view-no-repath-write");
-    }
-
-    private bool MaintainPostTraversalNavigationHold(
-        CCSPlayerPawn pawn,
-        CCSBot bot,
-        BotRuntimeState state,
-        BotTracker tracker,
-        Vector3 position,
-        float now)
-    {
-        PostTraversalNavigationSession? observer =
-            tracker.PostTraversalNavigation;
-
-        if (observer == null)
-            return false;
-
-        if (now >= observer.ExpiresAt)
-        {
-            _info(
-                $"POST-LADDER-OBSERVER-END map={_document.Map}; slot={state.Slot}; " +
-                $"reason=timeout; source={observer.Reason}; sawHardPitch={observer.SawHardPitch}; " +
-                $"sawHiddenPathLadder={observer.SawHiddenPathLadder}; samples={observer.CorrectionCount}");
-
-            tracker.PostTraversalNavigation = null;
-            return false;
-        }
-
-        bool viewStale =
-            IsPostExitViewStale(
-                pawn,
-                bot,
-                out float botLookPitch,
-                out float pawnPitch,
-                out bool hardPawnPitchStale);
-
-        bool hasVisibleEnemy =
-            TryGetLiveBotEnemy(
-                pawn,
-                bot,
-                out int enemyIndex);
-
-        bool hiddenPathLadderKnown =
-            TryReadHiddenPathLadderPointer(
-                bot,
-                out _,
-                out ulong hiddenPathLadderPointer);
-
-        bool hiddenPathLadderActive =
-            hiddenPathLadderKnown &&
-            hiddenPathLadderPointer != 0;
-
-        if (hiddenPathLadderActive)
-        {
-            observer.SawHiddenPathLadder = true;
-            observer.LastHiddenPathLadderAt = now;
-        }
-
-        if (hardPawnPitchStale &&
-            !hasVisibleEnemy)
-        {
-            observer.SawHardPitch = true;
-            observer.LastHardPitchAt = now;
-        }
-
-        if (now -
-                observer.LastDiagnosticAt >=
-            PostExitStateDiagnosticIntervalSeconds)
-        {
-            observer.LastDiagnosticAt = now;
-            observer.CorrectionCount++;
-
-            float horizontalSpeed = 0.0f;
-
-            if (NativeValueReader.TryGetVelocity(
-                    pawn,
-                    out Vector3 observerVelocity))
-            {
-                horizontalSpeed =
-                    MathF.Sqrt(
-                        observerVelocity.X * observerVelocity.X +
-                        observerVelocity.Y * observerVelocity.Y);
-            }
-
-            string goal =
-                TryReadBotGoalPosition(
-                    bot,
-                    out Vector3 observerGoal)
-                    ? Format(observerGoal)
-                    : "n/a";
-
-            _info(
-                $"POST-LADDER-OBSERVER map={_document.Map}; slot={state.Slot}; " +
-                $"elapsed={(now - observer.StartedAt):0.###}s; position={Format(position)}; " +
-                $"grounded={IsGrounded(pawn)}; speed={horizontalSpeed:0.###}; " +
-                $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; goal={goal}; " +
-                $"eyePathControl={bot.EyeAnglesUnderPathFinderControl}; botLookPitch={botLookPitch:0.###}; " +
-                $"pawnPitch={pawnPitch:0.###}; viewStale={viewStale}; hardPawnPitch={hardPawnPitchStale}; " +
-                $"hiddenPathLadder={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderPointer:X16}" : "unknown")}; " +
-                $"enemyVisible={hasVisibleEnemy}; enemyIndex={(hasVisibleEnemy ? enemyIndex : -1)}; " +
-                $"aimingAtEnemy={bot.IsAimingAtEnemy}; attacking={bot.IsAttacking}; " +
-                $"hiddenLadder={GetHiddenLadderMemorySnapshot(bot)}; source={observer.Reason}; " +
-                "action=observe-only");
-        }
-
-        bool hiddenLadderReleased =
-            observer.SawHiddenPathLadder &&
-            hiddenPathLadderKnown &&
-            !hiddenPathLadderActive &&
-            now -
-                observer.LastHiddenPathLadderAt >=
-            0.20f;
-
-        if (hiddenLadderReleased)
-        {
-            _info(
-                $"POST-LADDER-OBSERVER-RECOVERED map={_document.Map}; slot={state.Slot}; " +
-                $"elapsed={(now - observer.StartedAt):0.###}s; position={Format(position)}; " +
-                $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
-                $"botLookPitch={botLookPitch:0.###}; pawnPitch={pawnPitch:0.###}; " +
-                $"hiddenLadder={GetHiddenLadderMemorySnapshot(bot)}; source={observer.Reason}; " +
-                "action=hidden-path-ladder-pointer-cleared");
-
-            tracker.PostTraversalNavigation = null;
-        }
-
-        // Never claim movement ownership. Normal AI and combat continue.
-        return false;
     }
 
     private static bool TryGetLiveBotEnemy(
@@ -6009,8 +5439,7 @@ public sealed class LadderMapService
                 $"aimGoal=({aimGoal.X:0.###},{aimGoal.Y:0.###},{aimGoal.Z:0.###}); " +
                 $"aimError=({aimError.X:0.###},{aimError.Y:0.###},{aimError.Z:0.###}); " +
                 $"targetSpot={FormatSchemaVector(targetSpot)}; lookAt={FormatSchemaVector(lookAt)}; " +
-                $"aimingAtEnemy={bot.IsAimingAtEnemy}; enemyVisible={bot.IsEnemyVisible}; " +
-                $"hiddenLadder={GetHiddenLadderMemorySnapshot(bot)}");
+                $"aimingAtEnemy={bot.IsAimingAtEnemy}; enemyVisible={bot.IsEnemyVisible}");
         }
         catch (Exception exception)
         {
@@ -6171,10 +5600,13 @@ public sealed class LadderMapService
 
             if (stateBefore == NativeLadderStateDismount)
             {
-                _info(
-                    $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
-                    $"stateBefore=DISMOUNT(8); stateAfter=DISMOUNT(8); active={activeBefore}; " +
-                    $"pointerBefore=0x{pointerBefore:X16}; action=already-in-native-dismount");
+                if (Config.Debug)
+                {
+                    _debug(
+                        $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
+                        "stateBefore=DISMOUNT(8); stateAfter=DISMOUNT(8); action=already-in-native-dismount");
+                }
+
                 return true;
             }
 
@@ -6195,28 +5627,18 @@ public sealed class LadderMapService
                     bot.Handle,
                     stateOffset);
 
-            byte activeAfter =
-                Marshal.ReadByte(
-                    bot.Handle,
-                    activeOffset);
-
-            ulong pointerAfter =
-                unchecked(
-                    (ulong)Marshal.ReadInt64(
-                        bot.Handle,
-                        pathLadderOffset));
-
             bool accepted =
                 stateAfter ==
                 NativeLadderStateDismount;
 
-            _info(
-                $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
-                $"fsmOffset=0x{fsmOffset:X}; stateBefore={NativeLadderStateName(stateBefore)}({stateBefore}); " +
-                $"stateAfter={NativeLadderStateName(stateAfter)}({stateAfter}); " +
-                $"activeBefore={activeBefore}; activeAfter={activeAfter}; " +
-                $"pointerBefore=0x{pointerBefore:X16}; pointerAfter=0x{pointerAfter:X16}; " +
-                $"accepted={accepted}; action=native-fsm-transition");
+            if (Config.Debug)
+            {
+                _debug(
+                    $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"stateBefore={NativeLadderStateName(stateBefore)}({stateBefore}); " +
+                    $"stateAfter={NativeLadderStateName(stateAfter)}({stateAfter}); " +
+                    $"accepted={accepted}; action=native-fsm-transition");
+            }
 
             return accepted;
         }
@@ -6245,155 +5667,6 @@ public sealed class LadderMapService
             8 => "DISMOUNT",
             _ => "UNKNOWN"
         };
-    }
-
-    private static bool TryReadHiddenPathLadderPointer(
-        CCSBot bot,
-        out int pointerOffset,
-        out ulong pointerValue)
-    {
-        pointerOffset = 0;
-        pointerValue = 0;
-
-        try
-        {
-            if (bot.Handle == 0)
-                return false;
-
-            int waitingOffset =
-                Schema.GetSchemaOffset(
-                    "CCSBot",
-                    "m_isWaitingBehindFriend");
-
-            int ladderEndOffset =
-                Schema.GetSchemaOffset(
-                    "CCSBot",
-                    "m_pathLadderEnd");
-
-            // Current CS2 keeps 0x2B bytes of non-schema ladder state between
-            // these two schema fields. Live traces across several physical
-            // ladders show the 8-byte value at m_pathLadderEnd-0xC is the
-            // ladder-specific pointer which becomes zero at the exact frame
-            // Valve stops applying its -60 degree ladder look.
-            //
-            // Refuse to touch memory if Valve changes this relative layout.
-            if (waitingOffset <= 0 ||
-                ladderEndOffset - waitingOffset != 0x2C)
-            {
-                return false;
-            }
-
-            pointerOffset =
-                ladderEndOffset - 0x0C;
-
-            if ((pointerOffset & 0x7) != 0 ||
-                pointerOffset <= waitingOffset ||
-                pointerOffset + sizeof(long) >
-                    ladderEndOffset)
-            {
-                pointerOffset = 0;
-                return false;
-            }
-
-            pointerValue =
-                unchecked(
-                    (ulong)Marshal.ReadInt64(
-                        bot.Handle,
-                        pointerOffset));
-
-            return true;
-        }
-        catch
-        {
-            pointerOffset = 0;
-            pointerValue = 0;
-            return false;
-        }
-    }
-
-    private static string GetHiddenLadderMemorySnapshot(
-        CCSBot bot)
-    {
-        try
-        {
-            int waitingOffset =
-                Schema.GetSchemaOffset(
-                    "CCSBot",
-                    "m_isWaitingBehindFriend");
-
-            int ladderEndOffset =
-                Schema.GetSchemaOffset(
-                    "CCSBot",
-                    "m_pathLadderEnd");
-
-            if (waitingOffset <= 0 ||
-                ladderEndOffset <= waitingOffset ||
-                bot.Handle == 0)
-            {
-                return "unavailable";
-            }
-
-            int firstAligned =
-                (waitingOffset + 7) &
-                ~7;
-
-            int lastAligned =
-                (ladderEndOffset - 8) &
-                ~7;
-
-            List<string> slots = new();
-
-            for (int offset = firstAligned;
-                 offset <= lastAligned;
-                 offset += 8)
-            {
-                long raw =
-                    Marshal.ReadInt64(
-                        bot.Handle,
-                        offset);
-
-                slots.Add(
-                    $"0x{offset:X}=0x{unchecked((ulong)raw):X16}");
-            }
-
-            List<string> words = new();
-
-            for (int offset = waitingOffset;
-                 offset < ladderEndOffset;
-                 offset += 4)
-            {
-                int raw =
-                    Marshal.ReadInt32(
-                        bot.Handle,
-                        offset);
-
-                float asFloat =
-                    BitConverter.Int32BitsToSingle(
-                        raw);
-
-                words.Add(
-                    $"+0x{offset - waitingOffset:X2}=0x{unchecked((uint)raw):X8}/{asFloat:0.###}");
-            }
-
-            int candidateOffset =
-                ladderEndOffset - 12;
-
-            long candidateRaw =
-                Marshal.ReadInt64(
-                    bot.Handle,
-                    candidateOffset);
-
-            return
-                $"wait=0x{waitingOffset:X},end=0x{ladderEndOffset:X}," +
-                $"candidate@-0xC=0x{unchecked((ulong)candidateRaw):X16}," +
-                string.Join(",", slots) +
-                ",words=" +
-                string.Join("|", words);
-        }
-        catch
-        {
-            return "unavailable";
-        }
     }
 
     private static string FormatSchemaVector(
@@ -7606,10 +6879,6 @@ public sealed class LadderMapService
 
         public LearningSession? Learning { get; set; }
         public TraversalSession? Traversal { get; set; }
-        public PostTraversalNavigationSession? PostTraversalNavigation { get; set; }
-        public bool PostTraversalNavigationRequested { get; set; }
-        public string PostTraversalNavigationRequestReason { get; set; } =
-            string.Empty;
 
         public bool SuppressTraversalUntilLadderExit { get; set; }
 
@@ -7622,22 +6891,6 @@ public sealed class LadderMapService
             float.NegativeInfinity;
 
         public float LastTrapRecoveryAt { get; set; } =
-            float.NegativeInfinity;
-    }
-
-    private sealed class PostTraversalNavigationSession
-    {
-        public float StartedAt { get; set; }
-        public float ExpiresAt { get; set; }
-        public string Reason { get; set; } = string.Empty;
-        public int CorrectionCount { get; set; }
-        public bool SawHardPitch { get; set; }
-        public float LastHardPitchAt { get; set; } =
-            float.NegativeInfinity;
-        public bool SawHiddenPathLadder { get; set; }
-        public float LastHiddenPathLadderAt { get; set; } =
-            float.NegativeInfinity;
-        public float LastDiagnosticAt { get; set; } =
             float.NegativeInfinity;
     }
 
@@ -7794,11 +7047,6 @@ public sealed class LadderMapService
         public bool PostExitHandoffGoalValid { get; set; }
 
         public bool PostExitNativeDismountRequested { get; set; }
-        public float PostExitNativeDismountRequestedAt { get; set; } =
-            float.NegativeInfinity;
-        public bool PostExitNativeDismountCompleted { get; set; }
-        public float PostExitNativeDismountCompletedAt { get; set; } =
-            float.NegativeInfinity;
 
         public bool PostExitRepathRequested { get; set; }
         public float PostExitRepathRequestedAt { get; set; } =
@@ -7828,11 +7076,6 @@ public sealed class LadderMapService
         public float PostExitLastMovementAt { get; set; } =
             float.NegativeInfinity;
         public int PostExitStallCorrectionCount { get; set; }
-        public int PostExitViewCorrectionCount { get; set; }
-        public float PostExitLastViewDiagnosticAt { get; set; } =
-            float.NegativeInfinity;
-        public float PostExitLastHardPawnPitchAt { get; set; } =
-            float.NegativeInfinity;
         public float PostExitLastReleaseDeferLogAt { get; set; } =
             float.NegativeInfinity;
 

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 using GunGameBotAI.Config;
 using GunGameBotAI.Models;
@@ -41,6 +42,23 @@ public sealed class LadderMapService
     private const float PostExitGroundedConfirmSeconds = 0.10f;
     private const float PostLadderObserverSeconds = 12.0f;
 
+    // Verified against the current Linux libserver.so supplied from the live
+    // server (Build ID 87080dfef52bd1f894a9b4e9890bbf599c165559).
+    //
+    // This is the native setter for the embedded ladder state machine whose
+    // object starts at CCSBot + (m_pathLadderEnd - 0x24). The function writes
+    // the requested FSM state and performs Valve's state-entry side effects.
+    // State 8 is the native DISMOUNT state.
+    //
+    // Calls are wildcarded but the surrounding bytes are unique in that
+    // libserver.so. Do not replace this with direct writes to the hidden
+    // CCSBot fields: live testing proved that independently nulling the ladder
+    // pointer can leave the FSM inconsistent and crash the server.
+    private const int NativeLadderStateDismount = 8;
+    private const string LinuxSetLadderStateSignature =
+        "55 48 89 E5 41 54 49 89 FC 53 89 F3 89 5F 08 48 8B 3F " +
+        "E8 ? ? ? ? 89 C7 E8 ? ? ? ? F3 41 0F 11 44 24 0C 83 FB 08";
+
     // Manual teaching samples the human every server frame in normal operation.
     // Keep a short off-ladder history so BottomEntry is a useful point before
     // the mount rather than merely the last frame 0.1-0.5 units from the ladder.
@@ -59,6 +77,7 @@ public sealed class LadderMapService
     private readonly CorrectionLogger _corrections;
     private readonly Action<string> _info;
     private readonly Action<string> _debug;
+    private readonly MemoryFunctionVoid<nint, int>? _nativeSetLadderState;
 
     private readonly Dictionary<int, BotTracker> _trackers = new();
     private readonly List<PhysicalLadder> _candidates = new();
@@ -88,6 +107,36 @@ public sealed class LadderMapService
         _corrections = corrections;
         _info = info;
         _debug = debug;
+
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                MemoryFunctionVoid<nint, int> candidate =
+                    new(LinuxSetLadderStateSignature);
+
+                if (candidate.Handle != IntPtr.Zero)
+                {
+                    _nativeSetLadderState = candidate;
+
+                    _info(
+                        "[GunGameBotAI][LADDER] NATIVE-LADDER-FSM init=resolved; " +
+                        "target=SetLadderState; dismountState=8; platform=linux");
+                }
+                else
+                {
+                    _info(
+                        "[GunGameBotAI][LADDER] NATIVE-LADDER-FSM init=unavailable; " +
+                        "reason=signature-not-resolved; action=read-only-fallback");
+                }
+            }
+            catch (Exception exception)
+            {
+                _info(
+                    "[GunGameBotAI][LADDER] NATIVE-LADDER-FSM init=unavailable; " +
+                    $"reason=resolver-exception; error={exception.Message}; action=read-only-fallback");
+            }
+        }
     }
 
     public GunGameBotAIConfig Config
@@ -2089,6 +2138,21 @@ public sealed class LadderMapService
                     $"heightAboveTop={(position.Z - ladder.TopZ):0.###}; " +
                     "action=ladder-ascent-and-detach-complete");
 
+                bool nativeDismountRequested =
+                    TryTransitionNativeLadderFsmToDismount(
+                        pawn,
+                        bot,
+                        state.Slot,
+                        ladder.Id);
+
+                traversal.PostExitNativeDismountRequested =
+                    nativeDismountRequested;
+
+                if (nativeDismountRequested)
+                {
+                    traversal.PostExitNativeDismountRequestedAt = now;
+                }
+
                 bool hiddenPathLadderKnown =
                     TryReadHiddenPathLadderPointer(
                         bot,
@@ -2099,9 +2163,10 @@ public sealed class LadderMapService
                     $"TOP-EXIT-HANDOFF map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
                     $"position={Format(position)}; kickDistance={kickDistance:0.###}; " +
                     $"kickElapsed={kickElapsed:0.###}s; velocity={Format(velocity)}; " +
+                    $"nativeDismountRequested={nativeDismountRequested}; " +
                     $"hiddenPathLadder={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderPointer:X16}" : "unknown")}; " +
                     $"hiddenPathLadderOffset={(hiddenPathLadderKnown ? $"0x{hiddenPathLadderOffset:X}" : "unknown")}; " +
-                    "action=valve-ai-read-only");
+                    "action=valve-ai-native-dismount");
 
                 LogBotPathState(
                     bot,
@@ -5044,7 +5109,8 @@ public sealed class LadderMapService
         // This does not itself build a path. It only makes Valve's repath timer
         // immediately eligible. One write is enough; repeatedly zeroing the
         // timer gave us no extra benefit in live traces.
-        if (!traversal.PostExitRepathRequested)
+        if (!traversal.PostExitRepathRequested &&
+            !traversal.PostExitNativeDismountRequested)
         {
             traversal.PostExitRepathRequested = true;
             traversal.PostExitRepathRequestedAt = now;
@@ -5934,6 +6000,233 @@ public sealed class LadderMapService
                 $"BOT-PATH map={_document.Map}; phase={phase}; slot={slot}; id={ladderId}; " +
                 $"state=unavailable; error={exception.Message}");
         }
+    }
+
+    private bool TryTransitionNativeLadderFsmToDismount(
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        int slot,
+        int ladderId)
+    {
+        try
+        {
+            if (!OperatingSystem.IsLinux() ||
+                _nativeSetLadderState == null ||
+                _nativeSetLadderState.Handle == IntPtr.Zero)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    "reason=native-setter-unavailable; action=leave-valve");
+                return false;
+            }
+
+            if (bot.Handle == IntPtr.Zero)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    "reason=bot-handle-zero; action=leave-valve");
+                return false;
+            }
+
+            // The native DISMOUNT entry is requested only after our physical
+            // exit has already detached the pawn from MOVETYPE_LADDER.
+            // Requiring WALK here prevents an accidental call during climbing,
+            // death, noclip, observer transitions, etc.
+            if (pawn.MoveType != MoveType_t.MOVETYPE_WALK)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=move-type-not-walk; moveType={pawn.MoveType}; action=leave-valve");
+                return false;
+            }
+
+            int waitingOffset =
+                Schema.GetSchemaOffset(
+                    "CCSBot",
+                    "m_isWaitingBehindFriend");
+
+            int ladderEndOffset =
+                Schema.GetSchemaOffset(
+                    "CCSBot",
+                    "m_pathLadderEnd");
+
+            // The live build places the embedded ladder FSM at 0x4F40 and
+            // m_pathLadderEnd at 0x4F64. Derive the FSM address from the
+            // exported schema field instead of hard-coding the absolute
+            // offset, and refuse the call if Valve changes the known layout.
+            if (waitingOffset <= 0 ||
+                ladderEndOffset - waitingOffset != 0x2C)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=hidden-layout-mismatch; wait=0x{waitingOffset:X}; end=0x{ladderEndOffset:X}; " +
+                    "action=leave-valve");
+                return false;
+            }
+
+            int fsmOffset =
+                ladderEndOffset - 0x24;
+
+            int stateOffset =
+                fsmOffset + 0x08;
+
+            int activeOffset =
+                fsmOffset + 0x14;
+
+            int pathLadderOffset =
+                fsmOffset + 0x18;
+
+            if (fsmOffset != waitingOffset + 0x08 ||
+                pathLadderOffset != ladderEndOffset - 0x0C)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    "reason=derived-layout-check-failed; action=leave-valve");
+                return false;
+            }
+
+            long ownerRaw =
+                Marshal.ReadInt64(
+                    bot.Handle,
+                    fsmOffset);
+
+            IntPtr owner =
+                new(ownerRaw);
+
+            if (owner != bot.Handle)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=fsm-owner-mismatch; owner=0x{unchecked((ulong)ownerRaw):X16}; " +
+                    $"bot=0x{unchecked((ulong)bot.Handle.ToInt64()):X16}; action=leave-valve");
+                return false;
+            }
+
+            int stateBefore =
+                Marshal.ReadInt32(
+                    bot.Handle,
+                    stateOffset);
+
+            int activeBefore =
+                Marshal.ReadInt32(
+                    bot.Handle,
+                    activeOffset);
+
+            ulong pointerBefore =
+                unchecked(
+                    (ulong)Marshal.ReadInt64(
+                        bot.Handle,
+                        pathLadderOffset));
+
+            if (stateBefore < 0 ||
+                stateBefore > NativeLadderStateDismount)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=invalid-fsm-state; state={stateBefore}; pointer=0x{pointerBefore:X16}; " +
+                    "action=leave-valve");
+                return false;
+            }
+
+            // There is nothing to repair if Valve has already released its
+            // native ladder. Keep the old post-exit fallback available.
+            if (pointerBefore == 0)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=path-ladder-already-clear; state={NativeLadderStateName(stateBefore)}({stateBefore}); " +
+                    $"active={activeBefore}; action=leave-valve");
+                return false;
+            }
+
+            // The active field is part of the same native FSM. A nonzero
+            // m_pathLadder with an inactive FSM is an unexpected combination;
+            // do not attempt to 'repair' it by forcing a transition.
+            if (activeBefore == 0)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-SKIP map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=fsm-inactive; state={NativeLadderStateName(stateBefore)}({stateBefore}); " +
+                    $"pointer=0x{pointerBefore:X16}; action=leave-valve");
+                return false;
+            }
+
+            if (stateBefore == NativeLadderStateDismount)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"stateBefore=DISMOUNT(8); stateAfter=DISMOUNT(8); active={activeBefore}; " +
+                    $"pointerBefore=0x{pointerBefore:X16}; action=already-in-native-dismount");
+                return true;
+            }
+
+            IntPtr fsmAddress =
+                IntPtr.Add(
+                    bot.Handle,
+                    fsmOffset);
+
+            // Important: this invokes Valve's state-entry routine. We do not
+            // write state, active flags, m_pathLadder, PathIndex, GoalPosition,
+            // view angles, or any other hidden field ourselves.
+            _nativeSetLadderState.Invoke(
+                fsmAddress,
+                NativeLadderStateDismount);
+
+            int stateAfter =
+                Marshal.ReadInt32(
+                    bot.Handle,
+                    stateOffset);
+
+            int activeAfter =
+                Marshal.ReadInt32(
+                    bot.Handle,
+                    activeOffset);
+
+            ulong pointerAfter =
+                unchecked(
+                    (ulong)Marshal.ReadInt64(
+                        bot.Handle,
+                        pathLadderOffset));
+
+            bool accepted =
+                stateAfter ==
+                NativeLadderStateDismount;
+
+            _info(
+                $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
+                $"fsmOffset=0x{fsmOffset:X}; stateBefore={NativeLadderStateName(stateBefore)}({stateBefore}); " +
+                $"stateAfter={NativeLadderStateName(stateAfter)}({stateAfter}); " +
+                $"activeBefore={activeBefore}; activeAfter={activeAfter}; " +
+                $"pointerBefore=0x{pointerBefore:X16}; pointerAfter=0x{pointerAfter:X16}; " +
+                $"accepted={accepted}; action=native-fsm-transition");
+
+            return accepted;
+        }
+        catch (Exception exception)
+        {
+            _info(
+                $"POST-LADDER-NATIVE-DISMOUNT-FAIL map={_document.Map}; slot={slot}; id={ladderId}; " +
+                $"error={exception.Message}; action=leave-valve");
+            return false;
+        }
+    }
+
+    private static string NativeLadderStateName(
+        int state)
+    {
+        return state switch
+        {
+            0 => "APPROACH",
+            1 => "STOP_MOVING",
+            2 => "FACE_LADDER",
+            3 => "TELEPORT_TO_MOUNT_POSITION",
+            4 => "MOUNT_LADDER",
+            5 => "FACE_TRAVERSAL_DIRECTION",
+            6 => "TRAVERSE",
+            7 => "FACE_EXIT",
+            8 => "DISMOUNT",
+            _ => "UNKNOWN"
+        };
     }
 
     private static bool TryReadHiddenPathLadderPointer(
@@ -7481,6 +7774,10 @@ public sealed class LadderMapService
             float.NaN;
         public Vector3 PostExitHandoffGoal { get; set; }
         public bool PostExitHandoffGoalValid { get; set; }
+
+        public bool PostExitNativeDismountRequested { get; set; }
+        public float PostExitNativeDismountRequestedAt { get; set; } =
+            float.NegativeInfinity;
 
         public bool PostExitRepathRequested { get; set; }
         public float PostExitRepathRequestedAt { get; set; } =

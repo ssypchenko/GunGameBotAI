@@ -2,3 +2,4 @@ bin/
 obj/
 .agents/
 .codex/
+.DS_Store

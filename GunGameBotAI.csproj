@@ -9,13 +9,6 @@
     <RootNamespace>GunGameBotAI</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableDynamicLoading>true</EnableDynamicLoading>
-
-    <!--
-      GeometryProbe is a separate nested diagnostic project. Without this
-      exclusion, the root SDK-style project recursively picks up its generated
-      obj/*.AssemblyInfo.cs files and produces duplicate assembly attributes.
-    -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);GeometryProbe/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

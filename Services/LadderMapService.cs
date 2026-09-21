@@ -5135,6 +5135,35 @@ public sealed class LadderMapService
         // correction does not clear the underlying stale ladder state.
     }
 
+    private static bool TryReadBotGoalPosition(
+        CCSBot bot,
+        out Vector3 goal)
+    {
+        goal = default;
+
+        try
+        {
+            CounterStrikeSharp.API.Modules.Utils.Vector value =
+                bot.GoalPosition;
+
+            goal =
+                new Vector3(
+                    value.X,
+                    value.Y,
+                    value.Z);
+
+            return
+                float.IsFinite(goal.X) &&
+                float.IsFinite(goal.Y) &&
+                float.IsFinite(goal.Z);
+        }
+        catch
+        {
+            goal = default;
+            return false;
+        }
+    }
+
     private static bool TryGetLiveBotEnemy(
         CCSPlayerPawn pawn,
         CCSBot bot,

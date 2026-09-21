@@ -23,8 +23,9 @@ namespace GunGameBotAI.Services;
 /// 2) Proactive bot traversal. Valve navigation owns the approach. The plugin
 ///    issues one learned entry jump, validates that MOVETYPE_LADDER belongs to
 ///    the intended physical ladder, then reproduces the measured human ladder
-///    input: look into/up the ladder and hold normalised Forward=1. There is no
-///    rescue/remount path; failed attempts are abandoned after a cooldown.
+///    input: look into/up the ladder and hold normalised Forward=1. After the
+///    physical exit, control returns to Valve through its native ladder FSM
+///    DISMOUNT transition; recovery remains only as a safety fallback.
 /// </summary>
 public sealed class LadderMapService
 {
@@ -32,11 +33,9 @@ public sealed class LadderMapService
     private const float PreviousSampleMaxAge = 0.35f;
     private const float BottomSampleTolerance = 14.0f;
 
-    // Post-exit recovery is deliberately passive. Live traces proved that
-    // repeatedly forcing GoalPosition and pawn pitch makes the stale Valve
-    // ladder state visibly worse (head shaking and back/forward fighting).
-    // Give Valve a short window to rebuild its own path, then release without
-    // turning a physically successful climb into a recovery teleport.
+    // Normal post-exit handoff uses Valve's native ladder FSM DISMOUNT state.
+    // The passive window below remains only for fallback cases where the native
+    // transition is unavailable or Valve had already released the ladder state.
     private const float PostExitPassiveReleaseSeconds = 2.25f;
     private const float PostExitStateDiagnosticIntervalSeconds = 0.50f;
     private const float PostExitGroundedConfirmSeconds = 0.10f;
@@ -3352,14 +3351,7 @@ public sealed class LadderMapService
         traversal.PostExitPhysicalSuccessPosition = default;
         traversal.PostExitLastMovementPosition = default;
         traversal.PostExitLastMovementAt = float.NegativeInfinity;
-        traversal.PostExitStallCorrectionCount = 0;
         traversal.PostExitLastReleaseDeferLogAt = float.NegativeInfinity;
-        traversal.PostExitGoalIssued = false;
-        traversal.PostExitGoalIssuedAt = float.NegativeInfinity;
-        traversal.PostExitGoalLastWriteAt = float.NegativeInfinity;
-        traversal.PostExitGoalWriteCount = 0;
-        traversal.PostExitGoalRevertCount = 0;
-        traversal.PostExitGoal = default;
 
         float referenceDeviation =
             GetTargetPathDeviation(
@@ -5631,13 +5623,19 @@ public sealed class LadderMapService
                 stateAfter ==
                 NativeLadderStateDismount;
 
-            if (Config.Debug)
+            if (!accepted)
+            {
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-FAIL map={_document.Map}; slot={slot}; id={ladderId}; " +
+                    $"reason=state-not-accepted; stateBefore={NativeLadderStateName(stateBefore)}({stateBefore}); " +
+                    $"stateAfter={NativeLadderStateName(stateAfter)}({stateAfter}); action=leave-valve");
+            }
+            else if (Config.Debug)
             {
                 _debug(
                     $"POST-LADDER-NATIVE-DISMOUNT map={_document.Map}; slot={slot}; id={ladderId}; " +
                     $"stateBefore={NativeLadderStateName(stateBefore)}({stateBefore}); " +
-                    $"stateAfter={NativeLadderStateName(stateAfter)}({stateAfter}); " +
-                    $"accepted={accepted}; action=native-fsm-transition");
+                    "stateAfter=DISMOUNT(8); action=native-fsm-transition");
             }
 
             return accepted;
@@ -7075,17 +7073,7 @@ public sealed class LadderMapService
         public Vector3 PostExitLastMovementPosition { get; set; }
         public float PostExitLastMovementAt { get; set; } =
             float.NegativeInfinity;
-        public int PostExitStallCorrectionCount { get; set; }
         public float PostExitLastReleaseDeferLogAt { get; set; } =
             float.NegativeInfinity;
-
-        public bool PostExitGoalIssued { get; set; }
-        public float PostExitGoalIssuedAt { get; set; } =
-            float.NegativeInfinity;
-        public float PostExitGoalLastWriteAt { get; set; } =
-            float.NegativeInfinity;
-        public int PostExitGoalWriteCount { get; set; }
-        public int PostExitGoalRevertCount { get; set; }
-        public Vector3 PostExitGoal { get; set; }
     }
 }

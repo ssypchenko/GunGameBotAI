@@ -120,20 +120,20 @@ public sealed class LadderMapService
                     _nativeSetLadderState = candidate;
 
                     _info(
-                        "[GunGameBotAI][LADDER] NATIVE-LADDER-FSM init=resolved; " +
+                        "NATIVE-LADDER-FSM init=resolved; " +
                         "target=SetLadderState; dismountState=8; platform=linux");
                 }
                 else
                 {
                     _info(
-                        "[GunGameBotAI][LADDER] NATIVE-LADDER-FSM init=unavailable; " +
+                        "NATIVE-LADDER-FSM init=unavailable; " +
                         "reason=signature-not-resolved; action=read-only-fallback");
                 }
             }
             catch (Exception exception)
             {
                 _info(
-                    "[GunGameBotAI][LADDER] NATIVE-LADDER-FSM init=unavailable; " +
+                    "NATIVE-LADDER-FSM init=unavailable; " +
                     $"reason=resolver-exception; error={exception.Message}; action=read-only-fallback");
             }
         }
@@ -2205,6 +2205,24 @@ public sealed class LadderMapService
 
             bool groundedNow =
                 IsGrounded(pawn);
+
+            if (traversal.PostExitNativeDismountRequested &&
+                !traversal.PostExitNativeDismountCompleted &&
+                TryReadHiddenPathLadderPointer(
+                    bot,
+                    out _,
+                    out ulong nativeDismountPointer) &&
+                nativeDismountPointer == 0)
+            {
+                traversal.PostExitNativeDismountCompleted = true;
+                traversal.PostExitNativeDismountCompletedAt = now;
+
+                _info(
+                    $"POST-LADDER-NATIVE-DISMOUNT-COMPLETE map={_document.Map}; slot={state.Slot}; id={ladder.Id}; " +
+                    $"elapsed={(now - traversal.PostExitNativeDismountRequestedAt):0.###}s; " +
+                    $"pathIndex={bot.PathIndex}; pathLadderEnd={bot.PathLadderEnd:0.###}; " +
+                    $"moveType={pawn.MoveType}; action=valve-cleared-path-ladder");
+            }
 
             bool onTopSurface =
                 groundedNow &&
@@ -6107,8 +6125,8 @@ public sealed class LadderMapService
                     bot.Handle,
                     stateOffset);
 
-            int activeBefore =
-                Marshal.ReadInt32(
+            byte activeBefore =
+                Marshal.ReadByte(
                     bot.Handle,
                     activeOffset);
 
@@ -6177,8 +6195,8 @@ public sealed class LadderMapService
                     bot.Handle,
                     stateOffset);
 
-            int activeAfter =
-                Marshal.ReadInt32(
+            byte activeAfter =
+                Marshal.ReadByte(
                     bot.Handle,
                     activeOffset);
 
@@ -7777,6 +7795,9 @@ public sealed class LadderMapService
 
         public bool PostExitNativeDismountRequested { get; set; }
         public float PostExitNativeDismountRequestedAt { get; set; } =
+            float.NegativeInfinity;
+        public bool PostExitNativeDismountCompleted { get; set; }
+        public float PostExitNativeDismountCompletedAt { get; set; } =
             float.NegativeInfinity;
 
         public bool PostExitRepathRequested { get; set; }

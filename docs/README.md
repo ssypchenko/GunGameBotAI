@@ -6,5 +6,6 @@ The plugin documentation is intentionally kept beside the project source.
 - `runtime-and-deployment.md` — lifecycle, deployment, and verification gates.
 - `shared-patterns.md` — CounterStrikeSharp and GunGame API boundaries.
 - `capabilities/knife-rush.md` — Knife Rush state machine and safety rules.
+- `capabilities/stuck-monitor.md` — Stage 1 observation-only stuck diagnostics.
 
 - `STABLE_BEHAVIOUR_BASELINE.md` — frozen Stage 0 behavioural baseline and build/dependency identifiers.

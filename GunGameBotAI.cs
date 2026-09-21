@@ -1031,6 +1031,29 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             "[GunGameBotAI] ladder learning=manual-only; bots never create persistent ladder records.");
     }
 
+    [ConsoleCommand("css_ggbotai_stuck_monitor", "Enable or disable observation-only stuck monitoring.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnStuckMonitorCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_stuck_monitor 0|1");
+            return;
+        }
+
+        Config.StuckMonitorEnabled = enabled;
+        _stuckMonitor.Config = Config;
+
+        if (!enabled)
+            _stuckMonitor.Reset();
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] stuck monitor={(enabled ? "enabled" : "disabled")}; " +
+            "mode=observe-only.");
+    }
+
     [ConsoleCommand("css_ggbotai_debug", "Enable or disable focused GunGameBotAI diagnostics.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnDebugCommand(CCSPlayerController? player, CommandInfo command)

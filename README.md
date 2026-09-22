@@ -25,7 +25,10 @@ included until its exact signature is verified against the target live build.
 - `css_ggbotai_status` — show runtime, timer, bot, mode, and weapon-backend state.
 - `css_ggbotai_ladder_teach 0|1` — explicitly unlock/lock trusted human ladder persistence. Teaching is OFF after plugin load and cannot be armed by configuration.
 - `css_ggbotai_debug 0|1` — toggle diagnostic logging.
-- `css_ggbotai_stuck_monitor 0|1` — enable/disable observation-only stuck monitoring.\n- `css_ggbotai_aim_debug 0|1` — enable/disable point-specific visibility diagnostics for the current Valve enemy.
+- `css_ggbotai_stuck_monitor 0|1` — enable/disable observation-only stuck monitoring.
+- `css_ggbotai_aim_debug 0|1` — enable/disable point-specific visibility diagnostics for the current Valve enemy.
+- `css_ggbotai_aim 0|1` — enable/disable Stage 4 bounded targetSpot correction.
+- `css_ggbotai_aim_mode mixed|head|body` — choose Stage 4 point priority policy.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.
 - `css_ggbotai_reload` — reload the plugin configuration.
@@ -69,10 +72,17 @@ Stage 3 adds `VisibilityTraceService` using CounterStrikeSharp's built-in
 diagnostic traces. When explicitly enabled it samples HEAD/CHEST/GUT/PELVIS for
 the current Valve enemy only; it does not modify aim or enemy selection.
 
+Stage 4 adds an opt-in `PickNewAimSpot` PostHook. Valve still selects enemies,
+rotates the bot, predicts and fires. GunGameBotAI keeps Valve's targetSpot when
+it is on the live enemy and visible; otherwise it may replace only targetSpot
+with the first visible AABB aim point selected by `AimPolicyService`.
+`IAimPointProvider` keeps the coordinate source replaceable if later testing
+justifies a hybrid/bone-backed HEAD point. The feature defaults to OFF.
+
 ## Known limitations and verification gates
 
 - There is no complete path-finding or wall-penetration/omniscience logic.
-- Aim enhancement is disabled by default and has no native implementation.
+- Aim enhancement is disabled by default. Its native PickNewAimSpot hook is fail-closed: an unmatched signature leaves Valve aim unchanged.
 - Public command weapon switching requires live-server verification on the exact
   deployed game build; failure is fail-closed and leaves Valve bot behaviour in
   control.

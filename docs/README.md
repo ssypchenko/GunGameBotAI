@@ -6,6 +6,9 @@ The plugin documentation is intentionally kept beside the project source.
 - `runtime-and-deployment.md` — lifecycle, deployment, and verification gates.
 - `shared-patterns.md` — CounterStrikeSharp and GunGame API boundaries.
 - `capabilities/knife-rush.md` — Knife Rush state machine and safety rules.
-- `capabilities/stuck-monitor.md` — Stage 1 observation-only stuck diagnostics.\n- `capabilities/transient-control.md` — Stage 2 bounded movement-lease infrastructure.\n- `capabilities/visibility-trace.md` — Stage 3 point-specific visibility tracing and aim diagnostics.
+- `capabilities/stuck-monitor.md` — Stage 1 observation-only stuck diagnostics.
+- `capabilities/transient-control.md` — Stage 2 bounded movement-lease infrastructure.
+- `capabilities/visibility-trace.md` — Stage 3 point-specific visibility tracing and aim diagnostics.
+- `capabilities/aim-service.md` — Stage 4 bounded PickNewAimSpot targetSpot correction.
 
 - `STABLE_BEHAVIOUR_BASELINE.md` — frozen Stage 0 behavioural baseline and build/dependency identifiers.

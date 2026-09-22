@@ -5,6 +5,7 @@ namespace GunGameBotAI.Models;
 public enum AimPointKind
 {
     Head,
+    UpperChest,
     Chest,
     Gut,
     Pelvis

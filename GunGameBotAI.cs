@@ -31,8 +31,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly KnifeRushService _knifeRush;
     private readonly GeometrySafetyService _geometrySafety;
     private readonly StuckMonitorService _stuckMonitor;
+    private readonly IAimPointProvider _aimPointProvider;
     private readonly VisibilityTraceService _visibilityTrace;
     private readonly AimDiagnosticsService _aimDiagnostics;
+    private readonly AimPolicyService _aimPolicy;
+    private readonly AimService _aimService;
+    private readonly AimNativeService _aimNative;
     private LadderMapService? _ladderMap;
     private readonly Dictionary<string, float> _lastErrorAt = new();
     private const float BotSpawnGraceSeconds = 0.40f;
@@ -75,14 +79,31 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             message => Logger.LogInformation("[GunGameBotAI][GEOMETRY] {Message}", message));
         _stuckMonitor = new StuckMonitorService(
             message => Logger.LogInformation("[GunGameBotAI][StuckMonitor] {Message}", message));
-        _visibilityTrace = new VisibilityTraceService();
+        _aimPointProvider = new AabbAimPointProvider();
+        _visibilityTrace = new VisibilityTraceService(
+            _aimPointProvider);
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
             message => Logger.LogInformation("[GunGameBotAI][Aim] {Message}", message));
+        _aimPolicy = new AimPolicyService();
+        _aimService = new AimService(
+            _visibilityTrace,
+            _aimPolicy,
+            message => Logger.LogInformation("[GunGameBotAI][Aim] {Message}", message));
+        _aimNative = new AimNativeService(
+            _registry,
+            _aimService,
+            () =>
+                _loaded &&
+                _enabled &&
+                !_mapChanging &&
+                Config.AimEnhancementEnabled,
+            message => Logger.LogInformation("[GunGameBotAI]{Message}", message),
+            message => Logger.LogWarning("[GunGameBotAI]{Message}", message));
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.32";
+    public override string ModuleVersion => "0.7.33";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -97,7 +118,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ApplyConfigToServices();
 
         if (!_loaded)
+        {
             _enabled = Config.EnabledOnLoad;
+        }
+        else if (!SynchronizeAimHook() &&
+                 _enabled &&
+                 Config.AimEnhancementEnabled)
+        {
+            Logger.LogWarning(
+                "[GunGameBotAI][AimNative] Configuration requested AimService, but PickNewAimSpot hook is unavailable.");
+        }
     }
 
     public override void Load(bool hotReload)
@@ -136,6 +166,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventBotTakeover>(OnBotTakeover);
 
+        _aimNative.Initialize();
+
+        if (!SynchronizeAimHook() &&
+            _enabled &&
+            Config.AimEnhancementEnabled)
+        {
+            Logger.LogWarning(
+                "[GunGameBotAI][AimNative] AimEnhancementEnabled=true but PickNewAimSpot hook is unavailable; Valve aim remains unchanged.");
+        }
+
         StartSharedTimers();
         Logger.LogInformation(
             "[GunGameBotAI] Loaded. Runtime is {RuntimeState}; weapon backend: {Backend}.",
@@ -168,6 +208,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     public override void Unload(bool hotReload)
     {
+        _aimNative.Shutdown();
         StopSharedTimers();
         _ladderMap?.Shutdown();
         _ladderMap = null;
@@ -262,6 +303,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.RemoveSlot(slot);
         _stuckMonitor.RemoveSlot(slot);
         _aimDiagnostics.RemoveSlot(slot);
+        _aimNative.RemoveSlot(slot);
         _transientControl.CancelSlot(slot);
     }
 
@@ -345,6 +387,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _aimDiagnostics.RemoveSlot(slot);
+                    _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
                     _registry.Remove(slot);
                     continue;
@@ -358,6 +401,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _aimDiagnostics.RemoveSlot(slot);
+                    _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
                     _registry.DeactivateActuator(slot);
                     continue;
@@ -860,6 +904,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.RemoveSlot(playerSlot);
         _stuckMonitor.RemoveSlot(playerSlot);
         _aimDiagnostics.RemoveSlot(playerSlot);
+        _aimNative.RemoveSlot(playerSlot);
         _transientControl.CancelSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
@@ -872,10 +917,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private HookResult OnRoundEnd(EventRoundEnd @event, GameEventInfo info)
     {
-        // Stage 2 leases and Stage 3 diagnostic throttle state are round-scoped
-        // even though the rest of the runtime state resets at next round start.
+        // Stage 2 leases and Stage 3/4 aim state are round-scoped even though
+        // the rest of the runtime state resets at next round start.
         _transientControl.Clear();
         _aimDiagnostics.Reset();
+        _aimNative.ClearRuntimeState();
         return HookResult.Continue;
     }
 
@@ -930,6 +976,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _aimDiagnostics.RemoveSlot(slot);
+            _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
             _registry.Remove(slot);
         }
@@ -995,6 +1042,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _aimDiagnostics.RemoveSlot(slot);
+            _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
             _registry.DeactivateActuator(slot);
         }
@@ -1157,6 +1205,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         Config.AimDebug = enabled;
         _aimDiagnostics.Config = Config;
+        _aimService.Config = Config;
 
         if (!enabled)
             _aimDiagnostics.Reset();
@@ -1165,7 +1214,80 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         command.ReplyToCommand(
             $"[GunGameBotAI] aim diagnostics={(enabled ? "enabled" : "disabled")}; " +
-            "mode=visibility-only; aim modification=disabled.");
+            $"aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_aim", "Enable or disable Stage 4 targetSpot correction.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnAimEnhancementCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_aim 0|1");
+            return;
+        }
+
+        if (enabled &&
+            !_aimNative.Available)
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] AimService cannot be enabled: PickNewAimSpot signature is unavailable on this server build.");
+            return;
+        }
+
+        Config.AimEnhancementEnabled =
+            enabled;
+        _aimService.Config =
+            Config;
+
+        if (!SynchronizeAimHook())
+        {
+            Config.AimEnhancementEnabled =
+                false;
+            _aimService.Config =
+                Config;
+
+            command.ReplyToCommand(
+                "[GunGameBotAI] AimService hook could not be enabled; feature remains disabled.");
+
+            PersistConfig(command);
+            return;
+        }
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}; " +
+            $"aimMode={Config.AimMode}; nativeAvailable={_aimNative.Available}; hooked={_aimNative.Hooked}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_aim_mode", "Set Stage 4 aim policy: mixed, head, or body.")]
+    [CommandHelper(minArgs: 1, usage: "mixed|head|body", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnAimModeCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        string value =
+            command.GetArg(1)
+                .Trim();
+
+        if (!Enum.TryParse(
+                value,
+                ignoreCase: true,
+                out AimMode mode))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_aim_mode mixed|head|body");
+            return;
+        }
+
+        Config.AimMode =
+            mode;
+        _aimService.Config =
+            Config;
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] aimMode={Config.AimMode}.");
     }
 
     [ConsoleCommand("css_ggbotai_debug", "Enable or disable focused GunGameBotAI diagnostics.")]
@@ -1257,7 +1379,19 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             if (previousEnabled != Config.EnabledOnLoad)
                 SetRuntimeEnabled(Config.EnabledOnLoad);
 
-            command.ReplyToCommand("[GunGameBotAI] Configuration reloaded.");
+            if (!SynchronizeAimHook() &&
+                _enabled &&
+                Config.AimEnhancementEnabled)
+            {
+                Logger.LogWarning(
+                    "[GunGameBotAI][AimNative] Reload requested AimService, but PickNewAimSpot hook is unavailable; Valve aim remains unchanged.");
+                command.ReplyToCommand(
+                    "[GunGameBotAI] Configuration reloaded, but AimService is unavailable on this server build.");
+            }
+            else
+            {
+                command.ReplyToCommand("[GunGameBotAI] Configuration reloaded.");
+            }
         }
         catch (Exception exception)
         {
@@ -1311,6 +1445,15 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             ReleaseAllKnownButtonPulses();
 
         _enabled = enabled;
+
+        if (!SynchronizeAimHook() &&
+            _enabled &&
+            Config.AimEnhancementEnabled)
+        {
+            Logger.LogWarning(
+                "[GunGameBotAI][AimNative] Runtime enabled but PickNewAimSpot hook is unavailable; AimService remains inactive.");
+        }
+
         _corrections.Action(-1, nameof(GunGameBotAI), "runtime", enabled ? "enabled" : "disabled", "operator command or configuration");
         _buttonPulses.CancelAll();
         _registry.Clear();
@@ -1318,6 +1461,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.ResetRuntimeTracking();
         _stuckMonitor.Reset();
         _aimDiagnostics.Reset();
+        _aimNative.Reset();
         _transientControl.Clear();
 
         if (!enabled)
@@ -1335,8 +1479,22 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
         _aimDiagnostics.Reset();
+        _aimNative.ClearRuntimeState();
         _transientControl.Clear();
         _knifeRush.ResetStatistics();
+    }
+
+    private bool SynchronizeAimHook()
+    {
+        bool shouldHook =
+            _loaded &&
+            _enabled &&
+            !_mapChanging &&
+            Config.AimEnhancementEnabled;
+
+        return
+            _aimNative.SetHookEnabled(
+                shouldHook);
     }
 
     private void ApplyConfigToServices()
@@ -1353,6 +1511,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Config = Config;
         _stuckMonitor.Config = Config;
         _aimDiagnostics.Config = Config;
+        _aimService.Config = Config;
 
         if (!Config.StuckMonitorEnabled)
             _stuckMonitor.Reset();
@@ -1387,12 +1546,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; " +
             $"focusedDebug={(Config.Debug ? "enabled" : "disabled")}; " +
             $"aimDebug={(Config.AimDebug ? "enabled" : "disabled")}; aimDiagTracked={_aimDiagnostics.TrackedCount}; " +
+            $"aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}; aimMode={Config.AimMode}; " +
+            $"aimNativeAvailable={_aimNative.Available}; aimHooked={_aimNative.Hooked}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +
             $"transientSlots={_transientControl.SlotCount}; transientLeases={_transientControl.LeaseCount}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] decisionTimer={_decisionTimer != null}; actuatorTimer={_actuatorTimer != null}; decision={Config.DecisionIntervalSeconds:0.###}s; fastTicks={Config.FastActuatorEveryTicks}; backend={_weaponActivation.BackendName}; backendAvailable={_weaponActivation.IsBackendAvailable}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] aimPerf {_aimService.PerformanceSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +

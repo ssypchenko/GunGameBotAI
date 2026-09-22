@@ -1,12 +1,13 @@
 using System.Text.Json.Serialization;
 using CounterStrikeSharp.API.Core;
+using GunGameBotAI.Models;
 
 namespace GunGameBotAI.Config;
 
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 25;
+    public override int Version { get; set; } = 26;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -241,7 +242,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool KnifeRushAllowOnGrenadeLevel { get; set; } = false;
 
     public bool GrenadeLevelEnabled { get; set; } = true;
+
+    // Stage 4 aim correction is deliberately opt-in for the first production release.
     public bool AimEnhancementEnabled { get; set; } = false;
+    public AimMode AimMode { get; set; } = GunGameBotAI.Models.AimMode.Mixed;
     public bool AimDebug { get; set; } = false;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
@@ -252,6 +256,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         DecisionIntervalSeconds = Clamp(DecisionIntervalSeconds, 0.05f, 0.25f, 0.10f, nameof(DecisionIntervalSeconds), warn);
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
+
+        if (!Enum.IsDefined(
+                typeof(GunGameBotAI.Models.AimMode),
+                AimMode))
+        {
+            warn(
+                $"AimMode={AimMode} is invalid; using Mixed.");
+
+            AimMode =
+                GunGameBotAI.Models.AimMode.Mixed;
+        }
 
         LadderManualTeacherSlot = Clamp(LadderManualTeacherSlot, -1, 63, -1, nameof(LadderManualTeacherSlot), warn);
 
@@ -675,6 +690,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // AimDebug is opt-in and no aim behaviour is modified.
             AimDebug = false;
             Version = 25;
+        }
+
+        if (Version < 26)
+        {
+            // v26 adds Stage 4 PickNewAimSpot correction. Keep the behavioural
+            // feature OFF on upgrade; operators enable it explicitly after
+            // validating the native signature on the target server build.
+            AimEnhancementEnabled = false;
+            AimMode = GunGameBotAI.Models.AimMode.Mixed;
+            Version = 26;
         }
     }
 

@@ -118,7 +118,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ApplyConfigToServices();
 
         if (!_loaded)
+        {
             _enabled = Config.EnabledOnLoad;
+        }
+        else if (!SynchronizeAimHook() &&
+                 _enabled &&
+                 Config.AimEnhancementEnabled)
+        {
+            Logger.LogWarning(
+                "[GunGameBotAI][AimNative] Configuration requested AimService, but PickNewAimSpot hook is unavailable.");
+        }
     }
 
     public override void Load(bool hotReload)
@@ -159,9 +168,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         _aimNative.Initialize();
 
-        if (_enabled &&
-            Config.AimEnhancementEnabled &&
-            !_aimNative.SetHookEnabled(true))
+        if (!SynchronizeAimHook() &&
+            _enabled &&
+            Config.AimEnhancementEnabled)
         {
             Logger.LogWarning(
                 "[GunGameBotAI][AimNative] AimEnhancementEnabled=true but PickNewAimSpot hook is unavailable; Valve aim remains unchanged.");
@@ -1231,12 +1240,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimService.Config =
             Config;
 
-        bool shouldHook =
-            _enabled &&
-            enabled;
-
-        if (!_aimNative.SetHookEnabled(
-                shouldHook))
+        if (!SynchronizeAimHook())
         {
             Config.AimEnhancementEnabled =
                 false;
@@ -1375,7 +1379,19 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             if (previousEnabled != Config.EnabledOnLoad)
                 SetRuntimeEnabled(Config.EnabledOnLoad);
 
-            command.ReplyToCommand("[GunGameBotAI] Configuration reloaded.");
+            if (!SynchronizeAimHook() &&
+                _enabled &&
+                Config.AimEnhancementEnabled)
+            {
+                Logger.LogWarning(
+                    "[GunGameBotAI][AimNative] Reload requested AimService, but PickNewAimSpot hook is unavailable; Valve aim remains unchanged.");
+                command.ReplyToCommand(
+                    "[GunGameBotAI] Configuration reloaded, but AimService is unavailable on this server build.");
+            }
+            else
+            {
+                command.ReplyToCommand("[GunGameBotAI] Configuration reloaded.");
+            }
         }
         catch (Exception exception)
         {
@@ -1430,9 +1446,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         _enabled = enabled;
 
-        if (!_aimNative.SetHookEnabled(
-                _enabled &&
-                Config.AimEnhancementEnabled) &&
+        if (!SynchronizeAimHook() &&
             _enabled &&
             Config.AimEnhancementEnabled)
         {
@@ -1468,6 +1482,19 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimNative.ClearRuntimeState();
         _transientControl.Clear();
         _knifeRush.ResetStatistics();
+    }
+
+    private bool SynchronizeAimHook()
+    {
+        bool shouldHook =
+            _loaded &&
+            _enabled &&
+            !_mapChanging &&
+            Config.AimEnhancementEnabled;
+
+        return
+            _aimNative.SetHookEnabled(
+                shouldHook);
     }
 
     private void ApplyConfigToServices()

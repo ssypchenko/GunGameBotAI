@@ -378,6 +378,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _aimDiagnostics.RemoveSlot(slot);
+                    _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
                     _registry.Remove(slot);
                     continue;
@@ -391,6 +392,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _aimDiagnostics.RemoveSlot(slot);
+                    _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
                     _registry.DeactivateActuator(slot);
                     continue;
@@ -893,6 +895,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.RemoveSlot(playerSlot);
         _stuckMonitor.RemoveSlot(playerSlot);
         _aimDiagnostics.RemoveSlot(playerSlot);
+        _aimNative.RemoveSlot(playerSlot);
         _transientControl.CancelSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
@@ -964,6 +967,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _aimDiagnostics.RemoveSlot(slot);
+            _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
             _registry.Remove(slot);
         }
@@ -1029,6 +1033,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _aimDiagnostics.RemoveSlot(slot);
+            _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
             _registry.DeactivateActuator(slot);
         }

@@ -29,6 +29,7 @@ public sealed class AimPolicyService
 
     public IReadOnlyList<AimPointKind> GetOrder(
         WeaponClass weaponClass,
+        string? weaponDesignerName,
         AimMode mode)
     {
         if (weaponClass is
@@ -43,16 +44,32 @@ public sealed class AimPolicyService
             {
                 AimMode.Head => HeadFirst,
                 AimMode.Body => BodyFirst,
-                _ => IsBodyFirstWeaponClass(
-                        weaponClass)
+                _ => IsBodyFirstWeapon(
+                        weaponClass,
+                        weaponDesignerName)
                     ? BodyFirst
                     : HeadFirst
             };
     }
 
-    private static bool IsBodyFirstWeaponClass(
-        WeaponClass weaponClass) =>
-        weaponClass is
-            WeaponClass.Sniper or
-            WeaponClass.Shotgun;
+    private static bool IsBodyFirstWeapon(
+        WeaponClass weaponClass,
+        string? weaponDesignerName)
+    {
+        if (weaponClass ==
+            WeaponClass.Shotgun)
+        {
+            return true;
+        }
+
+        return
+            string.Equals(
+                weaponDesignerName,
+                "weapon_awp",
+                StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(
+                weaponDesignerName,
+                "weapon_ssg08",
+                StringComparison.OrdinalIgnoreCase);
+    }
 }

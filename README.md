@@ -25,7 +25,7 @@ included until its exact signature is verified against the target live build.
 - `css_ggbotai_status` — show runtime, timer, bot, mode, and weapon-backend state.
 - `css_ggbotai_ladder_teach 0|1` — explicitly unlock/lock trusted human ladder persistence. Teaching is OFF after plugin load and cannot be armed by configuration.
 - `css_ggbotai_debug 0|1` — toggle diagnostic logging.
-- `css_ggbotai_stuck_monitor 0|1` — enable/disable observation-only stuck monitoring.
+- `css_ggbotai_stuck_monitor 0|1` — enable/disable observation-only stuck monitoring.\n- `css_ggbotai_aim_debug 0|1` — enable/disable point-specific visibility diagnostics for the current Valve enemy.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.
 - `css_ggbotai_reload` — reload the plugin configuration.
@@ -63,6 +63,11 @@ Stage 2 also includes `TransientControlService`, a bounded movement-lease
 infrastructure for future short combat corrections. It has no active consumer
 in this release, so with no leases it performs no movement writes. Existing
 Knife Rush and Ladder Management remain on their accepted implementations.
+
+Stage 3 adds `VisibilityTraceService` using CounterStrikeSharp's built-in
+`Trace.TraceEndShape` API. With `AimDebug=false` (the default), it performs no
+diagnostic traces. When explicitly enabled it samples HEAD/CHEST/GUT/PELVIS for
+the current Valve enemy only; it does not modify aim or enemy selection.
 
 ## Known limitations and verification gates
 

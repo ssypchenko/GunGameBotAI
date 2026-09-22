@@ -187,6 +187,12 @@ public sealed class AimNativeService
         }
     }
 
+    public void ClearRuntimeState()
+    {
+        _botPointerToSlot.Clear();
+        _aimService.ClearRuntimeState();
+    }
+
     public void Reset()
     {
         _botPointerToSlot.Clear();

@@ -55,12 +55,18 @@ The default profile is conservative:
   "AimDebug": false,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 1
+  "ConfigVersion": 26
 }
 ```
 
-`ConfigVersion` is the inherited CounterStrikeSharp configuration version and is
-kept at `1` by this plugin.
+`ConfigVersion` is migrated by the plugin; Stage 4 uses version `26`. Existing
+installations upgrading from an earlier version receive
+`AimEnhancementEnabled=false` and `AimMode="Mixed"`, so Stage 4 is never silently
+enabled by an upgrade.
+
+`AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook.
+`AimMode` accepts `Mixed`, `Head`, or `Body`. `AimDebug` enables Stage 3
+visibility diagnostics plus Stage 4 correction/performance diagnostics.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

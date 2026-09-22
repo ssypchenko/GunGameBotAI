@@ -15,14 +15,21 @@ namespace GunGameBotAI.Services;
 /// </summary>
 public sealed class AimNativeService
 {
-    // Observed public CS2 variants in 2026 changed only the m_enemy displacement
-    // in this prologue. Wildcarding that displacement keeps the signature
-    // tolerant to schema layout shifts while retaining a long function prologue.
-    private const string LinuxPickNewAimSpotSignature =
-        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC ? 8B 8F ? ? ? ? 83 F9 FF";
+    // Known Linux signatures from public 2026 builds. Keep these exact:
+    // a broad wildcard native signature is more likely to hook the wrong
+    // function than to fail safely after a game update.
+    private static readonly string[] LinuxPickNewAimSpotSignatures =
+    [
+        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E0 59 00 00 83 F9 FF",
+        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E8 59 00 00 83 F9 FF"
+    ];
 
-    private const string WindowsPickNewAimSpotSignature =
-        "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF";
+    // Current public Windows pattern necessarily contains instruction
+    // displacement/stack-size wildcards.
+    private static readonly string[] WindowsPickNewAimSpotSignatures =
+    [
+        "48 8B C4 55 57 48 8D 68 ? 48 81 EC ? ? ? ? 48 8B F9 0F 29 70 ? 8B 89 ? ? ? ? 83 F9 FF"
+    ];
 
     private const float ErrorLogIntervalSeconds =
         5.0f;
@@ -73,16 +80,16 @@ public sealed class AimNativeService
             return;
         }
 
-        string? signature =
+        string[]? signatures =
             RuntimeInformation.IsOSPlatform(
                 OSPlatform.Linux)
-                ? LinuxPickNewAimSpotSignature
+                ? LinuxPickNewAimSpotSignatures
                 : RuntimeInformation.IsOSPlatform(
                     OSPlatform.Windows)
-                    ? WindowsPickNewAimSpotSignature
+                    ? WindowsPickNewAimSpotSignatures
                     : null;
 
-        if (signature == null)
+        if (signatures == null)
         {
             _warning(
                 "[AimNative] PickNewAimSpot unsupported platform; AimService unavailable.");
@@ -90,40 +97,45 @@ public sealed class AimNativeService
             return;
         }
 
-        try
+        foreach (string signature in
+                 signatures)
         {
-            MemoryFunctionVoid<IntPtr> function =
-                new(signature);
-
-            if (function.Handle ==
-                nint.Zero)
+            try
             {
-                _warning(
-                    "[AimNative] PickNewAimSpot signature not found; AimService unavailable.");
+                MemoryFunctionVoid<IntPtr> function =
+                    new(signature);
+
+                if (function.Handle ==
+                    nint.Zero)
+                {
+                    continue;
+                }
+
+                _pickNewAimSpot =
+                    function;
+
+                _available =
+                    true;
+
+                _info(
+                    $"[AimNative] PickNewAimSpot signature OK; address=0x{function.Handle.ToInt64():X16}; hook=disabled.");
 
                 return;
             }
-
-            _pickNewAimSpot =
-                function;
-
-            _available =
-                true;
-
-            _info(
-                $"[AimNative] PickNewAimSpot signature OK; address=0x{function.Handle.ToInt64():X16}; hook=disabled.");
+            catch
+            {
+                // Try the next explicitly known signature. Failure is expected
+                // after some CS2 server updates and must not affect the plugin.
+            }
         }
-        catch (Exception exception)
-        {
-            _pickNewAimSpot =
-                null;
-            _available =
-                false;
 
-            _warning(
-                $"[AimNative] PickNewAimSpot resolve failed; AimService unavailable. " +
-                $"{exception.GetType().Name}: {exception.Message}");
-        }
+        _pickNewAimSpot =
+            null;
+        _available =
+            false;
+
+        _warning(
+            "[AimNative] PickNewAimSpot signature not found; AimService unavailable.");
     }
 
     public bool SetHookEnabled(

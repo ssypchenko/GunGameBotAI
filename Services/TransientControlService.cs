@@ -224,9 +224,10 @@ public sealed class TransientControlService
     }
 
     /// <summary>
-    /// Removes lease bookkeeping only. Movement values are deliberately not
+    /// Removes lease bookkeeping. Movement values are deliberately not
     /// restored because any previously observed Valve command may already be
-    /// stale. Valve owns the next command as soon as this method returns.
+    /// stale. If a live pawn is supplied, only a Duck pulse introduced by the
+    /// lease is released; Valve-owned crouch is preserved.
     /// </summary>
     public void CancelSlot(
         int slot,

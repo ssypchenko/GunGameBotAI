@@ -184,7 +184,8 @@ public sealed class TransientControlService
 
     public void CancelOwner(
         int slot,
-        string owner)
+        string owner,
+        CCSPlayerPawn? pawn = null)
     {
         if (string.IsNullOrWhiteSpace(owner) ||
             !_leases.TryGetValue(
@@ -194,10 +195,27 @@ public sealed class TransientControlService
             return;
         }
 
-        if (!byOwner.Remove(
-                owner.Trim()))
+        string normalisedOwner =
+            owner.Trim();
+
+        if (!byOwner.TryGetValue(
+                normalisedOwner,
+                out LeaseState? removed))
         {
             return;
+        }
+
+        byOwner.Remove(
+            normalisedOwner);
+
+        if (removed.Duck &&
+            pawn != null &&
+            !byOwner.Values.Any(lease => lease.Duck))
+        {
+            _buttonPulses.CancelButton(
+                slot,
+                pawn,
+                PlayerButtons.Duck);
         }
 
         if (byOwner.Count == 0)
@@ -210,9 +228,25 @@ public sealed class TransientControlService
     /// stale. Valve owns the next command as soon as this method returns.
     /// </summary>
     public void CancelSlot(
-        int slot)
+        int slot,
+        CCSPlayerPawn? pawn = null)
     {
+        bool hadDuckLease =
+            _leases.TryGetValue(
+                slot,
+                out Dictionary<string, LeaseState>? byOwner) &&
+            byOwner.Values.Any(lease => lease.Duck);
+
         _leases.Remove(slot);
+
+        if (hadDuckLease &&
+            pawn != null)
+        {
+            _buttonPulses.CancelButton(
+                slot,
+                pawn,
+                PlayerButtons.Duck);
+        }
     }
 
     public void Clear()
@@ -255,7 +289,9 @@ public sealed class TransientControlService
         if (pawn.MoveType ==
             CounterStrikeSharp.API.Modules.Utils.MoveType_t.MOVETYPE_LADDER)
         {
-            CancelSlot(slot);
+            CancelSlot(
+                slot,
+                pawn);
             return false;
         }
 

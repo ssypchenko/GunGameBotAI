@@ -390,7 +390,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         "learned physical ladder traversal owns movement");
 
                     _stuckMonitor.RemoveSlot(slot);
-                    _transientControl.CancelSlot(slot);
+                    _transientControl.CancelSlot(
+                        slot,
+                        pawn);
                     _registry.ActivateActuator(slot);
                     continue;
                 }
@@ -406,7 +408,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     BotBehaviorMode.KnifeLevel or
                     BotBehaviorMode.OpportunisticKnifeRush)
                 {
-                    _transientControl.CancelSlot(slot);
+                    _transientControl.CancelSlot(
+                        slot,
+                        pawn);
                 }
 
                 _stuckMonitor.Observe(
@@ -674,7 +678,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 if (externalMovementOwner)
                 {
-                    _transientControl.CancelSlot(slot);
+                    _transientControl.CancelSlot(
+                        slot,
+                        pawn);
                 }
                 else
                 {

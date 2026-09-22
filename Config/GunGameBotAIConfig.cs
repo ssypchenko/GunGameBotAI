@@ -6,7 +6,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 24;
+    public override int Version { get; set; } = 25;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -242,6 +242,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     public bool GrenadeLevelEnabled { get; set; } = true;
     public bool AimEnhancementEnabled { get; set; } = false;
+    public bool AimDebug { get; set; } = false;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
@@ -666,6 +667,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // No movement/repath/recovery behaviour is introduced.
             StuckMonitorEnabled = true;
             Version = 24;
+        }
+
+        if (Version < 25)
+        {
+            // v25 adds Stage 3 point-specific visibility diagnostics.
+            // AimDebug is opt-in and no aim behaviour is modified.
+            AimDebug = false;
+            Version = 25;
         }
     }
 

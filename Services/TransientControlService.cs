@@ -93,6 +93,7 @@ public sealed class TransientControlService
         bool? duck = null)
     {
         if (slot < 0 ||
+            slot >= Server.MaxPlayers ||
             string.IsNullOrWhiteSpace(owner))
         {
             return false;
@@ -304,13 +305,17 @@ public sealed class TransientControlService
         }
         catch
         {
-            CancelSlot(slot);
+            CancelSlot(
+                slot,
+                pawn);
             return false;
         }
 
         if (movement == null)
         {
-            CancelSlot(slot);
+            CancelSlot(
+                slot,
+                pawn);
             return false;
         }
 

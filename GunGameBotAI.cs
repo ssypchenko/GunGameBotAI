@@ -1447,6 +1447,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.ResetRuntimeTracking();
         _stuckMonitor.Reset();
         _aimDiagnostics.Reset();
+        _aimNative.Reset();
         _transientControl.Clear();
 
         if (!enabled)

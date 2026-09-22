@@ -912,7 +912,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         // the rest of the runtime state resets at next round start.
         _transientControl.Clear();
         _aimDiagnostics.Reset();
-        _aimNative.Reset();
+        _aimNative.ClearRuntimeState();
         return HookResult.Continue;
     }
 
@@ -1465,7 +1465,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
         _aimDiagnostics.Reset();
-        _aimNative.Reset();
+        _aimNative.ClearRuntimeState();
         _transientControl.Clear();
         _knifeRush.ResetStatistics();
     }

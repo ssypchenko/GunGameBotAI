@@ -238,9 +238,24 @@ public sealed class VisibilityTraceService
                 return false;
             }
 
-            return NativeValueReader.TryCopy(
-                bot.EyePosition,
-                out eyePosition);
+            if (!NativeValueReader.TryCopy(
+                    bot.EyePosition,
+                    out eyePosition) ||
+                !NativeValueReader.TryGetOrigin(
+                    botPawn,
+                    out Vector3 pawnOrigin))
+            {
+                return false;
+            }
+
+            float eyeOffset =
+                NativeValueReader.Distance3D(
+                    eyePosition,
+                    pawnOrigin);
+
+            return
+                eyeOffset >= 8.0f &&
+                eyeOffset <= 96.0f;
         }
         catch
         {
@@ -374,7 +389,7 @@ public sealed class VisibilityTraceService
             return
                 string.IsNullOrWhiteSpace(
                     hit.DesignerName)
-                    ? $"handle=0x{hit.Handle:X}"
+                    ? $"handle={hit.Handle}"
                     : hit.DesignerName;
         }
         catch

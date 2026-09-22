@@ -245,7 +245,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     // Stage 4 aim correction is deliberately opt-in for the first production release.
     public bool AimEnhancementEnabled { get; set; } = false;
-    public AimMode AimMode { get; set; } = AimMode.Mixed;
+    public AimMode AimMode { get; set; } = GunGameBotAI.Models.AimMode.Mixed;
     public bool AimDebug { get; set; } = false;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
@@ -687,7 +687,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // feature OFF on upgrade; operators enable it explicitly after
             // validating the native signature on the target server build.
             AimEnhancementEnabled = false;
-            AimMode = AimMode.Mixed;
+            AimMode = GunGameBotAI.Models.AimMode.Mixed;
             Version = 26;
         }
     }

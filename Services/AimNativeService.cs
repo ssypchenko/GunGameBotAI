@@ -111,7 +111,7 @@ public sealed class AimNativeService
                 true;
 
             _info(
-                $"[AimNative] PickNewAimSpot signature OK; address=0x{function.Handle:X}; hook=disabled.");
+                $"[AimNative] PickNewAimSpot signature OK; address=0x{function.Handle.ToInt64():X16}; hook=disabled.");
         }
         catch (Exception exception)
         {

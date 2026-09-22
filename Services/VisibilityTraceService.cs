@@ -59,6 +59,35 @@ public sealed class VisibilityTraceService
                result.Visible;
     }
 
+    /// <summary>
+    /// Same visibility test with failure separated from a legitimate blocked
+    /// result. Stage 4 uses this overload so a trace failure can never trigger
+    /// an aim correction.
+    /// </summary>
+    public bool TryIsPointVisible(
+        CCSPlayerPawn botPawn,
+        Vector3 targetPoint,
+        CCSPlayerPawn? targetPawn,
+        out bool visible)
+    {
+        visible = false;
+
+        if (!TryTracePoint(
+                botPawn,
+                targetPoint,
+                targetPawn,
+                out AimPointVisibility result,
+                AimPointKind.Chest))
+        {
+            return false;
+        }
+
+        visible =
+            result.Visible;
+
+        return true;
+    }
+
     public bool TryGetAimPoints(
         CCSPlayerPawn targetPawn,
         out AimPointSet points) =>

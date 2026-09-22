@@ -59,6 +59,11 @@ plugin writes from ordinary Valve bot behaviour.
 Runtime state and button pulses are cleared on disable, disconnect, death,
 round reset, map change, and bot takeover. Human players are excluded.
 
+Stage 2 also includes `TransientControlService`, a bounded movement-lease
+infrastructure for future short combat corrections. It has no active consumer
+in this release, so with no leases it performs no movement writes. Existing
+Knife Rush and Ladder Management remain on their accepted implementations.
+
 ## Known limitations and verification gates
 
 - There is no complete path-finding or wall-penetration/omniscience logic.

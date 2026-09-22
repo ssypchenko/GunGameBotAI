@@ -66,9 +66,14 @@ public sealed class AimService
         }
     }
 
-    public void Reset()
+    public void ClearRuntimeState()
     {
         _lastDebugAt.Clear();
+    }
+
+    public void Reset()
+    {
+        ClearRuntimeState();
 
         _calls = 0;
         _corrected = 0;

@@ -32,16 +32,32 @@ public readonly record struct AimPointSet(
         AimPointKind point,
         out Vector3 position)
     {
-        position =
-            point switch
-            {
-                AimPointKind.Head => Head,
-                AimPointKind.UpperChest => UpperChest,
-                AimPointKind.Chest => Chest,
-                AimPointKind.Gut => Gut,
-                AimPointKind.Pelvis => Pelvis,
-                _ => default
-            };
+        switch (point)
+        {
+            case AimPointKind.Head:
+                position = Head;
+                break;
+
+            case AimPointKind.UpperChest:
+                position = UpperChest;
+                break;
+
+            case AimPointKind.Chest:
+                position = Chest;
+                break;
+
+            case AimPointKind.Gut:
+                position = Gut;
+                break;
+
+            case AimPointKind.Pelvis:
+                position = Pelvis;
+                break;
+
+            default:
+                position = default;
+                return false;
+        }
 
         return
             float.IsFinite(position.X) &&

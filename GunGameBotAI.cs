@@ -21,6 +21,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly CorrectionLogger _corrections;
     private readonly BotRegistry _registry = new();
     private readonly ButtonPulseService _buttonPulses;
+    private readonly TransientControlService _transientControl;
     private readonly BotSensorService _sensor = new();
     private readonly AggressionService _aggression;
     private readonly IdleRecoveryService _idleRecovery;
@@ -61,6 +62,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             () => Config.Debug && Config.VerboseCorrectionDebug,
             message => Logger.LogInformation("[GunGameBotAI][DEBUG] {Message}", message));
         _buttonPulses = new ButtonPulseService(_corrections);
+        _transientControl = new TransientControlService(_buttonPulses, _corrections);
         _aggression = new AggressionService(_corrections);
         _idleRecovery = new IdleRecoveryService(_corrections);
         _combatMovement = new CombatMovementService(_corrections);
@@ -74,7 +76,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.30";
+    public override string ModuleVersion => "0.7.31";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -121,6 +123,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterListener<Listeners.OnClientDisconnect>(OnClientDisconnect);
 
         RegisterEventHandler<EventRoundStart>(OnRoundStart);
+        RegisterEventHandler<EventRoundEnd>(OnRoundEnd);
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
@@ -164,6 +167,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap = null;
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
+        _transientControl.Clear();
         ReleaseAllKnownButtonPulses();
         _enabled = false;
         _buttonPulses.CancelAll();
@@ -174,6 +178,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RemoveListener<Listeners.OnClientDisconnect>(OnClientDisconnect);
 
         DeregisterEventHandler<EventRoundStart>(OnRoundStart);
+        DeregisterEventHandler<EventRoundEnd>(OnRoundEnd);
         DeregisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         DeregisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
         DeregisterEventHandler<EventWeaponFire>(OnWeaponFire);
@@ -249,6 +254,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.RemoveSlot(slot, "spawn-grace");
         _geometrySafety.RemoveSlot(slot);
         _stuckMonitor.RemoveSlot(slot);
+        _transientControl.CancelSlot(slot);
     }
 
     private bool IsBotInSpawnGrace(
@@ -330,6 +336,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
+                    _transientControl.CancelSlot(slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -341,6 +348,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
+                    _transientControl.CancelSlot(slot);
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
@@ -382,6 +390,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         "learned physical ladder traversal owns movement");
 
                     _stuckMonitor.RemoveSlot(slot);
+                    _transientControl.CancelSlot(
+                        slot,
+                        pawn);
                     _registry.ActivateActuator(slot);
                     continue;
                 }
@@ -392,6 +403,15 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     bot,
                     state,
                     now);
+
+                if (state.Mode is
+                    BotBehaviorMode.KnifeLevel or
+                    BotBehaviorMode.OpportunisticKnifeRush)
+                {
+                    _transientControl.CancelSlot(
+                        slot,
+                        pawn);
+                }
 
                 _stuckMonitor.Observe(
                     controller,
@@ -540,8 +560,22 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         float now = Server.CurrentTime;
 
-        IReadOnlyList<int> activeSlots =
-            _registry.ActiveActuatorSlots;
+        List<int> activeSlots =
+            new(_registry.ActiveActuatorSlots);
+
+        foreach (int leaseSlot in
+                 _transientControl.GetActiveSlots())
+        {
+            if (!activeSlots.Contains(leaseSlot))
+                activeSlots.Add(leaseSlot);
+        }
+
+        foreach (int pulseSlot in
+                 _buttonPulses.PendingSlots)
+        {
+            if (!activeSlots.Contains(pulseSlot))
+                activeSlots.Add(pulseSlot);
+        }
 
         for (int index = activeSlots.Count - 1;
             index >= 0;
@@ -566,6 +600,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     preliminaryController.IsHLTV)
                 {
                     _buttonPulses.Cancel(slot);
+                    _transientControl.CancelSlot(slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -575,6 +610,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         now))
                 {
                     _buttonPulses.Cancel(slot);
+                    _transientControl.CancelSlot(slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -589,6 +625,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     bot == null)
                 {
                     _buttonPulses.Cancel(slot);
+                    _transientControl.CancelSlot(slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -600,6 +637,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     state.HasBeenControlledByPlayerThisRound)
                 {
                     _buttonPulses.Cancel(slot);
+                    _transientControl.CancelSlot(slot);
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
@@ -630,6 +668,25 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         state,
                         enemy,
                         now);
+                }
+
+                bool externalMovementOwner =
+                    ladderTraversalOwned ||
+                    state.Mode is
+                        BotBehaviorMode.KnifeLevel or
+                        BotBehaviorMode.OpportunisticKnifeRush;
+
+                if (externalMovementOwner)
+                {
+                    _transientControl.CancelSlot(
+                        slot,
+                        pawn);
+                }
+                else
+                {
+                    _transientControl.Apply(
+                        slot,
+                        pawn);
                 }
 
                 _buttonPulses.Update(
@@ -783,12 +840,21 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.RemoveSlot(playerSlot, "disconnect");
         _geometrySafety.RemoveSlot(playerSlot);
         _stuckMonitor.RemoveSlot(playerSlot);
+        _transientControl.CancelSlot(playerSlot);
         _registry.Remove(playerSlot);
     }
 
     private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
     {
         ResetRuntimeState();
+        return HookResult.Continue;
+    }
+
+    private HookResult OnRoundEnd(EventRoundEnd @event, GameEventInfo info)
+    {
+        // Stage 2 leases are round-scoped even though the rest of the runtime
+        // state is reset at the next round start.
+        _transientControl.Clear();
         return HookResult.Continue;
     }
 
@@ -842,6 +908,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _ladderMap?.RemoveSlot(slot, "player-death");
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
+            _transientControl.CancelSlot(slot);
             _registry.Remove(slot);
         }
 
@@ -905,6 +972,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _ladderMap?.RemoveSlot(slot, "bot-takeover");
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
+            _transientControl.CancelSlot(slot);
             _registry.DeactivateActuator(slot);
         }
 
@@ -1203,6 +1271,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();
         _stuckMonitor.Reset();
+        _transientControl.Clear();
 
         if (!enabled)
             _knifeRush.ResetStatistics();
@@ -1218,6 +1287,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.ResetRuntimeTracking();
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
+        _transientControl.Clear();
         _knifeRush.ResetStatistics();
     }
 
@@ -1266,7 +1336,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"focusedDebug={(Config.Debug ? "enabled" : "disabled")}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
-            $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}.");
+            $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +
+            $"transientSlots={_transientControl.SlotCount}; transientLeases={_transientControl.LeaseCount}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] decisionTimer={_decisionTimer != null}; actuatorTimer={_actuatorTimer != null}; decision={Config.DecisionIntervalSeconds:0.###}s; fastTicks={Config.FastActuatorEveryTicks}; backend={_weaponActivation.BackendName}; backendAvailable={_weaponActivation.IsBackendAvailable}.");
         command.ReplyToCommand(

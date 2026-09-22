@@ -52,6 +52,14 @@ public sealed class ButtonPulseService
 
     public int Count => _pulses.Count;
 
+    /// <summary>
+    /// Snapshot of slots that still need fast-loop processing. This is used by
+    /// TransientControlService so a one-tick Duck assertion can always expire
+    /// even after its movement lease has ended.
+    /// </summary>
+    public IReadOnlyList<int> PendingSlots =>
+        _pulses.Keys.ToArray();
+
     public bool HasPending(int slot)
     {
         return _pulses.ContainsKey(slot);
@@ -144,6 +152,73 @@ public sealed class ButtonPulseService
 
         if (pulse.UntilTickByBit.Count == 0)
             _pulses.Remove(slot);
+    }
+
+    /// <summary>
+    /// Cancel only the specified scheduled button bits for a live pawn.
+    /// Other pulses for the same bot are preserved.
+    /// </summary>
+    public void CancelButton(
+        int slot,
+        CCSPlayerPawn pawn,
+        PlayerButtons button)
+    {
+        if (!_pulses.TryGetValue(
+                slot,
+                out PulseState? pulse))
+        {
+            return;
+        }
+
+        ulong requestedMask =
+            (ulong)button;
+
+        if (requestedMask == 0)
+            return;
+
+        ulong scheduledMask =
+            pulse.ScheduledMask &
+            requestedMask;
+
+        if (scheduledMask == 0)
+            return;
+
+        try
+        {
+            CPlayer_MovementServices? movement =
+                pawn.MovementServices;
+
+            if (movement != null)
+            {
+                ulong ownedMask =
+                    scheduledMask &
+                    pulse.OwnedDownMask;
+
+                if (ownedMask != 0)
+                {
+                    ReleaseOwnedMask(
+                        slot,
+                        movement,
+                        pulse,
+                        ownedMask,
+                        "cancel selected button pulse");
+                }
+            }
+        }
+        finally
+        {
+            foreach (ulong bit in
+                     EnumerateBits(scheduledMask))
+            {
+                pulse.UntilTickByBit.Remove(bit);
+            }
+
+            pulse.OwnedDownMask &=
+                ~scheduledMask;
+
+            if (pulse.UntilTickByBit.Count == 0)
+                _pulses.Remove(slot);
+        }
     }
 
     /// <summary>

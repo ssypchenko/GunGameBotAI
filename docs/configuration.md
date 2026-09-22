@@ -51,6 +51,8 @@ The default profile is conservative:
   "KnifeRushAllowOnGrenadeLevel": false,
   "GrenadeLevelEnabled": true,
   "AimEnhancementEnabled": false,
+  "AimMode": "Mixed",
+  "AimDebug": false,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
   "ConfigVersion": 1

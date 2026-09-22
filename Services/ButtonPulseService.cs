@@ -52,6 +52,14 @@ public sealed class ButtonPulseService
 
     public int Count => _pulses.Count;
 
+    /// <summary>
+    /// Snapshot of slots that still need fast-loop processing. This is used by
+    /// TransientControlService so a one-tick Duck assertion can always expire
+    /// even after its movement lease has ended.
+    /// </summary>
+    public IReadOnlyList<int> PendingSlots =>
+        _pulses.Keys.ToArray();
+
     public bool HasPending(int slot)
     {
         return _pulses.ContainsKey(slot);

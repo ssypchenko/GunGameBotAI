@@ -256,11 +256,6 @@ public sealed class AimService
 
             return true;
         }
-        catch
-        {
-            // Native callback callers handle/report unexpected exceptions.
-            return false;
-        }
         finally
         {
             RecordPerformance(

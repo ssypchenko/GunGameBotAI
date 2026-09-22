@@ -10,8 +10,8 @@ namespace GunGameBotAI.Services;
 /// Performs point-specific line-of-sight traces using CounterStrikeSharp's
 /// built-in Ray/Hull Trace API.
 ///
-/// This service is observation-only. It never changes EyeAngles, targetSpot,
-/// enemy selection, movement or any other bot state.
+/// This service never changes EyeAngles, targetSpot, enemy selection, movement
+/// or any other bot state.
 /// </summary>
 public sealed class VisibilityTraceService
 {
@@ -29,6 +29,15 @@ public sealed class VisibilityTraceService
             InteractsWith = Masks.Shot,
             InteractsExclude = Contents.Pickup
         };
+
+    private readonly IAimPointProvider _aimPointProvider;
+
+    public VisibilityTraceService(
+        IAimPointProvider aimPointProvider)
+    {
+        _aimPointProvider =
+            aimPointProvider;
+    }
 
     /// <summary>
     /// Returns whether one concrete world-space point is visible from the
@@ -50,8 +59,17 @@ public sealed class VisibilityTraceService
                result.Visible;
     }
 
+    public bool TryGetAimPoints(
+        CCSPlayerPawn targetPawn,
+        out AimPointSet points) =>
+        _aimPointProvider.TryGetPoints(
+            targetPawn,
+            out points);
+
     /// <summary>
-    /// Traces the initial Stage 3 diagnostic set: HEAD/CHEST/GUT/PELVIS.
+    /// Traces the Stage 3 diagnostic set: HEAD/CHEST/GUT/PELVIS.
+    /// UpperChest is available to Stage 4 policy but is intentionally omitted
+    /// here so Stage 3 log shape stays stable.
     /// </summary>
     public bool TryTraceDiagnosticPoints(
         CCSPlayerPawn botPawn,
@@ -80,12 +98,11 @@ public sealed class VisibilityTraceService
             return false;
         }
 
-        if (!TryGetTargetBounds(
+        if (!_aimPointProvider.TryGetPoints(
                 targetPawn,
-                out Vector3 minimum,
-                out Vector3 maximum))
+                out AimPointSet points))
         {
-            failureReason = "target AABB unavailable";
+            failureReason = "target aim points unavailable";
             return false;
         }
 
@@ -98,11 +115,15 @@ public sealed class VisibilityTraceService
         foreach (AimPointKind point in
                  DiagnosticPoints)
         {
-            Vector3 worldPoint =
-                BuildAimPoint(
-                    minimum,
-                    maximum,
-                    point);
+            if (!points.TryGet(
+                    point,
+                    out Vector3 worldPoint))
+            {
+                failureReason =
+                    $"aim point unavailable for {point}";
+
+                return false;
+            }
 
             if (!TryTracePoint(
                     botPawn,
@@ -262,99 +283,6 @@ public sealed class VisibilityTraceService
             eyePosition = default;
             return false;
         }
-    }
-
-    private static bool TryGetTargetBounds(
-        CCSPlayerPawn targetPawn,
-        out Vector3 minimum,
-        out Vector3 maximum)
-    {
-        minimum = default;
-        maximum = default;
-
-        try
-        {
-            Trace.GetEntityWorldSpaceAABB(
-                targetPawn,
-                out CssVector mins,
-                out CssVector maxs);
-
-            if (!NativeValueReader.TryCopy(
-                    mins,
-                    out minimum) ||
-                !NativeValueReader.TryCopy(
-                    maxs,
-                    out maximum))
-            {
-                return false;
-            }
-
-            float height =
-                maximum.Z -
-                minimum.Z;
-
-            float widthX =
-                maximum.X -
-                minimum.X;
-
-            float widthY =
-                maximum.Y -
-                minimum.Y;
-
-            return
-                float.IsFinite(height) &&
-                height > 8.0f &&
-                height < 128.0f &&
-                widthX > 0.0f &&
-                widthY > 0.0f;
-        }
-        catch
-        {
-            minimum = default;
-            maximum = default;
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Stage 3 deliberately uses four conservative centre-line samples derived
-    /// from the live pawn AABB. This automatically follows standing/crouched
-    /// hull height without introducing bone/skeleton dependencies.
-    /// </summary>
-    private static Vector3 BuildAimPoint(
-        Vector3 minimum,
-        Vector3 maximum,
-        AimPointKind point)
-    {
-        float x =
-            (minimum.X + maximum.X) *
-            0.5f;
-
-        float y =
-            (minimum.Y + maximum.Y) *
-            0.5f;
-
-        float height =
-            maximum.Z -
-            minimum.Z;
-
-        float heightFraction =
-            point switch
-            {
-                AimPointKind.Head => 0.90f,
-                AimPointKind.Chest => 0.70f,
-                AimPointKind.Gut => 0.55f,
-                AimPointKind.Pelvis => 0.43f,
-                _ => 0.70f
-            };
-
-        return
-            new Vector3(
-                x,
-                y,
-                minimum.Z +
-                height *
-                heightFraction);
     }
 
     private static bool IsLivePawn(

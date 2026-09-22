@@ -289,7 +289,7 @@ public sealed class TransientControlService
             return false;
 
         if (pawn.MoveType ==
-            CounterStrikeSharp.API.Modules.Utils.MoveType_t.MOVETYPE_LADDER)
+            MoveType_t.MOVETYPE_LADDER)
         {
             CancelSlot(
                 slot,

@@ -189,14 +189,15 @@ public sealed class AimService
                 }
             }
 
-            WeaponClass weaponClass =
-                ResolveWeaponClass(
+            (WeaponClass weaponClass, string? weaponDesignerName) =
+                ResolveWeapon(
                     botPawn,
                     state);
 
             IReadOnlyList<AimPointKind> order =
                 _policy.GetOrder(
                     weaponClass,
+                    weaponDesignerName,
                     Config.AimMode);
 
             if (order.Count == 0)
@@ -263,6 +264,7 @@ public sealed class AimService
             LogCorrectionIfNeeded(
                 controller,
                 weaponClass,
+                weaponDesignerName,
                 valveTarget,
                 chosenKind.Value,
                 chosenPosition,
@@ -358,6 +360,7 @@ public sealed class AimService
     private void LogCorrectionIfNeeded(
         CCSPlayerController controller,
         WeaponClass weaponClass,
+        string? weaponDesignerName,
         Vector3 valveTarget,
         AimPointKind chosenKind,
         Vector3 chosenPosition,
@@ -386,21 +389,29 @@ public sealed class AimService
 
         _info(
             $"CORRECT map={SafeMap(mapName)}; bot={SafeName(controller.PlayerName)}; " +
-            $"slot={slot}; weaponClass={weaponClass}; aimMode={Config.AimMode}; " +
+            $"slot={slot}; weaponClass={weaponClass}; weapon={weaponDesignerName ?? "unknown"}; aimMode={Config.AimMode}; " +
             $"ValveTarget={FormatVector(valveTarget)}; ValveTargetVisible=false; " +
             $"chosen={chosenKind.ToString().ToUpperInvariant()}; target={FormatVector(chosenPosition)}; " +
             $"traces={traces}; action=replace-targetSpot-only");
     }
 
-    private static WeaponClass ResolveWeaponClass(
-        CCSPlayerPawn botPawn,
-        BotRuntimeState state)
+    private static (
+        WeaponClass Class,
+        string? DesignerName)
+        ResolveWeapon(
+            CCSPlayerPawn botPawn,
+            BotRuntimeState state)
     {
         if (state.LevelWeaponClass !=
-            WeaponClass.Unknown)
+                WeaponClass.Unknown &&
+            !string.IsNullOrWhiteSpace(
+                state.LevelWeaponDesignerName))
         {
             return
-                state.LevelWeaponClass;
+                (
+                    state.LevelWeaponClass,
+                    state.LevelWeaponDesignerName
+                );
         }
 
         try
@@ -410,14 +421,30 @@ public sealed class AimService
                     .ActiveWeapon
                     .Value;
 
+            string? designerName =
+                active?.DesignerName;
+
+            WeaponClass weaponClass =
+                state.LevelWeaponClass !=
+                    WeaponClass.Unknown
+                    ? state.LevelWeaponClass
+                    : WeaponClassifier.Classify(
+                        active);
+
             return
-                WeaponClassifier.Classify(
-                    active);
+                (
+                    weaponClass,
+                    designerName ??
+                    state.LevelWeaponDesignerName
+                );
         }
         catch
         {
             return
-                WeaponClass.Unknown;
+                (
+                    state.LevelWeaponClass,
+                    state.LevelWeaponDesignerName
+                );
         }
     }
 

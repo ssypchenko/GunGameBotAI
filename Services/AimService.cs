@@ -146,31 +146,42 @@ public sealed class AimService
                 return false;
             }
 
-            traces++;
-
-            if (!_visibility.TryIsPointVisible(
-                    botPawn,
-                    valveTarget,
-                    enemyPawn,
-                    out bool valveTargetVisible))
-            {
-                // Trace failure must never become a correction trigger.
-                return false;
-            }
-
-            if (valveTargetVisible)
-            {
-                outcome =
-                    AimOutcome.ValvePointKept;
-
-                return false;
-            }
-
             if (!_visibility.TryGetAimPoints(
                     enemyPawn!,
                     out AimPointSet points))
             {
                 return false;
+            }
+
+            // "Valve point is good" means both geometrically visible and still
+            // located on/very near the live enemy hull. A stale/free-space
+            // target must not be accepted just because the line to it is clear.
+            bool valveTargetOnEnemy =
+                points.Contains(
+                    valveTarget,
+                    margin: 12.0f);
+
+            if (valveTargetOnEnemy)
+            {
+                traces++;
+
+                if (!_visibility.TryIsPointVisible(
+                        botPawn,
+                        valveTarget,
+                        enemyPawn,
+                        out bool valveTargetVisible))
+                {
+                    // Trace failure must never become a correction trigger.
+                    return false;
+                }
+
+                if (valveTargetVisible)
+                {
+                    outcome =
+                        AimOutcome.ValvePointKept;
+
+                    return false;
+                }
             }
 
             WeaponClass weaponClass =

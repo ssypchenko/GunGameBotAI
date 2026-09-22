@@ -245,7 +245,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     // Stage 4 aim correction is deliberately opt-in for the first production release.
     public bool AimEnhancementEnabled { get; set; } = false;
-    public AimMode AimMode { get; set; } = GunGameBotAI.Models.AimMode.Mixed;
+    public AimMode AimMode { get; set; } = global::GunGameBotAI.Models.AimMode.Mixed;
     public bool AimDebug { get; set; } = false;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
@@ -258,14 +258,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
 
         if (!Enum.IsDefined(
-                typeof(GunGameBotAI.Models.AimMode),
+                typeof(global::GunGameBotAI.Models.AimMode),
                 AimMode))
         {
             warn(
                 $"AimMode={AimMode} is invalid; using Mixed.");
 
             AimMode =
-                GunGameBotAI.Models.AimMode.Mixed;
+                global::GunGameBotAI.Models.AimMode.Mixed;
         }
 
         LadderManualTeacherSlot = Clamp(LadderManualTeacherSlot, -1, 63, -1, nameof(LadderManualTeacherSlot), warn);
@@ -698,7 +698,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // feature OFF on upgrade; operators enable it explicitly after
             // validating the native signature on the target server build.
             AimEnhancementEnabled = false;
-            AimMode = GunGameBotAI.Models.AimMode.Mixed;
+            AimMode = global::GunGameBotAI.Models.AimMode.Mixed;
             Version = 26;
         }
     }

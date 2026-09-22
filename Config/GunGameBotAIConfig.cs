@@ -257,6 +257,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
 
+        if (!Enum.IsDefined(
+                typeof(GunGameBotAI.Models.AimMode),
+                AimMode))
+        {
+            warn(
+                $"AimMode={AimMode} is invalid; using Mixed.");
+
+            AimMode =
+                GunGameBotAI.Models.AimMode.Mixed;
+        }
+
         LadderManualTeacherSlot = Clamp(LadderManualTeacherSlot, -1, 63, -1, nameof(LadderManualTeacherSlot), warn);
 
         // Migrate the old v5 sampling default if it is still present in an

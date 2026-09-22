@@ -1,6 +1,5 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using GunGameBotAI.Models;
 
 namespace GunGameBotAI.Services;
 

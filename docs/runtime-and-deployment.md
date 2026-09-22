@@ -31,3 +31,24 @@ operator should also observe a bot approaching a ladder from below, confirm
 that the bounded jump attempt is logged, and confirm that the bot is not
 repeatedly forced after the configured attempt limit. The local build does not
 prove game-side movement, ladder navigation, or weapon activation.
+
+
+## Stage 4 AimService verification
+
+Stage 4 resolves `CCSBot::PickNewAimSpot` during plugin load but leaves its
+PostHook disabled while `AimEnhancementEnabled=false`.
+
+On the target server build, first confirm that startup reports:
+
+```text
+[AimNative] PickNewAimSpot signature OK
+```
+
+An unmatched signature is a safe failure: AimService remains unavailable and
+Valve aim remains unchanged. Do not replace the exact Linux signatures with a
+broad wildcard merely to make the hook attach.
+
+After a clean local build and successful signature resolution, enable
+`AimDebug`, then `AimEnhancementEnabled`, exercise open/partial/blocked target
+geometry, and inspect `css_ggbotai_status` for the aggregate trace count and
+average/maximum AimService execution time.

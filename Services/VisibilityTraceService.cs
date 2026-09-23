@@ -96,6 +96,73 @@ public sealed class VisibilityTraceService
             out points);
 
     /// <summary>
+    /// Finds the first physically visible Stage 3 diagnostic point while
+    /// short-circuiting as soon as one is found. Stage 5 uses this to answer
+    /// only "is any part of this nearby enemy visible?" without paying for
+    /// all four traces on every positive sample.
+    ///
+    /// Returns false only when the visibility test itself could not be
+    /// completed safely. A successful result with firstVisiblePoint=null
+    /// means that all diagnostic points were tested and none was visible.
+    /// </summary>
+    public bool TryFindFirstVisiblePoint(
+        CCSPlayerPawn botPawn,
+        CCSPlayerPawn targetPawn,
+        out AimPointKind? firstVisiblePoint,
+        out int traceAttempts)
+    {
+        firstVisiblePoint = null;
+        traceAttempts = 0;
+
+        if (!IsLivePawn(botPawn) ||
+            !IsLivePawn(targetPawn) ||
+            botPawn.TeamNum == targetPawn.TeamNum)
+        {
+            return false;
+        }
+
+        if (!_aimPointProvider.TryGetPoints(
+                targetPawn,
+                out AimPointSet points))
+        {
+            return false;
+        }
+
+        foreach (AimPointKind point in
+                 DiagnosticPoints)
+        {
+            if (!points.TryGet(
+                    point,
+                    out Vector3 worldPoint))
+            {
+                return false;
+            }
+
+            traceAttempts++;
+
+            if (!TryTracePoint(
+                    botPawn,
+                    worldPoint,
+                    targetPawn,
+                    out AimPointVisibility result,
+                    point))
+            {
+                return false;
+            }
+
+            if (!result.Visible)
+                continue;
+
+            firstVisiblePoint =
+                point;
+
+            return true;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Traces the Stage 3 diagnostic set: HEAD/CHEST/GUT/PELVIS.
     /// UpperChest is available to Stage 4 policy but is intentionally omitted
     /// here so Stage 3 log shape stays stable.

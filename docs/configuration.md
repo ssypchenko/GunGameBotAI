@@ -53,20 +53,28 @@ The default profile is conservative:
   "AimEnhancementEnabled": false,
   "AimMode": "Mixed",
   "AimDebug": false,
+  "VisionMonitorEnabled": false,
+  "VisionMonitorDistance": 800.0,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 26
+  "ConfigVersion": 27
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 4 uses version `26`. Existing
+`ConfigVersion` is migrated by the plugin; Stage 5 uses version `27`. Existing
 installations upgrading from an earlier version receive
-`AimEnhancementEnabled=false` and `AimMode="Mixed"`, so Stage 4 is never silently
-enabled by an upgrade.
+`VisionMonitorEnabled=false` and `VisionMonitorDistance=800.0`, so the new
+trace-based diagnostics are never silently enabled by an upgrade.
 
 `AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook.
 `AimMode` accepts `Mixed`, `Head`, or `Body`. `AimDebug` enables Stage 3
 visibility diagnostics plus Stage 4 correction/performance diagnostics.
+
+`VisionMonitorEnabled` controls the observation-only Stage 5 monitor.
+`VisionMonitorDistance` is the maximum nearby-opponent distance considered by
+the monitor and is validated to `100..2000` world units. Detailed Stage 5
+events require the existing `Debug=true`; aggregate statistics remain
+available through `css_ggbotai_status`.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

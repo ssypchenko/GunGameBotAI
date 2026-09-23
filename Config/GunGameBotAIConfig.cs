@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 26;
+    public override int Version { get; set; } = 27;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -248,6 +248,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public AimMode AimMode { get; set; } = global::GunGameBotAI.Models.AimMode.Mixed;
     public bool AimDebug { get; set; } = false;
 
+    // Stage 5 is observation-only and opt-in. It never changes Valve vision.
+    public bool VisionMonitorEnabled { get; set; } = false;
+    public float VisionMonitorDistance { get; set; } = 800.0f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -256,6 +260,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         DecisionIntervalSeconds = Clamp(DecisionIntervalSeconds, 0.05f, 0.25f, 0.10f, nameof(DecisionIntervalSeconds), warn);
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
+        VisionMonitorDistance = Clamp(VisionMonitorDistance, 100.0f, 2000.0f, 800.0f, nameof(VisionMonitorDistance), warn);
 
         if (!Enum.IsDefined(
                 typeof(global::GunGameBotAI.Models.AimMode),
@@ -700,6 +705,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             AimEnhancementEnabled = false;
             AimMode = global::GunGameBotAI.Models.AimMode.Mixed;
             Version = 26;
+        }
+
+        if (Version < 27)
+        {
+            // v27 adds Stage 5 observation-only vision diagnostics. Keep the
+            // monitor OFF on upgrade because it deliberately performs extra
+            // nearby-enemy visibility traces while enabled.
+            VisionMonitorEnabled = false;
+            VisionMonitorDistance = 800.0f;
+            Version = 27;
         }
     }
 

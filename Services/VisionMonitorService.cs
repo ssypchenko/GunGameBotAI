@@ -158,6 +158,7 @@ public sealed class VisionMonitorService
         CompleteAcquiredEvents(
             controller,
             botPawn,
+            bot,
             runtime,
             mapName,
             valveEnemyEntityIndex,
@@ -357,6 +358,7 @@ public sealed class VisionMonitorService
     private void CompleteAcquiredEvents(
         CCSPlayerController controller,
         CCSPlayerPawn botPawn,
+        CCSBot bot,
         BotRuntimeState runtime,
         string mapName,
         int valveEnemyEntityIndex,
@@ -424,7 +426,7 @@ public sealed class VisionMonitorService
         MovementSnapshot movement =
             ReadMovementSnapshot(
                 botPawn,
-                botPawn.Bot!);
+                bot);
 
         _info(
             $"ACQUIRED map={SafeMap(mapName)}; bot={SafeName(controller.PlayerName)}; " +

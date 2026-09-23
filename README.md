@@ -13,10 +13,11 @@ disabled unless `EnabledOnLoad` is enabled in the configuration.
 4. Enable it with `css_ggbotai_enable 1` after confirming the configuration.
 
 The plugin has no mandatory BotControllerApi or RayTraceApi dependency. The
-current weapon-switch backend uses the public server-side client-command route
-(`slot3` and a validated `use weapon_*` restore command). It reports invocation
-and active-weapon verification separately. A native `SelectItem` backend is not
-included until its exact signature is verified against the target live build.
+current weapon-switch backend uses the native
+`CCSPlayer_WeaponServices::SelectItem` vtable method and validates that the
+requested owned weapon becomes active. Its vtable index comes from
+CounterStrikeSharp gamedata, so that offset is a separate update-sensitive
+native contract from the byte signatures used by Aim and Ladder Management.
 
 ## Commands
 
@@ -90,9 +91,9 @@ behaviour mode, but performs no vision, enemy, view or movement writes.
 
 - There is no complete path-finding or wall-penetration/omniscience logic.
 - Aim enhancement is disabled by default. Its native PickNewAimSpot hook is fail-closed: an unmatched signature leaves Valve aim unchanged.
-- Public command weapon switching requires live-server verification on the exact
-  deployed game build; failure is fail-closed and leaves Valve bot behaviour in
-  control.
+- Native SelectItem weapon switching requires a valid CounterStrikeSharp
+  gamedata vtable offset on the exact deployed game build; the backend reports
+  unavailable when the offset contract cannot be resolved.
 - CounterStrikeSharp loading, unload, and Release compilation can be checked
   locally. Behaviour on a live CS2 server, including the generated config and
   game-side weapon activation, must still be tested by the server operator.

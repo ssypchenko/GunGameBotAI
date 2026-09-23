@@ -85,6 +85,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _aimPointProvider);
         _visionMonitor = new VisionMonitorService(
             _visibilityTrace,
+            (candidate, now) =>
+                IsBotInSpawnGrace(
+                    candidate,
+                    now),
             message => Logger.LogInformation("[GunGameBotAI][Vision] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,

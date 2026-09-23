@@ -944,8 +944,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private HookResult OnRoundEnd(EventRoundEnd @event, GameEventInfo info)
     {
-        // Stage 2 leases and Stage 3/4 aim state are round-scoped even though
-        // the rest of the runtime state resets at next round start.
+        // Stage 2 leases plus Stage 3/4 aim and Stage 5 vision runtime state
+        // are round-scoped even though aggregate diagnostics may survive.
         _transientControl.Clear();
         _visionMonitor.ClearRuntimeState();
         _aimDiagnostics.Reset();
@@ -1535,6 +1535,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.ResetRuntimeTracking();
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
+        _visionMonitor.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         _transientControl.Clear();

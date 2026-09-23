@@ -20,6 +20,7 @@ public sealed class AimNativeService
     // function than to fail safely after a game update.
     private static readonly string[] LinuxPickNewAimSpotSignatures =
     [
+        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F D8 59 00 00 83 F9 FF",
         "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E0 59 00 00 83 F9 FF",
         "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E8 59 00 00 83 F9 FF"
     ];

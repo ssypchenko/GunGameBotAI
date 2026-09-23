@@ -10,6 +10,7 @@ Typical usage:
 Optional:
     python3 scripts/check_native_signatures.py /path/to/libserver.so --context 96
     python3 scripts/check_native_signatures.py /path/to/libserver.so --json-report report.json
+    python3 scripts/check_native_signatures.py --inventory
     python3 scripts/check_native_signatures.py --self-test
 
 The script reads the production signatures directly from the repository source:
@@ -336,6 +337,82 @@ def check_weapon_gamedata_contract() -> Optional[str]:
     return None
 
 
+def inspect_external_selectitem_offsets(
+    directory: Optional[Path],
+) -> list[dict[str, object]]:
+    if directory is None:
+        return []
+
+    root = directory.expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(
+            f"CounterStrikeSharp gamedata directory not found: {root}"
+        )
+
+    found: list[dict[str, object]] = []
+
+    for path in sorted(root.rglob("*.json")):
+        try:
+            document = json.loads(
+                path.read_text(encoding="utf-8")
+            )
+        except Exception:
+            continue
+
+        entry = document.get(
+            "CCSPlayer_WeaponServices::SelectItem"
+        )
+        if not isinstance(entry, dict):
+            continue
+
+        offsets = entry.get("offsets")
+        if not isinstance(offsets, dict):
+            continue
+
+        found.append(
+            {
+                "path": str(path),
+                "windows": offsets.get("windows"),
+                "linux": offsets.get("linux"),
+            }
+        )
+
+    return found
+
+
+def print_inventory() -> None:
+    production = load_production_patterns()
+
+    print("GunGameBotAI native inventory")
+    print()
+
+    for name, patterns in production.items():
+        print("=" * 78)
+        print(name)
+
+        if not patterns:
+            print("  no production pattern found")
+            continue
+
+        for index, item in enumerate(patterns, start=1):
+            print(f"  [{index}] {item.source}")
+            print(f"      role: {item.runtime_role}")
+            print(f"      pattern: {item.value}")
+
+        discovery = DISCOVERY_PATTERNS.get(name)
+        if discovery:
+            print(f"  discovery-only: {discovery}")
+
+        print()
+
+    warning = check_weapon_gamedata_contract()
+    if warning:
+        print("=" * 78)
+        print("GAMEDATA CONTRACT")
+        print(warning)
+        print()
+
+
 def format_bytes(data: bytes, start: int, length: int) -> str:
     chunk = data[start : min(len(data), start + length)]
     return " ".join(f"{byte:02X}" for byte in chunk)
@@ -603,6 +680,20 @@ def exit_code(
 
 
 def run_self_test() -> int:
+    try:
+        production = load_production_patterns()
+    except Exception as exc:
+        print(f"SELF-TEST FAILED: source extraction: {exc}")
+        return 1
+
+    if len(production.get("CCSBot::PickNewAimSpot", [])) < 1:
+        print("SELF-TEST FAILED: no Aim production signatures extracted")
+        return 1
+
+    if len(production.get("LadderFSM::SetLadderState", [])) != 1:
+        print("SELF-TEST FAILED: Ladder production signature extraction mismatch")
+        return 1
+
     aim = DISCOVERY_PATTERNS["CCSBot::PickNewAimSpot"]
     parsed = parse_pattern(aim)
 
@@ -660,6 +751,19 @@ def parse_args() -> argparse.Namespace:
         help="Also write a machine-readable JSON report",
     )
     parser.add_argument(
+        "--inventory",
+        action="store_true",
+        help="List native signatures/contracts extracted from the repository and exit",
+    )
+    parser.add_argument(
+        "--css-gamedata-dir",
+        type=Path,
+        help=(
+            "Optional CounterStrikeSharp gamedata directory to inspect for "
+            "CCSPlayer_WeaponServices::SelectItem vtable offsets"
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run the scanner self-test and exit",
@@ -674,8 +778,34 @@ def main() -> int:
     if args.self_test:
         return run_self_test()
 
+    if args.inventory:
+        try:
+            print_inventory()
+
+            offsets = inspect_external_selectitem_offsets(
+                args.css_gamedata_dir
+            )
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        if args.css_gamedata_dir is not None:
+            print("External SelectItem offsets:")
+            if offsets:
+                for item in offsets:
+                    print(
+                        f"  {item['path']}: "
+                        f"windows={item['windows']}; linux={item['linux']}"
+                    )
+            else:
+                print("  none found")
+        return 0
+
     if args.binary is None:
-        print("error: binary path is required unless --self-test is used", file=sys.stderr)
+        print(
+            "error: binary path is required unless --inventory or --self-test is used",
+            file=sys.stderr,
+        )
         return 64
 
     binary = args.binary.expanduser().resolve()
@@ -704,6 +834,32 @@ def main() -> int:
         contract_warning,
     )
 
+    try:
+        external_offsets = inspect_external_selectitem_offsets(
+            args.css_gamedata_dir
+        )
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.css_gamedata_dir is not None:
+        print("=" * 78)
+        print("DEPLOYED COUNTERSTRIKESHARP GAMEDATA")
+        print("-" * 78)
+
+        if external_offsets:
+            for item in external_offsets:
+                print(
+                    f"{item['path']}: "
+                    f"windows={item['windows']}; linux={item['linux']}"
+                )
+        else:
+            print(
+                "No CCSPlayer_WeaponServices::SelectItem offsets found "
+                "in the supplied directory."
+            )
+        print()
+
     if args.json_report:
         payload = {
             "binary": str(binary),
@@ -711,6 +867,7 @@ def main() -> int:
             "sha256": hashlib.sha256(data).hexdigest(),
             "targets": [asdict(report) for report in reports],
             "gamedata_contract_warning": contract_warning,
+            "external_selectitem_offsets": external_offsets,
         }
         args.json_report.write_text(
             json.dumps(payload, indent=2),

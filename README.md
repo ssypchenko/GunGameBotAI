@@ -29,6 +29,7 @@ included until its exact signature is verified against the target live build.
 - `css_ggbotai_aim_debug 0|1` — enable/disable point-specific visibility diagnostics for the current Valve enemy.
 - `css_ggbotai_aim 0|1` — enable/disable Stage 4 bounded targetSpot correction.
 - `css_ggbotai_aim_mode mixed|head|body` — choose Stage 4 point priority policy.
+- `css_ggbotai_vision_monitor 0|1` — enable/disable Stage 5 observation-only nearby-enemy vision diagnostics.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.
 - `css_ggbotai_reload` — reload the plugin configuration.
@@ -78,6 +79,12 @@ it is on the live enemy and visible; otherwise it may replace only targetSpot
 with the first visible AABB aim point selected by `AimPolicyService`.
 `IAimPointProvider` keeps the coordinate source replaceable if later testing
 justifies a hybrid/bone-backed HEAD point. The feature defaults to OFF.
+
+Stage 5 adds `VisionMonitorService`. When explicitly enabled it samples nearby
+live opponents at a bounded rate and records cases where a point trace says the
+opponent is physically visible while Valve has not yet acquired that pawn as a
+visible enemy. It records acquisition delay, view angle, movement state and
+behaviour mode, but performs no vision, enemy, view or movement writes.
 
 ## Known limitations and verification gates
 

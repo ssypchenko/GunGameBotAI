@@ -97,4 +97,14 @@ behaviour mode, but performs no vision, enemy, view or movement writes.
   locally. Behaviour on a live CS2 server, including the generated config and
   game-side weapon activation, must still be tested by the server operator.
 
+After a CS2 server update, audit the plugin's native integration points with:
+
+```bash
+python3 scripts/check_native_signatures.py /path/to/libserver.so
+```
+
+The scanner checks the Aim and Ladder production signatures directly from the
+source and reports the separate SelectItem gamedata contract. See
+`docs/native-signature-maintenance.md` for the safe update workflow.
+
 See `docs/` for configuration, runtime, shared contracts, and Knife Rush notes.

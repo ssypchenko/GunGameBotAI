@@ -69,6 +69,11 @@ public sealed class AimService
     public void ClearRuntimeState()
     {
         _lastDebugAt.Clear();
+
+        // Server.CurrentTime restarts on map changes. Reset only the next
+        // periodic log deadline here so PERF resumes on the new map while
+        // keeping the aggregate counters intact.
+        _nextPerformanceLogAt = 0.0f;
     }
 
     public void Reset()

@@ -637,6 +637,20 @@ def print_report(
             print()
             print("READY-TO-REVIEW CANDIDATE:")
             print(report.suggested_pattern)
+            print()
+
+            if report.name == "CCSBot::PickNewAimSpot":
+                print("SOURCE SNIPPET (append to LinuxPickNewAimSpotSignatures):")
+                print(f'    "{report.suggested_pattern}",')
+            elif report.name == "LadderFSM::SetLadderState":
+                print("SOURCE SNIPPET (replace LinuxSetLadderStateSignature):")
+                print(
+                    "    private const string LinuxSetLadderStateSignature =\n"
+                    f'        "{report.suggested_pattern}";'
+                )
+            elif report.name == "CCSPlayer_WeaponServices::SelectItem":
+                print("GAMEDATA SIGNATURE SNIPPET (not a vtable offset):")
+                print(f'      "linux": "{report.suggested_pattern}"')
 
         if report.note:
             print(f"NOTE: {report.note}")

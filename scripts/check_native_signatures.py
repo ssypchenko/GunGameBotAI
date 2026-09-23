@@ -13,10 +13,10 @@ Optional:
     python3 scripts/check_native_signatures.py --inventory
     python3 scripts/check_native_signatures.py --self-test
 
-The script reads the production signatures directly from the repository source:
-- Services/AimNativeService.cs
-- Services/LadderMapService.cs
-- gamedata/*.json
+The script reads production signatures directly from the repository source:
+- known Aim and Ladder signature variables;
+- any additional C# variables named Linux*Signature / Linux*Signatures;
+- every signatures.linux entry in gamedata/*.json.
 
 This deliberately avoids maintaining a second copy of production signatures.
 Discovery masks are broader and are used only to locate update candidates.
@@ -235,7 +235,11 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
     result: dict[str, list[Pattern]] = {
         "CCSBot::PickNewAimSpot": [],
         "LadderFSM::SetLadderState": [],
-        "CCSPlayer_WeaponServices::SelectItem": [],
+    }
+
+    registered_csharp_variables = {
+        ("Services/AimNativeService.cs", "LinuxPickNewAimSpotSignatures"),
+        ("Services/LadderMapService.cs", "LinuxSetLadderStateSignature"),
     }
 
     for value in extract_csharp_string_array(
@@ -264,31 +268,98 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
         )
     )
 
+    # Automatically inventory future Linux C# signature variables so the
+    # maintenance tool cannot silently miss a newly added native integration.
+    for path in sorted(ROOT.rglob("*.cs")):
+        relative = str(path.relative_to(ROOT))
+        text = path.read_text(encoding="utf-8")
+
+        for match in re.finditer(
+            r"\b(Linux\w*Signatures)\s*=\s*\[(.*?)\]\s*;",
+            text,
+            re.DOTALL,
+        ):
+            variable = match.group(1)
+            if (relative, variable) in registered_csharp_variables:
+                continue
+
+            values = re.findall(r'"([^"]+)"', match.group(2))
+            for value in values:
+                name = f"CSharp::{relative}::{variable}"
+                result.setdefault(name, []).append(
+                    Pattern(
+                        name=name,
+                        source=f"{relative}:{variable}",
+                        value=normalise_pattern(value),
+                        runtime_role=(
+                            "Additional Linux C# signature discovered automatically. "
+                            "No target-specific recovery mask is registered yet."
+                        ),
+                    )
+                )
+
+        for match in re.finditer(
+            r"\b(Linux\w*Signature)\s*=\s*(.*?);",
+            text,
+            re.DOTALL,
+        ):
+            variable = match.group(1)
+            if (relative, variable) in registered_csharp_variables:
+                continue
+
+            parts = re.findall(r'"([^"]*)"', match.group(2))
+            if not parts:
+                continue
+
+            name = f"CSharp::{relative}::{variable}"
+            result.setdefault(name, []).append(
+                Pattern(
+                    name=name,
+                    source=f"{relative}:{variable}",
+                    value=normalise_pattern(" ".join(parts)),
+                    runtime_role=(
+                        "Additional Linux C# signature discovered automatically. "
+                        "No target-specific recovery mask is registered yet."
+                    ),
+                )
+            )
+
+    # Inventory every Linux signature in repository gamedata, not only the
+    # currently known SelectItem entry.
     for path in sorted(GAMEDATA_DIR.glob("*.json")):
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RuntimeError(f"Cannot parse {path}: {exc}") from exc
 
-        entry = document.get("CCSPlayer_WeaponServices::SelectItem")
-        if not isinstance(entry, dict):
+        if not isinstance(document, dict):
             continue
 
-        signatures = entry.get("signatures")
-        if not isinstance(signatures, dict):
-            continue
+        for key, entry in document.items():
+            if not isinstance(entry, dict):
+                continue
 
-        linux = signatures.get("linux")
-        if isinstance(linux, str) and linux.strip():
-            result["CCSPlayer_WeaponServices::SelectItem"].append(
+            signatures = entry.get("signatures")
+            if not isinstance(signatures, dict):
+                continue
+
+            linux = signatures.get("linux")
+            if not isinstance(linux, str) or not linux.strip():
+                continue
+
+            role = "Repository gamedata Linux signature."
+            if key == "CCSPlayer_WeaponServices::SelectItem":
+                role += (
+                    " Current WeaponSwitchNative consumes a GameData vtable "
+                    "offset, not this signature."
+                )
+
+            result.setdefault(key, []).append(
                 Pattern(
-                    name="CCSPlayer_WeaponServices::SelectItem",
+                    name=key,
                     source=f"{path.relative_to(ROOT)}:signatures.linux",
                     value=normalise_pattern(linux),
-                    runtime_role=(
-                        "Repository gamedata signature inventory. "
-                        "Current WeaponSwitchNative consumes a GameData vtable offset, not this signature."
-                    ),
+                    runtime_role=role,
                 )
             )
 

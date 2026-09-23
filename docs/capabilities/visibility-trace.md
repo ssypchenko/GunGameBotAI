@@ -118,10 +118,10 @@ Example:
 ```text
 [GunGameBotAI][Aim] map=gg_example; bot=Bot_01; slot=4; enemy=Bot_02#118;
 ValveVisible=True; HEAD=false; CHEST=true; GUT=true; PELVIS=false;
-chosen=CHEST; mode=diagnostic-only
+firstVisible=CHEST; mode=diagnostic-only
 ```
 
-`chosen` means the first physically visible point in diagnostic order:
+`firstVisible` means the first physically visible point in diagnostic order:
 
 ```text
 HEAD -> CHEST -> GUT -> PELVIS
@@ -143,8 +143,8 @@ x
 maximum 2 diagnostic samples/second/bot
 ```
 
-Stage 4 may call `VisibilityTraceService` from a relevant native aim callback,
-but that is deliberately not implemented here.
+Stage 4 reuses `VisibilityTraceService` from the bounded native aim callback.
+Stage 3 remains diagnostics-only and never writes aim state.
 
 ## Cleanup
 

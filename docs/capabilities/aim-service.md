@@ -205,6 +205,10 @@ once per minute while the feature is active.
 Performance counters survive round resets and are cleared when the managed
 runtime is toggled or the plugin is unloaded.
 
+The periodic `PERF` deadline is reset on round/map runtime-state cleanup so a
+new map does not inherit a `Server.CurrentTime` deadline from the previous
+map. Aggregate counters remain intact.
+
 ## Commands
 
 ```text
@@ -270,3 +274,33 @@ Acceptance requires:
 - `css_ggbotai_aim 0` immediately returns aim selection to Valve;
 - broken/unmatched native signature disables only AimService;
 - performance counters remain reasonable on the live server.
+
+
+## Stage 4 acceptance status
+
+Stage 4 was accepted after extended live testing on 23 September 2026.
+
+The acceptance run covered two maps and a broad GunGame weapon progression,
+including rifle, SMG, pistol, shotgun, sniper and machine-gun classes. The
+native hook remained stable, bounded corrections continued across the map
+change, and no Stage 4 exception/native-hook failure was observed.
+
+The final long-run performance sample before the map transition recorded:
+
+```text
+calls=38477
+corrected=4866
+kept=11130
+noCandidate=736
+gated=21745
+traces=26635
+avgUs=10.2
+maxUs=1308.3
+```
+
+Among callbacks that reached a real aim decision, Valve's point was retained
+most often; Stage 4 therefore remained a bounded correction rather than a
+replacement aim system.
+
+Detailed `AimDebug` logging is intended for diagnostics and should normally be
+disabled after acceptance while `AimEnhancementEnabled` remains enabled.

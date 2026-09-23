@@ -125,7 +125,7 @@ public sealed class AimDiagnosticsService
                 snapshot,
                 AimPointKind.Pelvis);
 
-        string chosen =
+        string firstVisible =
             snapshot.FirstVisiblePoint?.ToString().ToUpperInvariant() ??
             "NONE";
 
@@ -134,7 +134,7 @@ public sealed class AimDiagnosticsService
             $"slot={slot}; enemy={DescribeEnemy(currentEnemy.Pawn, currentEnemy.EntityIndex)}; " +
             $"ValveVisible={currentEnemy.IsVisible}; " +
             $"HEAD={head}; CHEST={chest}; GUT={gut}; PELVIS={pelvis}; " +
-            $"chosen={chosen}; mode=diagnostic-only");
+            $"firstVisible={firstVisible}; mode=diagnostic-only");
     }
 
     private static string FormatVisibility(

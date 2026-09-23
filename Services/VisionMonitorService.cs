@@ -33,6 +33,14 @@ public sealed class VisionMonitorService
     private long _traceAttempts;
     private long _traceFailures;
     private long _eventsStarted;
+    private long _eventsNotSelected;
+    private long _eventsCurrentEnemyNotVisible;
+    private long _eventsStartedMoving;
+    private long _eventsStartedStationary;
+    private long _eventsFront;
+    private long _eventsFrontSide;
+    private long _eventsSide;
+    private long _eventsRear;
     private long _eventsAcquired;
     private long _eventsLostUnacquired;
     private double _totalAcquireSeconds;
@@ -70,8 +78,11 @@ public sealed class VisionMonitorService
             return
                 $"scans={_scanCount}; candidates={_nearbyCandidateCount}; " +
                 $"traces={_traceAttempts}; traceFailures={_traceFailures}; " +
-                $"events={_eventsStarted}; acquired={_eventsAcquired}; " +
-                $"lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
+                $"events={_eventsStarted}; notSelected={_eventsNotSelected}; " +
+                $"currentEnemyNotVisible={_eventsCurrentEnemyNotVisible}; " +
+                $"moving={_eventsStartedMoving}; stationary={_eventsStartedStationary}; " +
+                $"front={_eventsFront}; frontSide={_eventsFrontSide}; side={_eventsSide}; rear={_eventsRear}; " +
+                $"acquired={_eventsAcquired}; lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
                 $"avgAcquireMs={averageAcquireMs:0.0}; " +
                 $"maxAcquireMs={_maximumAcquireSeconds * 1000.0:0.0}";
         }
@@ -87,6 +98,14 @@ public sealed class VisionMonitorService
         _traceAttempts = 0;
         _traceFailures = 0;
         _eventsStarted = 0;
+        _eventsNotSelected = 0;
+        _eventsCurrentEnemyNotVisible = 0;
+        _eventsStartedMoving = 0;
+        _eventsStartedStationary = 0;
+        _eventsFront = 0;
+        _eventsFrontSide = 0;
+        _eventsSide = 0;
+        _eventsRear = 0;
         _eventsAcquired = 0;
         _eventsLostUnacquired = 0;
         _totalAcquireSeconds = 0.0;
@@ -196,6 +215,9 @@ public sealed class VisionMonitorService
         HashSet<int> physicallyVisibleThisSample =
             new();
 
+        HashSet<int> indeterminateThisSample =
+            new();
+
         foreach (CCSPlayerController candidateController in
                  Utilities.GetPlayers())
         {
@@ -246,6 +268,9 @@ public sealed class VisionMonitorService
                     traceAttempts;
 
                 _traceFailures++;
+
+                indeterminateThisSample.Add(
+                    enemyEntityIndex);
 
                 continue;
             }
@@ -330,6 +355,35 @@ public sealed class VisionMonitorService
 
             _eventsStarted++;
 
+            if (isValveEnemy)
+                _eventsCurrentEnemyNotVisible++;
+            else
+                _eventsNotSelected++;
+
+            if (movement.Moving)
+                _eventsStartedMoving++;
+            else
+                _eventsStartedStationary++;
+
+            switch (relative.ViewSector)
+            {
+                case "front":
+                    _eventsFront++;
+                    break;
+
+                case "front-side":
+                    _eventsFrontSide++;
+                    break;
+
+                case "side":
+                    _eventsSide++;
+                    break;
+
+                case "rear":
+                    _eventsRear++;
+                    break;
+            }
+
             if (Config.Debug)
             {
                 _info(
@@ -338,6 +392,8 @@ public sealed class VisionMonitorService
                     $"enemy={pair.EnemyName}#{enemyEntityIndex}; distance={distance:0.0}; " +
                     $"visiblePoint={firstVisiblePoint.Value.ToString().ToUpperInvariant()}; " +
                     $"valveEnemy={isValveEnemy}; valveVisible={isValveVisible}; " +
+                    $"valveCurrentEnemy={(valveEnemyEntityIndex > 0 ? valveEnemyEntityIndex.ToString() : "none")}; " +
+                    $"valveCurrentEnemyVisible={valveVisible}; " +
                     $"botYaw={FormatOptional(botYaw)}; " +
                     $"enemyAngleFromView={FormatOptional(relative.AngleFromView)}; " +
                     $"relative={Format(relative.Relative)}; viewSector={relative.ViewSector}; " +
@@ -352,6 +408,7 @@ public sealed class VisionMonitorService
             runtime,
             mapName,
             physicallyVisibleThisSample,
+            indeterminateThisSample,
             now);
     }
 
@@ -445,6 +502,7 @@ public sealed class VisionMonitorService
         BotRuntimeState runtime,
         string mapName,
         HashSet<int> physicallyVisibleThisSample,
+        HashSet<int> indeterminateThisSample,
         float now)
     {
         foreach ((VisionPairKey key, VisionPairState pair) in
@@ -454,6 +512,8 @@ public sealed class VisionMonitorService
                     controller.Slot ||
                 !pair.Active ||
                 physicallyVisibleThisSample.Contains(
+                    key.EnemyEntityIndex) ||
+                indeterminateThisSample.Contains(
                     key.EnemyEntityIndex) ||
                 now -
                     pair.LastPhysicallyVisibleAt <

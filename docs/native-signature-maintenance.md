@@ -130,7 +130,14 @@ scripts/check_native_signatures.py
 The scanner reads production signatures directly from the repository source.
 There is no duplicated production-signature list inside the script.
 
-Run a self-test:
+List the native inventory directly from the current source tree:
+
+```bash
+python3 scripts/check_native_signatures.py --inventory
+```
+
+Run a self-test (this also verifies that the script can extract the current Aim
+and Ladder signatures from the C# source):
 
 ```bash
 python3 scripts/check_native_signatures.py --self-test
@@ -150,6 +157,23 @@ python3 scripts/check_native_signatures.py \
   /path/to/libserver.so \
   --context 96 \
   --json-report native-signatures.json
+```
+
+If you also have the deployed CounterStrikeSharp gamedata directory available,
+inspect the actual SelectItem vtable-offset source at the same time:
+
+```bash
+python3 scripts/check_native_signatures.py \
+  /path/to/libserver.so \
+  --css-gamedata-dir /path/to/addons/counterstrikesharp/gamedata
+```
+
+Or inspect only the repository inventory plus deployed offsets:
+
+```bash
+python3 scripts/check_native_signatures.py \
+  --inventory \
+  --css-gamedata-dir /path/to/addons/counterstrikesharp/gamedata
 ```
 
 The output includes the binary SHA256 so reports from different server builds

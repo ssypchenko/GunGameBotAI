@@ -22,6 +22,7 @@ public sealed class VisionMonitorService
     private const float MovingSpeedThreshold = 20.0f;
 
     private readonly VisibilityTraceService _visibility;
+    private readonly Func<CCSPlayerController, float, bool> _isBotInSpawnGrace;
     private readonly Action<string> _info;
     private readonly Dictionary<int, float> _nextSampleAtBySlot =
         new();
@@ -48,9 +49,11 @@ public sealed class VisionMonitorService
 
     public VisionMonitorService(
         VisibilityTraceService visibility,
+        Func<CCSPlayerController, float, bool> isBotInSpawnGrace,
         Action<string> info)
     {
         _visibility = visibility;
+        _isBotInSpawnGrace = isBotInSpawnGrace;
         _info = info;
     }
 
@@ -221,6 +224,14 @@ public sealed class VisionMonitorService
         foreach (CCSPlayerController candidateController in
                  Utilities.GetPlayers())
         {
+            if (candidateController.IsBot &&
+                _isBotInSpawnGrace(
+                    candidateController,
+                    now))
+            {
+                continue;
+            }
+
             if (!TryResolveCandidate(
                     candidateController,
                     botPawn,

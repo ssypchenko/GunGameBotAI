@@ -52,3 +52,36 @@ After a clean local build and successful signature resolution, enable
 `AimDebug`, then `AimEnhancementEnabled`, exercise open/partial/blocked target
 geometry, and inspect `css_ggbotai_status` for the aggregate trace count and
 average/maximum AimService execution time.
+
+
+## Stage 5 Vision Monitor verification
+
+Stage 5 is observation-only and defaults to disabled.
+
+For a focused test:
+
+```text
+css_ggbotai_aim_debug 0
+css_ggbotai_vision_monitor 1
+css_ggbotai_debug 1
+```
+
+Run several maps with normal GunGame play. Look for
+`PHYSICALLY_VISIBLE_BUT_NOT_ACQUIRED`, followed by either `ACQUIRED` or
+`LOST_UNACQUIRED`.
+
+Use `css_ggbotai_status` to compare aggregate counts for moving/stationary
+events, view sectors, acquisition categories and `avgAcquireMs/maxAcquireMs`.
+
+Verify death, disconnect, bot takeover, round change and map change while the
+monitor is enabled. No Stage 5 operation should alter enemy selection, view,
+aim, movement, buttons or navigation.
+
+After collecting enough evidence, disable detailed logging with:
+
+```text
+css_ggbotai_debug 0
+```
+
+The monitor itself can remain enabled without detailed event logging if
+aggregate evidence is still being collected.

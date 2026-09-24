@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 27;
+    public override int Version { get; set; } = 28;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -251,6 +251,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Stage 5 is observation-only and opt-in. It never changes Valve vision.
     public bool VisionMonitorEnabled { get; set; } = false;
     public float VisionMonitorDistance { get; set; } = 800.0f;
+
+    // Stage 6 managed look-around experiment. Disabled until explicitly tested.
+    // It releases Valve's look-around inhibit in safe NormalGunGame states and
+    // never writes EyeAngles directly.
+    public bool VisionEnhancementEnabled { get; set; } = false;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;

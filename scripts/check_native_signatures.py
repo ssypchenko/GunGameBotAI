@@ -10,6 +10,7 @@ Typical usage:
 Optional:
     python3 scripts/check_native_signatures.py /path/to/libserver.so --context 96
     python3 scripts/check_native_signatures.py /path/to/libserver.so --json-report report.json
+    python3 scripts/check_native_signatures.py /path/to/libserver.so --ladder-layout
     python3 scripts/check_native_signatures.py --inventory
     python3 scripts/check_native_signatures.py --self-test
 
@@ -91,6 +92,17 @@ class TargetReport:
     candidate_contexts: list[str]
     suggested_pattern: Optional[str]
     note: Optional[str]
+
+
+@dataclass
+class LadderLayoutReport:
+    status: str
+    function_offset: Optional[int]
+    function_source: Optional[str]
+    expected: dict[str, int]
+    binary_evidence: dict[str, bool]
+    context: Optional[str]
+    limitations: list[str]
 
 
 def normalise_pattern(value: str) -> str:
@@ -470,6 +482,260 @@ def inspect_external_selectitem_offsets(
     return found
 
 
+
+def extract_required_hex(
+    text: str,
+    pattern: str,
+    label: str,
+) -> int:
+    match = re.search(pattern, text, re.MULTILINE)
+    if not match:
+        raise RuntimeError(
+            f"Could not extract ladder layout constant: {label}"
+        )
+
+    return int(match.group(1), 16)
+
+
+def extract_required_int(
+    text: str,
+    pattern: str,
+    label: str,
+) -> int:
+    match = re.search(pattern, text, re.MULTILINE)
+    if not match:
+        raise RuntimeError(
+            f"Could not extract ladder layout constant: {label}"
+        )
+
+    return int(match.group(1), 10)
+
+
+def load_ladder_layout_expectations() -> dict[str, int]:
+    text = LADDER_SOURCE.read_text(encoding="utf-8")
+
+    return {
+        "schema_delta_ladder_end_from_waiting": extract_required_hex(
+            text,
+            r"ladderEndOffset\s*-\s*waitingOffset\s*!=\s*0x([0-9A-Fa-f]+)",
+            "ladderEndOffset - waitingOffset",
+        ),
+        "fsm_before_ladder_end": extract_required_hex(
+            text,
+            r"fsmOffset\s*=\s*ladderEndOffset\s*-\s*0x([0-9A-Fa-f]+)",
+            "fsmOffset from ladderEndOffset",
+        ),
+        "owner_from_fsm": 0,
+        "state_from_fsm": extract_required_hex(
+            text,
+            r"stateOffset\s*=\s*fsmOffset\s*\+\s*0x([0-9A-Fa-f]+)",
+            "stateOffset from fsmOffset",
+        ),
+        "active_from_fsm": extract_required_hex(
+            text,
+            r"activeOffset\s*=\s*fsmOffset\s*\+\s*0x([0-9A-Fa-f]+)",
+            "activeOffset from fsmOffset",
+        ),
+        "path_ladder_from_fsm": extract_required_hex(
+            text,
+            r"pathLadderOffset\s*=\s*fsmOffset\s*\+\s*0x([0-9A-Fa-f]+)",
+            "pathLadderOffset from fsmOffset",
+        ),
+        "dismount_state": extract_required_int(
+            text,
+            r"NativeLadderStateDismount\s*=\s*(\d+)",
+            "NativeLadderStateDismount",
+        ),
+    }
+
+
+def unique_target_offset(
+    reports: Iterable[TargetReport],
+    name: str,
+) -> tuple[Optional[int], Optional[str]]:
+    for report in reports:
+        if report.name != name:
+            continue
+
+        for item in report.production:
+            if len(item.matches) == 1:
+                return item.matches[0], "production"
+
+        if len(report.discovery_matches) == 1:
+            return report.discovery_matches[0], "discovery"
+
+        return None, None
+
+    return None, None
+
+
+def analyse_ladder_layout(
+    data: bytes,
+    reports: Iterable[TargetReport],
+    context_length: int,
+) -> LadderLayoutReport:
+    expected = load_ladder_layout_expectations()
+    offset, source = unique_target_offset(
+        reports,
+        "LadderFSM::SetLadderState",
+    )
+
+    limitations = [
+        (
+            "The SetLadderState function can statically confirm the embedded "
+            "FSM owner/state shape and DISMOUNT value, but it cannot prove "
+            "CCSBot schema-field positions."
+        ),
+        (
+            "active_from_fsm and path_ladder_from_fsm remain runtime-validated "
+            "contracts in LadderMapService; they are not marked as confirmed "
+            "from this function alone."
+        ),
+    ]
+
+    if offset is None:
+        return LadderLayoutReport(
+            status="FAIL",
+            function_offset=None,
+            function_source=None,
+            expected=expected,
+            binary_evidence={
+                "owner_at_fsm_plus_0x00": False,
+                "state_write_matches_expected": False,
+                "dismount_compare_matches_expected": False,
+            },
+            context=None,
+            limitations=limitations,
+        )
+
+    window_length = max(96, context_length)
+    window = data[offset : min(len(data), offset + window_length)]
+
+    owner_pattern = bytes.fromhex("48 8B 3F")
+
+    state_offset = expected["state_from_fsm"]
+    state_pattern = (
+        bytes([0x89, 0x5F, state_offset])
+        if 0 <= state_offset <= 0x7F
+        else b""
+    )
+
+    dismount_state = expected["dismount_state"]
+    dismount_pattern = (
+        bytes([0x83, 0xFB, dismount_state])
+        if 0 <= dismount_state <= 0x7F
+        else b""
+    )
+
+    evidence = {
+        "owner_at_fsm_plus_0x00": owner_pattern in window,
+        "state_write_matches_expected": (
+            bool(state_pattern) and state_pattern in window
+        ),
+        "dismount_compare_matches_expected": (
+            bool(dismount_pattern) and dismount_pattern in window
+        ),
+    }
+
+    status = (
+        "STATIC_OK"
+        if all(evidence.values())
+        else "FAIL"
+    )
+
+    return LadderLayoutReport(
+        status=status,
+        function_offset=offset,
+        function_source=source,
+        expected=expected,
+        binary_evidence=evidence,
+        context=format_bytes(
+            data,
+            offset,
+            window_length,
+        ),
+        limitations=limitations,
+    )
+
+
+def print_ladder_layout_report(
+    report: LadderLayoutReport,
+) -> None:
+    print("=" * 78)
+    print("LADDER HIDDEN LAYOUT")
+    print("-" * 78)
+    print(f"status={report.status}")
+
+    if report.function_offset is not None:
+        print(
+            f"SetLadderState offset=0x{report.function_offset:X}; "
+            f"source={report.function_source}"
+        )
+    else:
+        print("SetLadderState offset=unresolved")
+
+    expected = report.expected
+    print()
+    print("Expected contracts from Services/LadderMapService.cs:")
+    print(
+        "  m_pathLadderEnd - m_isWaitingBehindFriend = "
+        f"0x{expected['schema_delta_ladder_end_from_waiting']:X} "
+        "[runtime/schema check]"
+    )
+    print(
+        "  FSM = m_pathLadderEnd - "
+        f"0x{expected['fsm_before_ladder_end']:X} "
+        "[derived at runtime]"
+    )
+    print(
+        "  owner      = FSM + "
+        f"0x{expected['owner_from_fsm']:02X} "
+        f"[binary {'CONFIRMED' if report.binary_evidence['owner_at_fsm_plus_0x00'] else 'NOT CONFIRMED'}]"
+    )
+    print(
+        "  state      = FSM + "
+        f"0x{expected['state_from_fsm']:02X} "
+        f"[binary {'CONFIRMED' if report.binary_evidence['state_write_matches_expected'] else 'NOT CONFIRMED'}]"
+    )
+    print(
+        "  active     = FSM + "
+        f"0x{expected['active_from_fsm']:02X} "
+        "[runtime-only verification]"
+    )
+    print(
+        "  pathLadder = FSM + "
+        f"0x{expected['path_ladder_from_fsm']:02X} "
+        "[runtime-only verification]"
+    )
+    print(
+        "  DISMOUNT state = "
+        f"{expected['dismount_state']} "
+        f"[binary {'CONFIRMED' if report.binary_evidence['dismount_compare_matches_expected'] else 'NOT CONFIRMED'}]"
+    )
+
+    print()
+    print("Binary evidence:")
+    for name, value in report.binary_evidence.items():
+        print(f"  {name}: {'OK' if value else 'FAIL'}")
+
+    if report.context:
+        print()
+        print("SetLadderState context:")
+        print(f"  {report.context}")
+
+    print()
+    print("Limitations:")
+    for item in report.limitations:
+        print(f"  - {item}")
+
+    print()
+    print(
+        "Runtime acceptance still requires LadderMapService not to emit "
+        "reason=hidden-layout-mismatch or reason=derived-layout-check-failed."
+    )
+    print()
+
+
 def print_inventory() -> None:
     production = load_production_patterns()
 
@@ -827,6 +1093,40 @@ def run_self_test() -> int:
         print("SELF-TEST FAILED: exact-candidate generation mismatch")
         return 1
 
+    try:
+        ladder_expected = load_ladder_layout_expectations()
+    except Exception as exc:
+        print(f"SELF-TEST FAILED: ladder layout extraction: {exc}")
+        return 1
+
+    if (
+        ladder_expected["schema_delta_ladder_end_from_waiting"] != 0x2C or
+        ladder_expected["fsm_before_ladder_end"] != 0x24 or
+        ladder_expected["state_from_fsm"] != 0x08 or
+        ladder_expected["active_from_fsm"] != 0x14 or
+        ladder_expected["path_ladder_from_fsm"] != 0x18 or
+        ladder_expected["dismount_state"] != 8
+    ):
+        print(
+            "SELF-TEST FAILED: ladder layout source constants changed; "
+            "review scanner expectations"
+        )
+        return 1
+
+    ladder_sample = bytes.fromhex(
+        "55 48 89 E5 41 54 49 89 FC 53 89 F3 "
+        "89 5F 08 48 8B 3F E8 00 00 00 00 89 C7 "
+        "E8 00 00 00 00 F3 41 0F 11 44 24 0C 83 FB 08"
+    )
+    ladder_evidence = {
+        "owner": bytes.fromhex("48 8B 3F") in ladder_sample,
+        "state": bytes.fromhex("89 5F 08") in ladder_sample,
+        "dismount": bytes.fromhex("83 FB 08") in ladder_sample,
+    }
+    if not all(ladder_evidence.values()):
+        print("SELF-TEST FAILED: ladder binary evidence probe mismatch")
+        return 1
+
     print("SELF-TEST OK")
     return 0
 
@@ -855,6 +1155,14 @@ def parse_args() -> argparse.Namespace:
         "--json-report",
         type=Path,
         help="Also write a machine-readable JSON report",
+    )
+    parser.add_argument(
+        "--ladder-layout",
+        action="store_true",
+        help=(
+            "Audit the statically verifiable Ladder FSM layout evidence in "
+            "SetLadderState and include it in the JSON report"
+        ),
     )
     parser.add_argument(
         "--inventory",
@@ -940,6 +1248,22 @@ def main() -> int:
         contract_warning,
     )
 
+    ladder_layout_report: Optional[LadderLayoutReport] = None
+    if args.ladder_layout:
+        try:
+            ladder_layout_report = analyse_ladder_layout(
+                data,
+                reports,
+                args.context,
+            )
+        except Exception as exc:
+            print(f"error: ladder layout audit failed: {exc}", file=sys.stderr)
+            return 1
+
+        print_ladder_layout_report(
+            ladder_layout_report
+        )
+
     try:
         external_offsets = inspect_external_selectitem_offsets(
             args.css_gamedata_dir
@@ -974,6 +1298,11 @@ def main() -> int:
             "targets": [asdict(report) for report in reports],
             "gamedata_contract_warning": contract_warning,
             "external_selectitem_offsets": external_offsets,
+            "ladder_layout": (
+                asdict(ladder_layout_report)
+                if ladder_layout_report is not None
+                else None
+            ),
         }
         args.json_report.write_text(
             json.dumps(payload, indent=2),
@@ -981,7 +1310,16 @@ def main() -> int:
         )
         print(f"JSON report: {args.json_report}")
 
-    return exit_code(reports)
+    code = exit_code(reports)
+
+    if (
+        code == 0 and
+        ladder_layout_report is not None and
+        ladder_layout_report.status != "STATIC_OK"
+    ):
+        return 3
+
+    return code
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ Optional:
     python3 scripts/check_native_signatures.py --self-test
 
 The script reads production signatures directly from the repository source:
-- known Aim and Ladder signature variables;
+- known Aim, Ladder and SelectItem signature variables;
 - any additional C# variables named Linux*Signature / Linux*Signatures;
 - every signatures.linux entry in gamedata/*.json.
 
@@ -231,15 +231,18 @@ def extract_csharp_const_string(
 def load_production_patterns() -> dict[str, list[Pattern]]:
     aim_text = AIM_SOURCE.read_text(encoding="utf-8")
     ladder_text = LADDER_SOURCE.read_text(encoding="utf-8")
+    weapon_text = WEAPON_SOURCE.read_text(encoding="utf-8")
 
     result: dict[str, list[Pattern]] = {
         "CCSBot::PickNewAimSpot": [],
         "LadderFSM::SetLadderState": [],
+        "CCSPlayer_WeaponServices::SelectItem": [],
     }
 
     registered_csharp_variables = {
         ("Services/AimNativeService.cs", "LinuxPickNewAimSpotSignatures"),
         ("Services/LadderMapService.cs", "LinuxSetLadderStateSignature"),
+        ("Services/WeaponSwitchNative.cs", "LinuxSelectItemSignatures"),
     }
 
     for value in extract_csharp_string_array(
@@ -267,6 +270,22 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
             runtime_role="Ladder post-exit native DISMOUNT transition; fail-closed to fallback",
         )
     )
+
+    for value in extract_csharp_string_array(
+        weapon_text,
+        "LinuxSelectItemSignatures",
+    ):
+        result["CCSPlayer_WeaponServices::SelectItem"].append(
+            Pattern(
+                name="CCSPlayer_WeaponServices::SelectItem",
+                source="Services/WeaponSwitchNative.cs:LinuxSelectItemSignatures",
+                value=value,
+                runtime_role=(
+                    "Native weapon switching through signature-resolved "
+                    "MemoryFunction; runtime-critical for Knife Rush switching"
+                ),
+            )
+        )
 
     # Automatically inventory future Linux C# signature variables so the
     # maintenance tool cannot silently miss a newly added native integration.
@@ -347,12 +366,12 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
             if not isinstance(linux, str) or not linux.strip():
                 continue
 
+            if key == "CCSPlayer_WeaponServices::SelectItem" and result.get(key):
+                # SelectItem is a runtime C# signature as of CSS 1.0.375 migration.
+                # Ignore any legacy duplicate copy still present in gamedata.
+                continue
+
             role = "Repository gamedata Linux signature."
-            if key == "CCSPlayer_WeaponServices::SelectItem":
-                role += (
-                    " Current WeaponSwitchNative consumes a GameData vtable "
-                    "offset, not this signature."
-                )
 
             result.setdefault(key, []).append(
                 Pattern(
@@ -720,8 +739,8 @@ def print_report(
                     f'        "{report.suggested_pattern}";'
                 )
             elif report.name == "CCSPlayer_WeaponServices::SelectItem":
-                print("GAMEDATA SIGNATURE SNIPPET (not a vtable offset):")
-                print(f'      "linux": "{report.suggested_pattern}"')
+                print("SOURCE SNIPPET (append to LinuxSelectItemSignatures):")
+                print(f'    "{report.suggested_pattern}",')
 
         if report.note:
             print(f"NOTE: {report.note}")
@@ -742,13 +761,11 @@ def exit_code(
     """
     0: all runtime-consumed byte-signature targets have one unique production match.
     2: at least one runtime-consumed target is missing/ambiguous.
-
-    SelectItem repository signature does not affect this code because the current
-    WeaponSwitchNative path consumes a vtable offset instead.
     """
     required = {
         "CCSBot::PickNewAimSpot",
         "LadderFSM::SetLadderState",
+        "CCSPlayer_WeaponServices::SelectItem",
     }
 
     for report in reports:
@@ -777,6 +794,10 @@ def run_self_test() -> int:
 
     if len(production.get("LadderFSM::SetLadderState", [])) != 1:
         print("SELF-TEST FAILED: Ladder production signature extraction mismatch")
+        return 1
+
+    if len(production.get("CCSPlayer_WeaponServices::SelectItem", [])) < 1:
+        print("SELF-TEST FAILED: no SelectItem production signatures extracted")
         return 1
 
     aim = DISCOVERY_PATTERNS["CCSBot::PickNewAimSpot"]

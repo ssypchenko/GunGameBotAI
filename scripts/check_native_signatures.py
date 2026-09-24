@@ -293,8 +293,9 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
                 source="Services/WeaponSwitchNative.cs:LinuxSelectItemSignatures",
                 value=value,
                 runtime_role=(
-                    "Native weapon switching through signature-resolved "
-                    "MemoryFunction; runtime-critical for Knife Rush switching"
+                    "SelectItem signature safety probe; actual weapon switch "
+                    "uses the platform vtable slot and is runtime-critical for "
+                    "Knife Rush switching"
                 ),
             )
         )
@@ -1067,6 +1068,28 @@ def run_self_test() -> int:
 
     if len(production.get("CCSPlayer_WeaponServices::SelectItem", [])) < 1:
         print("SELF-TEST FAILED: no SelectItem production signatures extracted")
+        return 1
+
+    weapon_text = WEAPON_SOURCE.read_text(encoding="utf-8")
+    linux_vtable = re.search(
+        r"LinuxSelectItemVtableIndex\s*=\s*(\d+)",
+        weapon_text,
+    )
+    windows_vtable = re.search(
+        r"WindowsSelectItemVtableIndex\s*=\s*(\d+)",
+        weapon_text,
+    )
+
+    if (
+        linux_vtable is None or
+        windows_vtable is None or
+        int(linux_vtable.group(1)) != 31 or
+        int(windows_vtable.group(1)) != 30
+    ):
+        print(
+            "SELF-TEST FAILED: SelectItem vtable contract changed; "
+            "review current Source 2 SDK offsets"
+        )
         return 1
 
     aim = DISCOVERY_PATTERNS["CCSBot::PickNewAimSpot"]

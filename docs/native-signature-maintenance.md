@@ -76,6 +76,8 @@ Source:
 ```text
 Services/WeaponSwitchNative.cs
 LinuxSelectItemSignatures
+LinuxSelectItemVtableIndex
+WindowsSelectItemVtableIndex
 ```
 
 Purpose:
@@ -84,34 +86,40 @@ Purpose:
 Knife Rush / native weapon switching
 ```
 
-As of CounterStrikeSharp 1.0.375 integration, GunGameBotAI resolves
-`CCSPlayer_WeaponServices::SelectItem` directly by byte signature and invokes
-it through:
+The accepted byte signature is retained as a fail-closed update-safety probe.
+It is **not** invoked directly.
+
+The actual weapon switch follows the current public Source 2 SDK vtable
+contract:
 
 ```text
-MemoryFunctionWithReturn<nint, nint, int, byte>
+Windows SelectItem slot = 30
+Linux   SelectItem slot = 31
+
+int SelectItem(
+    CCSPlayer_WeaponServices* this,
+    CBasePlayerWeapon* weapon)
 ```
 
-The call ABI used by the plugin is:
+This distinction matters: a signature-based funnel/hook target can expose a
+different internal ABI from the public vtable method. GunGameBotAI therefore
+uses the signature to prove that the known SelectItem code shape still exists,
+then dispatches through the vtable method used by current public SDKs.
 
-```text
-this = CCSPlayer_WeaponServices*
-weapon = CBasePlayerWeapon*
-flags = int
-return = one-byte scalar (ignored by GunGameBotAI)
-```
+Before invocation the plugin validates:
 
-The plugin verifies `ActiveWeapon` after the native call and treats that as
-the real success condition.
+- live pawn and weapon;
+- weapon ownership;
+- non-null weapon-services object;
+- non-null vtable pointer;
+- non-null function pointer at the expected slot.
 
-No SelectItem vtable offset and no CounterStrikeSharp gamedata entry are needed
-by GunGameBotAI anymore.
+After invocation it verifies `ActiveWeapon`; that remains the authoritative
+success condition.
 
-A normal `MemoryFunction.Invoke(...)` is used rather than bypassing hooks, so
-on CounterStrikeSharp 1.0.375 an installed KHook chain remains respected.
-
-If the SelectItem signature does not resolve, the backend is unavailable and
-weapon switching fails closed.
+No CounterStrikeSharp gamedata entry is required. If the signature probe stops
+resolving, or the platform vtable contract is intentionally changed in source,
+the backend fails closed until reviewed.
 
 ## What does not currently use native signatures
 

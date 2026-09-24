@@ -105,6 +105,12 @@ After a CS2 server update, audit the plugin's native integration points with:
 python3 scripts/check_native_signatures.py /path/to/libserver.so
 ```
 
+To include the statically verifiable hidden Ladder FSM layout evidence:
+
+```bash
+python3 scripts/check_native_signatures.py /path/to/libserver.so --ladder-layout
+```
+
 The scanner checks the Aim, Ladder and SelectItem runtime signatures directly
 from the source. See
 `docs/native-signature-maintenance.md` for the safe update workflow.

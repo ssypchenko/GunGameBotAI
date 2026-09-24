@@ -170,6 +170,55 @@ python3 scripts/check_native_signatures.py \
   --json-report native-signatures.json
 ```
 
+For the additional hidden Ladder FSM static audit:
+
+```bash
+python3 scripts/check_native_signatures.py \
+  /path/to/libserver.so \
+  --ladder-layout
+```
+
+It can be combined with the normal JSON report:
+
+```bash
+python3 scripts/check_native_signatures.py \
+  /path/to/libserver.so \
+  --context 96 \
+  --ladder-layout \
+  --json-report native-signatures.json
+```
+
+The `ladder_layout` object is then written into the JSON report.
+
+The static Ladder audit intentionally distinguishes what the binary actually
+proves from what still requires a live schema/runtime check:
+
+```text
+owner      = FSM + 0x00   binary evidence
+state      = FSM + 0x08   binary evidence
+DISMOUNT   = 8            binary evidence
+
+m_pathLadderEnd - m_isWaitingBehindFriend = 0x2C   runtime/schema contract
+FSM = m_pathLadderEnd - 0x24                       runtime-derived
+active = FSM + 0x14                                runtime-only
+pathLadder = FSM + 0x18                            runtime-only
+```
+
+Possible statuses:
+
+- `STATIC_OK` — the unique SetLadderState target contains all currently
+  expected owner/state/DISMOUNT evidence;
+- `PARTIAL` — SetLadderState resolves but only part of the expected static
+  evidence remains;
+- `FAIL` — the target cannot be uniquely resolved or no expected static
+  evidence remains.
+
+When `--ladder-layout` is requested, `PARTIAL` or `FAIL` returns exit code
+`3` after the normal signature checks pass. This makes the command suitable
+for scripted update checks without treating runtime-only fields as statically
+verified.
+
+
 The legacy `--css-gamedata-dir` option may still be used as an optional
 cross-check against third-party/deployed gamedata, but SelectItem offsets are
 no longer a GunGameBotAI runtime dependency.

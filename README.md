@@ -49,7 +49,7 @@ GunGame weapon, handles knife and grenade levels, performs bounded idle repath,
 and observes sustained stuck events without applying stuck recovery. Special
 movement remains in a separate fast actuator loop. Knife Rush rolls once
 per valid enemy encounter, uses trigger/abort hysteresis, and restores the
-previous weapon when the public switch path permits it.
+previous weapon when the native SelectItem path permits it.
 
 When enabled, ladder assist detects a stalled bot on or immediately before a
 ladder, clears the relevant movement suppression, aims movement at the current

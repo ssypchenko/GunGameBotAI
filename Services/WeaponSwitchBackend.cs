@@ -34,7 +34,7 @@ public interface IWeaponSwitchBackend
 
 /// <summary>
 /// Weapon switching through the real
-/// CCSPlayer_WeaponServices::SelectItem vtable method.
+/// CCSPlayer_WeaponServices::SelectItem native function resolved by signature.
 /// </summary>
 public sealed class NativeSelectItemWeaponSwitchBackend
     : IWeaponSwitchBackend
@@ -44,8 +44,8 @@ public sealed class NativeSelectItemWeaponSwitchBackend
 
     public string Name =>
         _native.IsAvailable
-            ? $"Native vtable SelectItem ({_native.Status})"
-            : $"Native vtable SelectItem UNAVAILABLE ({_native.Status})";
+            ? $"Native signature SelectItem ({_native.Status})"
+            : $"Native signature SelectItem UNAVAILABLE ({_native.Status})";
 
     public bool IsAvailable =>
         _native.IsAvailable;

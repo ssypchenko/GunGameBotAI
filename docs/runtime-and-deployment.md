@@ -19,8 +19,9 @@ logs its detection context, attempt number, movement correction, and jump
 pulse.
 
 Build locally with the commands in `AGENTS.md`. Deploy only the resulting
-plugin output and matching CounterStrikeSharp dependency files. Do not deploy
-the unverified native weapon-switch path.
+plugin output and matching CounterStrikeSharp dependency files. Before relying
+on native weapon switching, verify that the SelectItem signature resolves and
+that a controlled weapon-switch test changes `ActiveWeapon` as expected.
 
 ## Live verification
 
@@ -85,3 +86,30 @@ css_ggbotai_debug 0
 
 The monitor itself can remain enabled without detailed event logging if
 aggregate evidence is still being collected.
+
+
+## CounterStrikeSharp 1.0.375 / KHook
+
+GunGameBotAI targets CounterStrikeSharp API 1.0.375.
+
+CounterStrikeSharp 1.0.375 moved managed dynamic-function hooks onto KHook
+internally. Existing GunGameBotAI code which calls
+`MemoryFunction.Hook(..., HookMode.Post)` therefore uses KHook without a
+plugin-specific KHook API.
+
+Current native paths are:
+
+```text
+PickNewAimSpot
+  signature -> MemoryFunction -> PostHook (KHook underneath CSS 1.0.375)
+
+Ladder SetLadderState
+  signature -> MemoryFunction.Invoke
+
+SelectItem
+  signature -> MemoryFunction.Invoke
+```
+
+The SelectItem call intentionally does not request `bypasshook=true`; if a
+compatible plugin has hooked SelectItem through KHook, the normal hook chain is
+respected.

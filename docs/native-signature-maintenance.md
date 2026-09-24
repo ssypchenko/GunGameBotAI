@@ -71,36 +71,47 @@ match does not by itself prove that the hidden ladder layout is still valid.
 
 ### 3. CCSPlayer_WeaponServices::SelectItem
 
-Repository gamedata:
-
-```text
-gamedata/gamedatabotai.json
-```
-
-contains Linux and Windows byte signatures for this function.
-
-However the current runtime implementation in:
+Source:
 
 ```text
 Services/WeaponSwitchNative.cs
+LinuxSelectItemSignatures
 ```
 
-uses:
+Purpose:
 
-```csharp
-GameData.GetOffset("CCSPlayer_WeaponServices::SelectItem")
+```text
+Knife Rush / native weapon switching
 ```
 
-and then calls the method through the vtable.
+As of CounterStrikeSharp 1.0.375 integration, GunGameBotAI resolves
+`CCSPlayer_WeaponServices::SelectItem` directly by byte signature and invokes
+it through:
 
-Therefore the runtime dependency is a **vtable offset**, not the repository
-signature. The repository JSON currently contains `signatures` but no
-`offsets` for this key. The maintenance scanner reports this as a gamedata
-contract warning.
+```text
+MemoryFunctionWithReturn<nint, nint, int, byte>
+```
 
-Do not treat a successful SelectItem byte-pattern match as proof that the
-weapon-switch backend has a valid vtable offset. Check
-`css_ggbotai_status` and the deployed CounterStrikeSharp gamedata separately.
+The call ABI used by the plugin is:
+
+```text
+this = CCSPlayer_WeaponServices*
+weapon = CBasePlayerWeapon*
+flags = int
+return = one-byte scalar (ignored by GunGameBotAI)
+```
+
+The plugin verifies `ActiveWeapon` after the native call and treats that as
+the real success condition.
+
+No SelectItem vtable offset and no CounterStrikeSharp gamedata entry are needed
+by GunGameBotAI anymore.
+
+A normal `MemoryFunction.Invoke(...)` is used rather than bypassing hooks, so
+on CounterStrikeSharp 1.0.375 an installed KHook chain remains respected.
+
+If the SelectItem signature does not resolve, the backend is unavailable and
+weapon switching fails closed.
 
 ## What does not currently use native signatures
 
@@ -159,22 +170,9 @@ python3 scripts/check_native_signatures.py \
   --json-report native-signatures.json
 ```
 
-If you also have the deployed CounterStrikeSharp gamedata directory available,
-inspect the actual SelectItem vtable-offset source at the same time:
-
-```bash
-python3 scripts/check_native_signatures.py \
-  /path/to/libserver.so \
-  --css-gamedata-dir /path/to/addons/counterstrikesharp/gamedata
-```
-
-Or inspect only the repository inventory plus deployed offsets:
-
-```bash
-python3 scripts/check_native_signatures.py \
-  --inventory \
-  --css-gamedata-dir /path/to/addons/counterstrikesharp/gamedata
-```
+The legacy `--css-gamedata-dir` option may still be used as an optional
+cross-check against third-party/deployed gamedata, but SelectItem offsets are
+no longer a GunGameBotAI runtime dependency.
 
 The output includes the binary SHA256 so reports from different server builds
 cannot be confused.
@@ -265,11 +263,18 @@ cannot validate the hidden FSM offsets.
 
 ### SelectItem
 
-Do not paste a discovered SelectItem signature into
-`WeaponSwitchNative.GetOffset`.
+If the current SelectItem production signature fails and the discovery mask
+finds exactly one reviewed candidate, append the accepted pattern to:
 
-The current backend needs a valid vtable offset from CounterStrikeSharp
-gamedata. Resolve/update that contract separately.
+```csharp
+private static readonly string[] LinuxSelectItemSignatures =
+[
+    "NEW REVIEWED SIGNATURE",
+    ...
+];
+```
+
+Do not replace the production array with the broader discovery mask.
 
 ## Safe update workflow
 

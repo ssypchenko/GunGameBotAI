@@ -13,11 +13,12 @@ disabled unless `EnabledOnLoad` is enabled in the configuration.
 4. Enable it with `css_ggbotai_enable 1` after confirming the configuration.
 
 The plugin has no mandatory BotControllerApi or RayTraceApi dependency. The
-current weapon-switch backend uses the native
-`CCSPlayer_WeaponServices::SelectItem` vtable method and validates that the
-requested owned weapon becomes active. Its vtable index comes from
-CounterStrikeSharp gamedata, so that offset is a separate update-sensitive
-native contract from the byte signatures used by Aim and Ladder Management.
+current weapon-switch backend resolves
+`CCSPlayer_WeaponServices::SelectItem` directly from an accepted byte
+signature and invokes it through CounterStrikeSharp's managed MemoryFunction
+layer. It validates that the requested owned weapon becomes active after every
+call. No SelectItem vtable offset or CounterStrikeSharp gamedata entry is
+required.
 
 ## Commands
 
@@ -91,9 +92,9 @@ behaviour mode, but performs no vision, enemy, view or movement writes.
 
 - There is no complete path-finding or wall-penetration/omniscience logic.
 - Aim enhancement is disabled by default. Its native PickNewAimSpot hook is fail-closed: an unmatched signature leaves Valve aim unchanged.
-- Native SelectItem weapon switching requires a valid CounterStrikeSharp
-  gamedata vtable offset on the exact deployed game build; the backend reports
-  unavailable when the offset contract cannot be resolved.
+- Native SelectItem weapon switching is fail-closed: if no accepted
+  `SelectItem` signature resolves on the exact deployed game build, the
+  weapon-switch backend reports unavailable and no native call is attempted.
 - CounterStrikeSharp loading, unload, and Release compilation can be checked
   locally. Behaviour on a live CS2 server, including the generated config and
   game-side weapon activation, must still be tested by the server operator.
@@ -104,8 +105,8 @@ After a CS2 server update, audit the plugin's native integration points with:
 python3 scripts/check_native_signatures.py /path/to/libserver.so
 ```
 
-The scanner checks the Aim and Ladder production signatures directly from the
-source and reports the separate SelectItem gamedata contract. See
+The scanner checks the Aim, Ladder and SelectItem runtime signatures directly
+from the source. See
 `docs/native-signature-maintenance.md` for the safe update workflow.
 
 See `docs/` for configuration, runtime, shared contracts, and Knife Rush notes.

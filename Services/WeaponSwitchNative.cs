@@ -1,5 +1,6 @@
+using System.Runtime.InteropServices;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 
 namespace GunGameBotAI.Native;
@@ -8,40 +9,55 @@ namespace GunGameBotAI.Native;
 /// Native wrapper around CCSPlayer_WeaponServices::SelectItem.
 ///
 /// Production path:
-///   vtable offset from CounterStrikeSharp gamedata
-///   -> VirtualFunction
-///   -> void SelectItem(CBasePlayerWeapon* weapon, int flags)
+///   exact/accepted byte signature
+///   -> CounterStrikeSharp MemoryFunction
+///   -> CCSPlayer_WeaponServices::SelectItem(this, weapon, flags)
+///
+/// CounterStrikeSharp 1.0.375 uses KHook internally for managed dynamic-function
+/// hooks. This wrapper performs a normal MemoryFunction invocation and therefore
+/// does not bypass an existing KHook chain.
 ///
 /// IMPORTANT:
 /// SelectItem requires the additional integer argument.
-/// Calling the vfunc with only (this, weapon) is ABI-unsafe and can result
-/// in undefined native behaviour / SIGSEGV.
+/// Calling it with only (this, weapon) is ABI-unsafe.
 /// </summary>
 public sealed class WeaponSwitchNative
 {
-    public const string GameDataKey =
-        "CCSPlayer_WeaponServices::SelectItem";
+    private static readonly string[] LinuxSelectItemSignatures =
+    [
+        "55 48 89 E5 41 57 41 56 41 55 49 89 F5 41 54 53 48 89 FB 48 81 EC ? ? ? ? 48 8B 7F"
+    ];
 
-    private const int SelectItemFlags = 0;
+    private static readonly string[] WindowsSelectItemSignatures =
+    [
+        "48 89 5C 24 ? 48 89 6C 24 ? 48 89 74 24 ? 57 48 83 EC ? 41 8B E8 48 8B DA 48 8B F1"
+    ];
 
-    // Sanity guard only. Current SelectItem vtable indices are small.
-    // This does not prove that an offset is correct, but prevents obviously
-    // corrupt values from ever reaching VirtualFunction.CreateVoid().
-    private const int MaxReasonableVtableOffset = 512;
+    private const int SelectItemFlags =
+        0;
 
     private bool _initialised;
     private bool _available;
     private bool _disabledAfterManagedFailure;
 
-    private int _selectItemOffset = -1;
-    private string _status = "not initialised";
+    private MemoryFunctionWithReturn<
+        nint,
+        nint,
+        int,
+        byte>? _selectItem;
+
+    private string _status =
+        "not initialised";
 
     public bool IsAvailable
     {
         get
         {
             EnsureInitialised();
-            return _available && !_disabledAfterManagedFailure;
+
+            return
+                _available &&
+                !_disabledAfterManagedFailure;
         }
     }
 
@@ -51,6 +67,18 @@ public sealed class WeaponSwitchNative
         {
             EnsureInitialised();
             return _status;
+        }
+    }
+
+    public nint FunctionAddress
+    {
+        get
+        {
+            EnsureInitialised();
+
+            return
+                _selectItem?.Handle ??
+                nint.Zero;
         }
     }
 
@@ -72,18 +100,21 @@ public sealed class WeaponSwitchNative
 
         if (!_available ||
             _disabledAfterManagedFailure ||
-            _selectItemOffset < 0)
+            _selectItem == null)
         {
             return false;
         }
 
         if (pawn == null ||
             !pawn.IsValid ||
-            pawn.Health <= 0 ||
-            pawn.LifeState != (byte)LifeState_t.LIFE_ALIVE ||
+            pawn.Health <=
+                0 ||
+            pawn.LifeState !=
+                (byte)LifeState_t.LIFE_ALIVE ||
             weapon == null ||
             !weapon.IsValid ||
-            weapon.Handle == IntPtr.Zero)
+            weapon.Handle ==
+                IntPtr.Zero)
         {
             return false;
         }
@@ -92,66 +123,71 @@ public sealed class WeaponSwitchNative
             pawn.WeaponServices;
 
         if (services == null ||
-            services.Handle == IntPtr.Zero)
+            services.Handle ==
+                IntPtr.Zero)
         {
             return false;
         }
 
-        if (!IsOwnedBy(services, weapon))
+        if (!IsOwnedBy(
+                services,
+                weapon))
+        {
             return false;
+        }
 
         // Avoid unnecessary native calls.
-        if (IsActiveWeapon(services, weapon))
+        if (IsActiveWeapon(
+                services,
+                weapon))
+        {
             return true;
+        }
 
         try
         {
             /*
-             * Native call:
+             * Native ABI:
              *
-             *   CCSPlayer_WeaponServices::SelectItem(
+             *   SelectItem(
+             *       CCSPlayer_WeaponServices* this,
              *       CBasePlayerWeapon* weapon,
-             *       int flags);
+             *       int flags)
              *
-             * Managed vfunc therefore receives:
+             * Current native implementations expose a one-byte scalar return.
+             * GunGameBotAI does not depend on that value; ActiveWeapon remains
+             * the postcondition we actually verify.
              *
-             *   this
-             *   weapon
-             *   flags
-             *
-             * The third argument is REQUIRED. Do not remove it.
+             * Do NOT pass bypasshook=true here. A normal invocation should
+             * respect any KHook chain installed by CounterStrikeSharp/other
+             * compatible plugins.
              */
-            var selectItem =
-                VirtualFunction.CreateVoid<
-                    nint,
-                    nint,
-                    int>(
-                        services.Handle,
-                        _selectItemOffset);
-
-            selectItem(
+            _ = _selectItem.Invoke(
                 services.Handle,
                 weapon.Handle,
                 SelectItemFlags);
 
-            return IsActiveWeapon(
-                services,
-                weapon);
+            return
+                IsActiveWeapon(
+                    services,
+                    weapon);
         }
         catch (Exception exception)
         {
             /*
-             * Managed failures can be handled here.
+             * Managed failures are fail-closed.
              *
-             * A genuine native SIGSEGV caused by a stale/wrong vtable index or
-             * ABI mismatch cannot reliably be caught by C# try/catch, therefore
-             * all validation must happen BEFORE invoking the vfunc.
+             * A genuine native ABI mismatch/SIGSEGV cannot be recovered by
+             * C# try/catch, so we only resolve from explicitly accepted
+             * signatures and still verify ActiveWeapon after every call.
              */
-            _disabledAfterManagedFailure = true;
-            _available = false;
+            _disabledAfterManagedFailure =
+                true;
+            _available =
+                false;
 
             _status =
-                $"disabled after vtable invocation failure: " +
+                $"disabled after SelectItem invocation failure: " +
                 $"{exception.GetType().Name}";
 
             return false;
@@ -163,39 +199,68 @@ public sealed class WeaponSwitchNative
         if (_initialised)
             return;
 
-        _initialised = true;
+        _initialised =
+            true;
 
-        try
+        string[]? signatures =
+            RuntimeInformation.IsOSPlatform(
+                OSPlatform.Linux)
+                ? LinuxSelectItemSignatures
+                : RuntimeInformation.IsOSPlatform(
+                    OSPlatform.Windows)
+                    ? WindowsSelectItemSignatures
+                    : null;
+
+        if (signatures == null)
         {
-            _selectItemOffset =
-                GameData.GetOffset(GameDataKey);
+            _available =
+                false;
+            _status =
+                "unsupported platform";
 
-            if (_selectItemOffset < 0 ||
-                _selectItemOffset > MaxReasonableVtableOffset)
+            return;
+        }
+
+        foreach (string signature in
+                 signatures)
+        {
+            try
             {
-                _available = false;
+                MemoryFunctionWithReturn<
+                    nint,
+                    nint,
+                    int,
+                    byte> function =
+                    new(signature);
 
+                if (function.Handle ==
+                    nint.Zero)
+                {
+                    continue;
+                }
+
+                _selectItem =
+                    function;
+                _available =
+                    true;
                 _status =
-                    $"invalid SelectItem vtable offset: " +
-                    $"{_selectItemOffset}";
+                    $"signature address=0x{function.Handle.ToInt64():X16}";
 
                 return;
             }
-
-            _available = true;
-
-            _status =
-                $"shared gamedata vtable offset={_selectItemOffset}";
+            catch
+            {
+                // Try the next explicitly accepted signature. Missing
+                // signatures after a CS2 update are expected and fail closed.
+            }
         }
-        catch (Exception exception)
-        {
-            _selectItemOffset = -1;
-            _available = false;
 
-            _status =
-                $"gamedata offset unavailable: " +
-                $"{exception.GetType().Name}";
-        }
+        _selectItem =
+            null;
+        _available =
+            false;
+        _status =
+            "SelectItem signature unavailable";
     }
 
     private static bool IsActiveWeapon(
@@ -207,10 +272,13 @@ public sealed class WeaponSwitchNative
             CBasePlayerWeapon? active =
                 services.ActiveWeapon.Value;
 
-            return active != null &&
-                   active.IsValid &&
-                   active.Handle != IntPtr.Zero &&
-                   active.Handle == weapon.Handle;
+            return
+                active != null &&
+                active.IsValid &&
+                active.Handle !=
+                    IntPtr.Zero &&
+                active.Handle ==
+                    weapon.Handle;
         }
         catch
         {
@@ -232,8 +300,10 @@ public sealed class WeaponSwitchNative
 
                 if (candidate != null &&
                     candidate.IsValid &&
-                    candidate.Handle != IntPtr.Zero &&
-                    candidate.Handle == weapon.Handle)
+                    candidate.Handle !=
+                        IntPtr.Zero &&
+                    candidate.Handle ==
+                        weapon.Handle)
                 {
                     return true;
                 }

@@ -637,9 +637,12 @@ def analyse_ladder_layout(
         ),
     }
 
+    passed = sum(1 for value in evidence.values() if value)
     status = (
         "STATIC_OK"
-        if all(evidence.values())
+        if passed == len(evidence)
+        else "PARTIAL"
+        if passed > 0
         else "FAIL"
     )
 

@@ -77,7 +77,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _weaponActivation = new WeaponActivationService(new NativeSelectItemWeaponSwitchBackend(), _corrections);
         _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
         _geometrySafety = new GeometrySafetyService(
-            message => Logger.LogInformation("[GunGameBotAI][GEOMETRY] {Message}", message));
+            GeometryDebugLog);
         _stuckMonitor = new StuckMonitorService(
             message => Logger.LogInformation("[GunGameBotAI][StuckMonitor] {Message}", message));
         _aimPointProvider = new AabbAimPointProvider();
@@ -111,7 +111,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.38";
+    public override string ModuleVersion => "0.7.39";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1718,6 +1718,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         if (Config.Debug)
             Logger.LogInformation("[GunGameBotAI][DEBUG] {Message}", message);
+    }
+
+    private void GeometryDebugLog(string message)
+    {
+        if (Config.Debug)
+        {
+            Logger.LogInformation(
+                "[GunGameBotAI][GEOMETRY][DEBUG] {Message}",
+                message);
+        }
     }
 
     private void ReleaseButtonPulse(int slot)

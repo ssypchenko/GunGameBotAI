@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Memory.DynamicFunctions;
 using CounterStrikeSharp.API.Modules.Utils;
 
@@ -9,17 +10,18 @@ namespace GunGameBotAI.Native;
 /// Native wrapper around CCSPlayer_WeaponServices::SelectItem.
 ///
 /// Production path:
-///   exact/accepted byte signature
-///   -> CounterStrikeSharp MemoryFunction
-///   -> CCSPlayer_WeaponServices::SelectItem(this, weapon, flags)
+///   accepted byte signature resolves as a safety probe
+///   -> platform-specific SelectItem vtable slot
+///   -> int SelectItem(CCSPlayer_WeaponServices* this, CBasePlayerWeapon* weapon)
 ///
 /// CounterStrikeSharp 1.0.375 uses KHook internally for managed dynamic-function
-/// hooks. This wrapper performs a normal MemoryFunction invocation and therefore
-/// does not bypass an existing KHook chain.
+/// hooks. The actual weapon switch follows the engine vtable entry, matching
+/// the current public Source 2 SDK contract.
 ///
 /// IMPORTANT:
-/// SelectItem requires the additional integer argument.
-/// Calling it with only (this, weapon) is ABI-unsafe.
+/// The signature target is retained as an update-sensitive validation anchor.
+/// It is not invoked directly because current public SDKs expose the callable
+/// SelectItem contract through the weapon-services vtable.
 /// </summary>
 public sealed class WeaponSwitchNative
 {
@@ -33,18 +35,28 @@ public sealed class WeaponSwitchNative
         "48 89 5C 24 ? 48 89 6C 24 ? 48 89 74 24 ? 57 48 83 EC ? 41 8B E8 48 8B DA 48 8B F1"
     ];
 
-    private const int SelectItemFlags =
-        0;
+    // Current public Source 2 SDK contract:
+    //   Windows SelectItem = vtable slot 30
+    //   Linux   SelectItem = vtable slot 31
+    //
+    // Keep this explicit and fail closed. Do not silently substitute a nearby
+    // slot if Valve changes the weapon-services vtable.
+    private const int WindowsSelectItemVtableIndex =
+        30;
+
+    private const int LinuxSelectItemVtableIndex =
+        31;
 
     private bool _initialised;
     private bool _available;
     private bool _disabledAfterManagedFailure;
 
-    private MemoryFunctionWithReturn<
-        nint,
-        nint,
-        int,
-        byte>? _selectItem;
+    // Signature-resolved function object used only as a safety/update probe.
+    // We deliberately do not invoke this address directly.
+    private MemoryFunctionVoid? _selectItemSignatureProbe;
+
+    private int _selectItemVtableIndex =
+        -1;
 
     private string _status =
         "not initialised";
@@ -70,21 +82,18 @@ public sealed class WeaponSwitchNative
         }
     }
 
-    public nint FunctionAddress
+    public int VtableIndex
     {
         get
         {
             EnsureInitialised();
-
-            return
-                _selectItem?.Handle ??
-                nint.Zero;
+            return _selectItemVtableIndex;
         }
     }
 
     /// <summary>
-    /// Select an owned weapon through
-    /// CCSPlayer_WeaponServices::SelectItem.
+    /// Select an owned weapon through the real
+    /// CCSPlayer_WeaponServices::SelectItem vtable entry.
     ///
     /// True means the requested weapon is ActiveWeapon immediately after
     /// the native call, or it was already active.
@@ -100,7 +109,8 @@ public sealed class WeaponSwitchNative
 
         if (!_available ||
             _disabledAfterManagedFailure ||
-            _selectItem == null)
+            _selectItemSignatureProbe == null ||
+            _selectItemVtableIndex < 0)
         {
             return false;
         }
@@ -146,26 +156,53 @@ public sealed class WeaponSwitchNative
 
         try
         {
+            // Validate that the selected vtable slot contains a non-null
+            // function pointer before asking CounterStrikeSharp to invoke it.
+            IntPtr vtable =
+                Marshal.ReadIntPtr(
+                    services.Handle);
+
+            if (vtable ==
+                IntPtr.Zero)
+            {
+                return false;
+            }
+
+            IntPtr selectItemAddress =
+                Marshal.ReadIntPtr(
+                    vtable,
+                    _selectItemVtableIndex *
+                    IntPtr.Size);
+
+            if (selectItemAddress ==
+                IntPtr.Zero)
+            {
+                return false;
+            }
+
             /*
-             * Native ABI:
+             * Current public Source 2 SDK ABI:
              *
-             *   SelectItem(
+             *   int SelectItem(
              *       CCSPlayer_WeaponServices* this,
-             *       CBasePlayerWeapon* weapon,
-             *       int flags)
+             *       CBasePlayerWeapon* weapon)
              *
-             * Current native implementations expose a one-byte scalar return.
-             * GunGameBotAI does not depend on that value; ActiveWeapon remains
-             * the postcondition we actually verify.
-             *
-             * Do NOT pass bypasshook=true here. A normal invocation should
-             * respect any KHook chain installed by CounterStrikeSharp/other
-             * compatible plugins.
+             * CounterStrikeSharp's VirtualFunctionWithReturn wrapper performs
+             * the vtable dispatch. The integer return is not used as our
+             * success condition; ActiveWeapon remains the authoritative
+             * postcondition.
              */
-            _ = _selectItem.Invoke(
+            VirtualFunctionWithReturn<
+                nint,
+                nint,
+                int> selectItem =
+                new(
+                    services.Handle,
+                    _selectItemVtableIndex);
+
+            _ = selectItem.Invoke(
                 services.Handle,
-                weapon.Handle,
-                SelectItemFlags);
+                weapon.Handle);
 
             return
                 IsActiveWeapon(
@@ -178,8 +215,8 @@ public sealed class WeaponSwitchNative
              * Managed failures are fail-closed.
              *
              * A genuine native ABI mismatch/SIGSEGV cannot be recovered by
-             * C# try/catch, so we only resolve from explicitly accepted
-             * signatures and still verify ActiveWeapon after every call.
+             * C# try/catch, so we require both an accepted signature probe and
+             * the explicit known vtable slot before invoking.
              */
             _disabledAfterManagedFailure =
                 true;
@@ -187,7 +224,7 @@ public sealed class WeaponSwitchNative
                 false;
 
             _status =
-                $"disabled after SelectItem invocation failure: " +
+                $"disabled after SelectItem vtable invocation failure: " +
                 $"{exception.GetType().Name}";
 
             return false;
@@ -202,16 +239,34 @@ public sealed class WeaponSwitchNative
         _initialised =
             true;
 
-        string[]? signatures =
-            RuntimeInformation.IsOSPlatform(
-                OSPlatform.Linux)
-                ? LinuxSelectItemSignatures
-                : RuntimeInformation.IsOSPlatform(
-                    OSPlatform.Windows)
-                    ? WindowsSelectItemSignatures
-                    : null;
+        string[]? signatures;
 
-        if (signatures == null)
+        if (RuntimeInformation.IsOSPlatform(
+                OSPlatform.Linux))
+        {
+            signatures =
+                LinuxSelectItemSignatures;
+            _selectItemVtableIndex =
+                LinuxSelectItemVtableIndex;
+        }
+        else if (RuntimeInformation.IsOSPlatform(
+                     OSPlatform.Windows))
+        {
+            signatures =
+                WindowsSelectItemSignatures;
+            _selectItemVtableIndex =
+                WindowsSelectItemVtableIndex;
+        }
+        else
+        {
+            signatures =
+                null;
+            _selectItemVtableIndex =
+                -1;
+        }
+
+        if (signatures == null ||
+            _selectItemVtableIndex < 0)
         {
             _available =
                 false;
@@ -226,11 +281,7 @@ public sealed class WeaponSwitchNative
         {
             try
             {
-                MemoryFunctionWithReturn<
-                    nint,
-                    nint,
-                    int,
-                    byte> function =
+                MemoryFunctionVoid function =
                     new(signature);
 
                 if (function.Handle ==
@@ -239,12 +290,12 @@ public sealed class WeaponSwitchNative
                     continue;
                 }
 
-                _selectItem =
+                _selectItemSignatureProbe =
                     function;
                 _available =
                     true;
                 _status =
-                    $"signature address=0x{function.Handle.ToInt64():X16}";
+                    $"signature=resolved; vtable slot={_selectItemVtableIndex}";
 
                 return;
             }
@@ -255,8 +306,10 @@ public sealed class WeaponSwitchNative
             }
         }
 
-        _selectItem =
+        _selectItemSignatureProbe =
             null;
+        _selectItemVtableIndex =
+            -1;
         _available =
             false;
         _status =

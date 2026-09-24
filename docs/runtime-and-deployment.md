@@ -107,9 +107,8 @@ Ladder SetLadderState
   signature -> MemoryFunction.Invoke
 
 SelectItem
-  signature -> MemoryFunction.Invoke
+  signature safety probe -> validated platform vtable slot -> VirtualFunction invoke
 ```
 
-The SelectItem call intentionally does not request `bypasshook=true`; if a
-compatible plugin has hooked SelectItem through KHook, the normal hook chain is
-respected.
+The SelectItem switch is dispatched through the engine vtable method. The
+signature remains an update-safety probe rather than a direct call target.

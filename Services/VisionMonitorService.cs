@@ -29,6 +29,12 @@ public sealed class VisionMonitorService
     private readonly Dictionary<VisionPairKey, VisionPairState> _pairs =
         new();
 
+    private readonly VisionMapStatistics _mapStats =
+        new();
+
+    private string _mapStatsMapName =
+        "unknown";
+
     private long _scanCount;
     private long _nearbyCandidateCount;
     private long _traceAttempts;
@@ -36,6 +42,9 @@ public sealed class VisionMonitorService
     private long _eventsStarted;
     private long _eventsNotSelected;
     private long _eventsCurrentEnemyNotVisible;
+    private long _eventsNoCurrentEnemy;
+    private long _eventsOtherEnemyVisible;
+    private long _eventsOtherEnemyNotVisible;
     private long _eventsStartedMoving;
     private long _eventsStartedStationary;
     private long _eventsFront;
@@ -83,6 +92,8 @@ public sealed class VisionMonitorService
                 $"traces={_traceAttempts}; traceFailures={_traceFailures}; " +
                 $"events={_eventsStarted}; notSelected={_eventsNotSelected}; " +
                 $"currentEnemyNotVisible={_eventsCurrentEnemyNotVisible}; " +
+                $"noCurrentEnemy={_eventsNoCurrentEnemy}; otherEnemyVisible={_eventsOtherEnemyVisible}; " +
+                $"otherEnemyNotVisible={_eventsOtherEnemyNotVisible}; " +
                 $"moving={_eventsStartedMoving}; stationary={_eventsStartedStationary}; " +
                 $"front={_eventsFront}; frontSide={_eventsFrontSide}; side={_eventsSide}; rear={_eventsRear}; " +
                 $"acquired={_eventsAcquired}; lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
@@ -103,6 +114,9 @@ public sealed class VisionMonitorService
         _eventsStarted = 0;
         _eventsNotSelected = 0;
         _eventsCurrentEnemyNotVisible = 0;
+        _eventsNoCurrentEnemy = 0;
+        _eventsOtherEnemyVisible = 0;
+        _eventsOtherEnemyNotVisible = 0;
         _eventsStartedMoving = 0;
         _eventsStartedStationary = 0;
         _eventsFront = 0;
@@ -113,6 +127,46 @@ public sealed class VisionMonitorService
         _eventsLostUnacquired = 0;
         _totalAcquireSeconds = 0.0;
         _maximumAcquireSeconds = 0.0;
+
+        _mapStats.Reset();
+        _mapStatsMapName = "unknown";
+    }
+
+    public void BeginMap(string mapName)
+    {
+        _mapStats.Reset();
+        _mapStatsMapName = SafeMap(mapName);
+        ClearRuntimeState();
+    }
+
+    public void LogMapSummary(string mapName)
+    {
+        if (!Config.VisionMonitorEnabled)
+            return;
+
+        string safeMap = SafeMap(mapName);
+
+        if (_mapStatsMapName == "unknown")
+            _mapStatsMapName = safeMap;
+
+        double averageAcquireMs =
+            _mapStats.Acquired > 0
+                ? (_mapStats.TotalAcquireSeconds /
+                   _mapStats.Acquired) *
+                  1000.0
+                : 0.0;
+
+        _info(
+            $"MAP-SUMMARY map={safeMap}; scans={_mapStats.Scans}; candidates={_mapStats.Candidates}; " +
+            $"traces={_mapStats.Traces}; traceFailures={_mapStats.TraceFailures}; " +
+            $"events={_mapStats.Events}; notSelected={_mapStats.NotSelected}; " +
+            $"currentEnemyNotVisible={_mapStats.CurrentEnemyNotVisible}; " +
+            $"noCurrentEnemy={_mapStats.NoCurrentEnemy}; otherEnemyVisible={_mapStats.OtherEnemyVisible}; " +
+            $"otherEnemyNotVisible={_mapStats.OtherEnemyNotVisible}; " +
+            $"moving={_mapStats.Moving}; stationary={_mapStats.Stationary}; " +
+            $"front={_mapStats.Front}; frontSide={_mapStats.FrontSide}; side={_mapStats.Side}; rear={_mapStats.Rear}; " +
+            $"acquired={_mapStats.Acquired}; lost={_mapStats.Lost}; active={ActiveEventCount}; " +
+            $"avgAcquireMs={averageAcquireMs:0.0}; maxAcquireMs={_mapStats.MaximumAcquireSeconds * 1000.0:0.0}");
     }
 
     public void ClearRuntimeState()
@@ -151,6 +205,9 @@ public sealed class VisionMonitorService
     {
         int slot =
             controller.Slot;
+
+        EnsureMapStatistics(
+            mapName);
 
         if (!Config.VisionMonitorEnabled ||
             freezePeriod ||
@@ -202,6 +259,7 @@ public sealed class VisionMonitorService
             SampleIntervalSeconds;
 
         _scanCount++;
+        _mapStats.Scans++;
 
         MovementSnapshot movement =
             ReadMovementSnapshot(
@@ -255,6 +313,7 @@ public sealed class VisionMonitorService
             }
 
             _nearbyCandidateCount++;
+            _mapStats.Candidates++;
 
             bool isValveEnemy =
                 enemyEntityIndex ==
@@ -277,8 +336,11 @@ public sealed class VisionMonitorService
             {
                 _traceAttempts +=
                     traceAttempts;
+                _mapStats.Traces +=
+                    traceAttempts;
 
                 _traceFailures++;
+                _mapStats.TraceFailures++;
 
                 indeterminateThisSample.Add(
                     enemyEntityIndex);
@@ -287,6 +349,8 @@ public sealed class VisionMonitorService
             }
 
             _traceAttempts +=
+                traceAttempts;
+            _mapStats.Traces +=
                 traceAttempts;
 
             if (firstVisiblePoint == null)
@@ -365,33 +429,66 @@ public sealed class VisionMonitorService
                 isValveVisible;
 
             _eventsStarted++;
+            _mapStats.Events++;
 
             if (isValveEnemy)
+            {
                 _eventsCurrentEnemyNotVisible++;
+                _mapStats.CurrentEnemyNotVisible++;
+            }
             else
+            {
                 _eventsNotSelected++;
+                _mapStats.NotSelected++;
+
+                if (valveEnemyEntityIndex <= 0)
+                {
+                    _eventsNoCurrentEnemy++;
+                    _mapStats.NoCurrentEnemy++;
+                }
+                else if (valveVisible)
+                {
+                    _eventsOtherEnemyVisible++;
+                    _mapStats.OtherEnemyVisible++;
+                }
+                else
+                {
+                    _eventsOtherEnemyNotVisible++;
+                    _mapStats.OtherEnemyNotVisible++;
+                }
+            }
 
             if (movement.Moving)
+            {
                 _eventsStartedMoving++;
+                _mapStats.Moving++;
+            }
             else
+            {
                 _eventsStartedStationary++;
+                _mapStats.Stationary++;
+            }
 
             switch (relative.ViewSector)
             {
                 case "front":
                     _eventsFront++;
+                    _mapStats.Front++;
                     break;
 
                 case "front-side":
                     _eventsFrontSide++;
+                    _mapStats.FrontSide++;
                     break;
 
                 case "side":
                     _eventsSide++;
+                    _mapStats.Side++;
                     break;
 
                 case "rear":
                     _eventsRear++;
+                    _mapStats.Rear++;
                     break;
             }
 
@@ -467,13 +564,23 @@ public sealed class VisionMonitorService
             EventRestartCooldownSeconds;
 
         _eventsAcquired++;
+        _mapStats.Acquired++;
         _totalAcquireSeconds +=
+            timeToAcquire;
+        _mapStats.TotalAcquireSeconds +=
             timeToAcquire;
 
         if (timeToAcquire >
             _maximumAcquireSeconds)
         {
             _maximumAcquireSeconds =
+                timeToAcquire;
+        }
+
+        if (timeToAcquire >
+            _mapStats.MaximumAcquireSeconds)
+        {
+            _mapStats.MaximumAcquireSeconds =
                 timeToAcquire;
         }
 
@@ -546,6 +653,7 @@ public sealed class VisionMonitorService
                 EventRestartCooldownSeconds;
 
             _eventsLostUnacquired++;
+            _mapStats.Lost++;
 
             if (Config.Debug)
             {
@@ -561,6 +669,29 @@ public sealed class VisionMonitorService
                     $"initialMoving={pair.InitialMoving}; " +
                     $"initialMode={pair.InitialMode}; currentMode={runtime.Mode}");
             }
+        }
+    }
+
+    private void EnsureMapStatistics(string mapName)
+    {
+        string safeMap =
+            SafeMap(mapName);
+
+        if (_mapStatsMapName == "unknown")
+        {
+            _mapStatsMapName =
+                safeMap;
+            return;
+        }
+
+        if (!string.Equals(
+                _mapStatsMapName,
+                safeMap,
+                StringComparison.Ordinal))
+        {
+            _mapStats.Reset();
+            _mapStatsMapName =
+                safeMap;
         }
     }
 
@@ -880,6 +1011,54 @@ public sealed class VisionMonitorService
             ? value.ToString(
                 "0.0")
             : "unknown";
+
+    private sealed class VisionMapStatistics
+    {
+        public long Scans { get; set; }
+        public long Candidates { get; set; }
+        public long Traces { get; set; }
+        public long TraceFailures { get; set; }
+        public long Events { get; set; }
+        public long NotSelected { get; set; }
+        public long CurrentEnemyNotVisible { get; set; }
+        public long NoCurrentEnemy { get; set; }
+        public long OtherEnemyVisible { get; set; }
+        public long OtherEnemyNotVisible { get; set; }
+        public long Moving { get; set; }
+        public long Stationary { get; set; }
+        public long Front { get; set; }
+        public long FrontSide { get; set; }
+        public long Side { get; set; }
+        public long Rear { get; set; }
+        public long Acquired { get; set; }
+        public long Lost { get; set; }
+        public double TotalAcquireSeconds { get; set; }
+        public double MaximumAcquireSeconds { get; set; }
+
+        public void Reset()
+        {
+            Scans = 0;
+            Candidates = 0;
+            Traces = 0;
+            TraceFailures = 0;
+            Events = 0;
+            NotSelected = 0;
+            CurrentEnemyNotVisible = 0;
+            NoCurrentEnemy = 0;
+            OtherEnemyVisible = 0;
+            OtherEnemyNotVisible = 0;
+            Moving = 0;
+            Stationary = 0;
+            Front = 0;
+            FrontSide = 0;
+            Side = 0;
+            Rear = 0;
+            Acquired = 0;
+            Lost = 0;
+            TotalAcquireSeconds = 0.0;
+            MaximumAcquireSeconds = 0.0;
+        }
+    }
 
     private readonly record struct VisionPairKey(
         int BotSlot,

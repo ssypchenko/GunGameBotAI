@@ -1327,6 +1327,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             Config;
         _visionEnhancement.Config =
             Config;
+        _humanLookScan.Config =
+            Config;
 
         PersistConfig(command);
 
@@ -1361,6 +1363,35 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             "writes=InhibitLookAroundTimestamp+LookAroundStateTimestamp; " +
             $"restartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             "EyeAnglesUnderPathFinderControl=observe-only.");
+    }
+
+    [ConsoleCommand("css_ggbotai_look_scan", "Enable or disable Stage 6.5 human-like physical look scanning.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnHumanLookScanCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_look_scan 0|1");
+            return;
+        }
+
+        Config.HumanLookScanEnabled =
+            enabled;
+        _humanLookScan.Config =
+            Config;
+
+        if (!enabled)
+            _humanLookScan.ClearRuntimeState();
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] look scan={(enabled ? "enabled" : "disabled")}; " +
+            "write=CCSBot.LookYaw-only; enemyDirectionInput=none; " +
+            $"interval={Config.HumanLookScanMinIntervalSeconds:0.###}.." +
+            $"{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
+            $"hold={Config.HumanLookScanHoldSeconds:0.###}s; " +
+            $"minimumSpeed={Config.HumanLookScanMinimumSpeed:0.#}.");
     }
 
     [ConsoleCommand("css_ggbotai_aim_debug", "Enable or disable point-specific aim visibility diagnostics.")]
@@ -1740,6 +1771,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"visionMonitor={(Config.VisionMonitorEnabled ? "enabled" : "disabled")}; visionDistance={Config.VisionMonitorDistance:0}; " +
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
+            $"lookScan={(Config.HumanLookScanEnabled ? "enabled" : "disabled")}; " +
+            $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}..{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
+            $"lookScanHold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +
@@ -1752,6 +1786,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] visionStats {_visionMonitor.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] visionEnhanceStats {_visionEnhancement.StatisticsSummary}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] lookScanStats {_humanLookScan.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +

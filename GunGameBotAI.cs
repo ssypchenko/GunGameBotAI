@@ -984,6 +984,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.RemoveSlot(playerSlot);
         _visionMonitor.RemoveSlot(playerSlot);
         _visionEnhancement.RemoveSlot(playerSlot);
+        _humanLookScan.RemoveSlot(playerSlot);
         _aimDiagnostics.RemoveSlot(playerSlot);
         _aimNative.RemoveSlot(playerSlot);
         _transientControl.CancelSlot(playerSlot);

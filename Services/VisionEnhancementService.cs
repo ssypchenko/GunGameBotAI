@@ -187,14 +187,9 @@ public sealed class VisionEnhancementService
                 bot.InhibitLookAroundTimestamp = now;
                 _released++;
 
-                if (Config.Debug)
-                {
-                    _info(
-                        $"RELEASE-INHIBIT bot={SafeName(controller.PlayerName)}; slot={slot}; " +
-                        $"before={inhibitUntil:0.000}; now={now:0.000}; " +
-                        $"remaining={MathF.Max(0.0f, inhibitUntil - now):0.000}; " +
-                        $"pathfinderEyeControl={pathfinderEyeControl}; mode={runtime.Mode}");
-                }
+                // v1 per-event RELEASE-INHIBIT logging was useful while proving
+                // the mechanism. Stage 6 v2 keeps only aggregate 'released'
+                // statistics so the current look-around test log stays focused.
             }
             catch
             {
@@ -258,7 +253,7 @@ public sealed class VisionEnhancementService
 
             _lookAroundRestarted++;
 
-            if (Config.Debug)
+            if (Config.VisionDebug)
             {
                 float remaining =
                     before > now

@@ -28,6 +28,7 @@ public sealed class HumanLookScanService
     private long _checks;
     private long _scheduled;
     private long _started;
+    private long _finished;
     private long _completed;
     private long _enemyInterrupts;
     private long _pathfinderInterrupts;
@@ -64,13 +65,13 @@ public sealed class HumanLookScanService
                     : 0.0;
 
             double averageObserved =
-                _completed > 0
-                    ? _totalObservedDegrees / _completed
+                _finished > 0
+                    ? _totalObservedDegrees / _finished
                     : 0.0;
 
             return
                 $"checks={_checks}; scheduled={_scheduled}; started={_started}; " +
-                $"completed={_completed}; enemyInterrupts={_enemyInterrupts}; " +
+                $"finished={_finished}; completed={_completed}; enemyInterrupts={_enemyInterrupts}; " +
                 $"pathfinderInterrupts={_pathfinderInterrupts}; modeInterrupts={_modeInterrupts}; " +
                 $"effectiveTurns={_effectiveTurns}; writes={_writes}; " +
                 $"skippedPathfinder={_skippedPathfinder}; skippedStationary={_skippedStationary}; " +
@@ -91,6 +92,7 @@ public sealed class HumanLookScanService
         _checks = 0;
         _scheduled = 0;
         _started = 0;
+        _finished = 0;
         _completed = 0;
         _enemyInterrupts = 0;
         _pathfinderInterrupts = 0;
@@ -134,10 +136,16 @@ public sealed class HumanLookScanService
         float now)
     {
         int slot = controller.Slot;
+
+        if (!Config.HumanLookScanEnabled)
+        {
+            _states.Remove(slot);
+            return;
+        }
+
         _checks++;
 
-        if (!Config.HumanLookScanEnabled ||
-            runtime.HasBeenControlledByPlayerThisRound ||
+        if (runtime.HasBeenControlledByPlayerThisRound ||
             freezePeriod ||
             runtime.Mode != BotBehaviorMode.NormalGunGame ||
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER)
@@ -402,23 +410,21 @@ public sealed class HumanLookScanService
         float observed =
             state.MaxObservedTurn;
 
-        if (completedNormally)
+        _finished++;
+        _totalObservedDegrees +=
+            observed;
+
+        if (observed >=
+            EffectiveTurnThresholdDegrees)
         {
-            _totalObservedDegrees +=
+            _effectiveTurns++;
+        }
+
+        if (observed >
+            _maximumObservedDegrees)
+        {
+            _maximumObservedDegrees =
                 observed;
-
-            if (observed >=
-                EffectiveTurnThresholdDegrees)
-            {
-                _effectiveTurns++;
-            }
-
-            if (observed >
-                _maximumObservedDegrees)
-            {
-                _maximumObservedDegrees =
-                    observed;
-            }
         }
 
         bool movementKnown =

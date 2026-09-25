@@ -34,6 +34,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly IAimPointProvider _aimPointProvider;
     private readonly VisibilityTraceService _visibilityTrace;
     private readonly VisionMonitorService _visionMonitor;
+    private readonly VisionEnhancementService _visionEnhancement;
     private readonly AimDiagnosticsService _aimDiagnostics;
     private readonly AimPolicyService _aimPolicy;
     private readonly AimService _aimService;
@@ -90,6 +91,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     candidate,
                     now),
             message => Logger.LogInformation("[GunGameBotAI][Vision] {Message}", message));
+        _visionEnhancement = new VisionEnhancementService(
+            message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
             message => Logger.LogInformation("[GunGameBotAI][Aim] {Message}", message));
@@ -111,7 +114,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.39";
+    public override string ModuleVersion => "0.7.40";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -160,7 +163,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         string currentMap = Server.MapName;
         if (!string.IsNullOrWhiteSpace(currentMap))
+        {
             _ladderMap.OnMapStart(currentMap);
+            _visionMonitor.BeginMap(currentMap);
+        }
 
         RegisterListener<Listeners.OnMapStart>(OnMapStart);
         RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
@@ -223,6 +229,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
         _visionMonitor.ClearRuntimeState();
+        _visionEnhancement.Reset();
         _aimDiagnostics.Reset();
         _transientControl.Clear();
         ReleaseAllKnownButtonPulses();
@@ -311,6 +318,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.RemoveSlot(slot, "spawn-grace");
         _geometrySafety.RemoveSlot(slot);
         _stuckMonitor.RemoveSlot(slot);
+        _visionEnhancement.RemoveSlot(slot);
         _aimDiagnostics.RemoveSlot(slot);
         _aimNative.RemoveSlot(slot);
         _transientControl.CancelSlot(slot);
@@ -396,6 +404,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _visionMonitor.RemoveSlot(slot);
+                    _visionEnhancement.RemoveSlot(slot);
                     _aimDiagnostics.RemoveSlot(slot);
                     _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
@@ -411,6 +420,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _visionMonitor.RemoveSlot(slot);
+                    _visionEnhancement.RemoveSlot(slot);
                     _aimDiagnostics.RemoveSlot(slot);
                     _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
@@ -455,6 +465,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         "learned physical ladder traversal owns movement");
 
                     _stuckMonitor.RemoveSlot(slot);
+                    _visionEnhancement.RemoveSlot(slot);
 
                     _visionMonitor.Observe(
                         controller,
@@ -487,6 +498,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     state,
                     mapName,
                     freezePeriod,
+                    now);
+
+                _visionEnhancement.Observe(
+                    controller,
+                    pawn,
+                    bot,
+                    state,
                     now);
 
                 if (state.Mode is
@@ -911,6 +929,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = false;
         ResetRuntimeState();
+        _visionMonitor.BeginMap(mapName);
         _ladderMap?.OnMapStart(mapName);
 
         if (_loaded)
@@ -921,6 +940,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = true;
         StopSharedTimers();
+        _visionMonitor.LogMapSummary(Server.MapName);
         _ladderMap?.OnMapEnd();
         ResetRuntimeState();
     }
@@ -934,6 +954,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.RemoveSlot(playerSlot);
         _stuckMonitor.RemoveSlot(playerSlot);
         _visionMonitor.RemoveSlot(playerSlot);
+        _visionEnhancement.RemoveSlot(playerSlot);
         _aimDiagnostics.RemoveSlot(playerSlot);
         _aimNative.RemoveSlot(playerSlot);
         _transientControl.CancelSlot(playerSlot);
@@ -952,6 +973,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         // are round-scoped even though aggregate diagnostics may survive.
         _transientControl.Clear();
         _visionMonitor.ClearRuntimeState();
+        _visionEnhancement.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         return HookResult.Continue;
@@ -1008,6 +1030,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _visionMonitor.RemoveSlot(slot);
+            _visionEnhancement.RemoveSlot(slot);
             _aimDiagnostics.RemoveSlot(slot);
             _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
@@ -1075,6 +1098,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _visionMonitor.RemoveSlot(slot);
+            _visionEnhancement.RemoveSlot(slot);
             _aimDiagnostics.RemoveSlot(slot);
             _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
@@ -1251,6 +1275,32 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] vision monitor={(enabled ? "enabled" : "disabled")}; " +
             $"distance={Config.VisionMonitorDistance:0}; mode=observe-only; " +
             $"detailedEvents={(Config.Debug ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_vision_enhancement", "Enable or disable Stage 6 managed look-around enhancement.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnVisionEnhancementCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_vision_enhancement 0|1");
+            return;
+        }
+
+        Config.VisionEnhancementEnabled =
+            enabled;
+        _visionEnhancement.Config =
+            Config;
+
+        if (!enabled)
+            _visionEnhancement.ClearRuntimeState();
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] vision enhancement={(enabled ? "enabled" : "disabled")}; " +
+            "mode=managed-look-around; writes=InhibitLookAroundTimestamp-only; " +
+            "EyeAnglesUnderPathFinderControl=observe-only.");
     }
 
     [ConsoleCommand("css_ggbotai_aim_debug", "Enable or disable point-specific aim visibility diagnostics.")]
@@ -1521,6 +1571,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.ResetRuntimeTracking();
         _stuckMonitor.Reset();
         _visionMonitor.Reset();
+        _visionEnhancement.Reset();
         _aimDiagnostics.Reset();
         _aimNative.Reset();
         _transientControl.Clear();
@@ -1540,6 +1591,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
         _visionMonitor.ClearRuntimeState();
+        _visionEnhancement.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         _transientControl.Clear();
@@ -1573,6 +1625,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Config = Config;
         _stuckMonitor.Config = Config;
         _visionMonitor.Config = Config;
+        _visionEnhancement.Config = Config;
         _aimDiagnostics.Config = Config;
         _aimService.Config = Config;
 
@@ -1581,6 +1634,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!Config.VisionMonitorEnabled)
             _visionMonitor.ClearRuntimeState();
+
+        if (!Config.VisionEnhancementEnabled)
+            _visionEnhancement.ClearRuntimeState();
 
         if (!Config.AimDebug)
             _aimDiagnostics.Reset();
@@ -1615,6 +1671,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}; aimMode={Config.AimMode}; " +
             $"aimNativeAvailable={_aimNative.Available}; aimHooked={_aimNative.Hooked}; " +
             $"visionMonitor={(Config.VisionMonitorEnabled ? "enabled" : "disabled")}; visionDistance={Config.VisionMonitorDistance:0}; " +
+            $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +
@@ -1625,6 +1682,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] aimPerf {_aimService.PerformanceSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] visionStats {_visionMonitor.StatisticsSummary}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] visionEnhanceStats {_visionEnhancement.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +

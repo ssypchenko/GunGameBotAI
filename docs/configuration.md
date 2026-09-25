@@ -66,11 +66,11 @@ The default profile is conservative:
   "HumanLookScanRecentFireGraceSeconds": 0.75,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 31
+  "ConfigVersion": 32
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.5 Human Look Scan uses version `31`.
+`ConfigVersion` is migrated by the plugin; Stage 6.5 direct eye-yaw testing uses version `32`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -100,12 +100,15 @@ validated to `0.50..5.0` seconds. Stage 6 never writes `EyeAngles`;
 `EyeAnglesUnderPathFinderControl` remains observation-only.
 
 `HumanLookScanEnabled` controls the Stage 6.5 physical look-scan experiment
-and defaults to `false`. It writes only `CCSBot.LookYaw` during short,
+and defaults to `false`. Stage 6.5a-v1 used `CCSBot.LookYaw`, but live tests
+showed that it rarely produced a real physical turn. Stage 6.5a-v2 therefore
+writes only the yaw component `CCSPlayerPawn.EyeAngles.Y` during short,
 randomly spaced scans while the bot is moving in `NormalGunGame` with no
 current enemy and no pathfinder eye-angle ownership. The scan direction is
 independent of enemy positions. The default interval is 2.5–4.5 seconds, hold
 time is 0.30 seconds, minimum movement speed is 30 units/s, and recent-fire
-grace is 0.75 seconds.
+grace is 0.75 seconds. Migration to config version 32 forces this stronger
+experiment OFF once so it must be explicitly re-enabled.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

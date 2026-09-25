@@ -118,7 +118,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.44";
+    public override string ModuleVersion => "0.7.45";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1365,7 +1365,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             "EyeAnglesUnderPathFinderControl=observe-only.");
     }
 
-    [ConsoleCommand("css_ggbotai_look_scan", "Enable or disable Stage 6.5 human-like physical look scanning.")]
+    [ConsoleCommand("css_ggbotai_look_scan", "Enable or disable Stage 6.5 direct eye-yaw look scanning.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnHumanLookScanCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -1387,7 +1387,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         command.ReplyToCommand(
             $"[GunGameBotAI] look scan={(enabled ? "enabled" : "disabled")}; " +
-            "write=CCSBot.LookYaw-only; enemyDirectionInput=none; " +
+            "write=CCSPlayerPawn.EyeAngles.Y-only; enemyDirectionInput=none; " +
             $"interval={Config.HumanLookScanMinIntervalSeconds:0.###}.." +
             $"{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"hold={Config.HumanLookScanHoldSeconds:0.###}s; " +
@@ -1772,6 +1772,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             $"lookScan={(Config.HumanLookScanEnabled ? "enabled" : "disabled")}; " +
+            "lookScanControl=EyeAngles.Y; " +
             $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}..{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"lookScanHold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +

@@ -155,6 +155,50 @@ worse than front acquisition, Stage 6 managed-state work is complete and the
 next investigation belongs to Stage 7 selective native vision.
 
 
+## Stage 6.5 human look scan verification
+
+Stage 6.5 is a separate opt-in experiment:
+
+```text
+css_ggbotai_look_scan 0
+```
+
+The first implementation writes only `CCSBot.LookYaw`. It does not write
+pawn EyeAngles, movement commands, velocity, nav paths/goals or enemy state.
+
+For a clean comparison, keep the older Stage 6 state experiment disabled:
+
+```text
+css_ggbotai_debug 0
+css_ggbotai_aim_debug 0
+css_ggbotai_vision_monitor 1
+css_ggbotai_vision_debug 1
+css_ggbotai_vision_enhancement 0
+css_ggbotai_look_scan 1
+```
+
+Use `css_ggbotai_status` and retain:
+
+```text
+visionStats
+lookScanStats
+[Vision] MAP-SUMMARY
+[LookScan] MAP-SUMMARY
+```
+
+With `VisionDebug=true`, each finished/interrupted scan emits one compact
+`[LookScan] SCAN` line. There is no per-tick scan trace.
+
+For the first mechanical test, verify that `avgObservedDeg` and
+`effectiveTurns` prove the pawn's real eye yaw followed the requested
+`LookYaw` while ordinary movement remained stable. If requested angles are
+large but observed turns stay near zero, stop the experiment before trying to
+judge vision effectiveness.
+
+If physical turns are real and movement remains healthy, compare front,
+front-side, side and rear acquisition/loss statistics with the Stage 5/6
+baseline.
+
 ## CounterStrikeSharp 1.0.375 / KHook
 
 GunGameBotAI targets CounterStrikeSharp API 1.0.375.

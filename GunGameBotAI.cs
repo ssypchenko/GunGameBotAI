@@ -318,6 +318,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.RemoveSlot(slot, "spawn-grace");
         _geometrySafety.RemoveSlot(slot);
         _stuckMonitor.RemoveSlot(slot);
+        _visionMonitor.RemoveSlot(slot);
         _visionEnhancement.RemoveSlot(slot);
         _aimDiagnostics.RemoveSlot(slot);
         _aimNative.RemoveSlot(slot);

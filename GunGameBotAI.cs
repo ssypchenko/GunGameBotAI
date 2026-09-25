@@ -35,6 +35,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly VisibilityTraceService _visibilityTrace;
     private readonly VisionMonitorService _visionMonitor;
     private readonly VisionEnhancementService _visionEnhancement;
+    private readonly HumanLookScanService _humanLookScan;
     private readonly AimDiagnosticsService _aimDiagnostics;
     private readonly AimPolicyService _aimPolicy;
     private readonly AimService _aimService;
@@ -94,6 +95,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             message => Logger.LogInformation("[GunGameBotAI][Vision] {Message}", message));
         _visionEnhancement = new VisionEnhancementService(
             message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
+        _humanLookScan = new HumanLookScanService(
+            _random,
+            message => Logger.LogInformation("[GunGameBotAI][LookScan] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
             message => Logger.LogInformation("[GunGameBotAI][Aim] {Message}", message));
@@ -115,7 +119,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.43";
+    public override string ModuleVersion => "0.7.44";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 

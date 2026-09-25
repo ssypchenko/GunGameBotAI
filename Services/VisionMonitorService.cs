@@ -1081,6 +1081,13 @@ public sealed class VisionMonitorService
                 "0.0")
             : "unknown";
 
+    private static string FormatOptional(
+        bool value,
+        bool known) =>
+        known
+            ? value.ToString()
+            : "unknown";
+
     private sealed class VisionMapStatistics
     {
         public long Scans { get; set; }

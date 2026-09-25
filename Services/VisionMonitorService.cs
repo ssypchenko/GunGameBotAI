@@ -20,6 +20,7 @@ public sealed class VisionMonitorService
     private const float VisibilityLostConfirmSeconds = 0.35f;
     private const float EventRestartCooldownSeconds = 0.75f;
     private const float MovingSpeedThreshold = 20.0f;
+    private const float FutureTimestampEpsilonSeconds = 0.01f;
 
     private readonly VisibilityTraceService _visibility;
     private readonly Func<CCSPlayerController, float, bool> _isBotInSpawnGrace;
@@ -45,6 +46,9 @@ public sealed class VisionMonitorService
     private long _eventsNoCurrentEnemy;
     private long _eventsOtherEnemyVisible;
     private long _eventsOtherEnemyNotVisible;
+    private long _eventsLookAroundInhibited;
+    private long _eventsPathfinderEyeControl;
+    private long _eventsVisionControlReadFailures;
     private long _eventsStartedMoving;
     private long _eventsStartedStationary;
     private long _eventsFront;
@@ -94,6 +98,9 @@ public sealed class VisionMonitorService
                 $"currentEnemyNotVisible={_eventsCurrentEnemyNotVisible}; " +
                 $"noCurrentEnemy={_eventsNoCurrentEnemy}; otherEnemyVisible={_eventsOtherEnemyVisible}; " +
                 $"otherEnemyNotVisible={_eventsOtherEnemyNotVisible}; " +
+                $"lookAroundInhibited={_eventsLookAroundInhibited}; " +
+                $"pathfinderEyeControl={_eventsPathfinderEyeControl}; " +
+                $"visionControlReadFailures={_eventsVisionControlReadFailures}; " +
                 $"moving={_eventsStartedMoving}; stationary={_eventsStartedStationary}; " +
                 $"front={_eventsFront}; frontSide={_eventsFrontSide}; side={_eventsSide}; rear={_eventsRear}; " +
                 $"acquired={_eventsAcquired}; lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
@@ -117,6 +124,9 @@ public sealed class VisionMonitorService
         _eventsNoCurrentEnemy = 0;
         _eventsOtherEnemyVisible = 0;
         _eventsOtherEnemyNotVisible = 0;
+        _eventsLookAroundInhibited = 0;
+        _eventsPathfinderEyeControl = 0;
+        _eventsVisionControlReadFailures = 0;
         _eventsStartedMoving = 0;
         _eventsStartedStationary = 0;
         _eventsFront = 0;
@@ -163,6 +173,9 @@ public sealed class VisionMonitorService
             $"currentEnemyNotVisible={_mapStats.CurrentEnemyNotVisible}; " +
             $"noCurrentEnemy={_mapStats.NoCurrentEnemy}; otherEnemyVisible={_mapStats.OtherEnemyVisible}; " +
             $"otherEnemyNotVisible={_mapStats.OtherEnemyNotVisible}; " +
+            $"lookAroundInhibited={_mapStats.LookAroundInhibited}; " +
+            $"pathfinderEyeControl={_mapStats.PathfinderEyeControl}; " +
+            $"visionControlReadFailures={_mapStats.VisionControlReadFailures}; " +
             $"moving={_mapStats.Moving}; stationary={_mapStats.Stationary}; " +
             $"front={_mapStats.Front}; frontSide={_mapStats.FrontSide}; side={_mapStats.Side}; rear={_mapStats.Rear}; " +
             $"acquired={_mapStats.Acquired}; lost={_mapStats.Lost}; active={ActiveEventCount}; " +

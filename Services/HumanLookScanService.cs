@@ -9,8 +9,9 @@ namespace GunGameBotAI.Services;
 /// Stage 6.5 experimental human-like look scanning.
 ///
 /// Valve keeps ownership of navigation, movement, target selection, firing and
-/// combat aim. This service only nudges CCSBot.LookYaw for a short bounded
-/// interval while the bot is moving normally and has no current enemy.
+/// combat aim. Stage 6.5a-v2 writes only CCSPlayerPawn.EyeAngles.Y for a
+/// short bounded interval while the bot is moving normally and has no current
+/// enemy. Pitch and roll are preserved.
 ///
 /// The scan direction is deliberately independent of enemy positions.
 /// VisionMonitor may observe the result but never feeds a target into this
@@ -251,8 +252,9 @@ public sealed class HumanLookScanService
 
             try
             {
-                bot.LookYaw =
-                    state.TargetYaw;
+                WriteEyeYaw(
+                    pawn,
+                    state.TargetYaw);
                 _writes++;
                 state.Writes++;
             }
@@ -376,8 +378,9 @@ public sealed class HumanLookScanService
 
         try
         {
-            bot.LookYaw =
-                state.TargetYaw;
+            WriteEyeYaw(
+                pawn,
+                state.TargetYaw);
             _writes++;
             state.Writes++;
         }
@@ -446,7 +449,7 @@ public sealed class HumanLookScanService
         {
             _info(
                 $"SCAN bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
-                $"outcome={outcome}; requestedSector={state.RequestedSector}; " +
+                $"control=EyeAngles.Y; outcome={outcome}; requestedSector={state.RequestedSector}; " +
                 $"requestedDelta={state.RelativeAngle:0.0}; startYaw={state.StartEyeYaw:0.0}; " +
                 $"targetYaw={state.TargetYaw:0.0}; observedDelta={observed:0.0}; " +
                 $"duration={MathF.Max(0.0f, now - state.StartedAt):0.000}; writes={state.Writes}; " +
@@ -574,6 +577,18 @@ public sealed class HumanLookScanService
             enemy.Health > 0 &&
             enemy.LifeState ==
                 (byte)LifeState_t.LIFE_ALIVE;
+    }
+
+    private static void WriteEyeYaw(
+        CCSPlayerPawn pawn,
+        float yaw)
+    {
+        // EyeAngles is a schema-backed QAngle. Mutate only Y (yaw), preserving
+        // Valve's current pitch and roll. We deliberately do not Teleport the
+        // pawn and do not modify entity rotation, movement or velocity.
+        pawn.EyeAngles.Y =
+            NormalizeYaw(
+                yaw);
     }
 
     private static bool TryReadEyeYaw(

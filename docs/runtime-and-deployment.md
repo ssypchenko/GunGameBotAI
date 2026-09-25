@@ -155,6 +155,28 @@ worse than front acquisition, Stage 6 managed-state work is complete and the
 next investigation belongs to Stage 7 selective native vision.
 
 
+## Ladder logging during non-ladder tests
+
+Routine ladder traversal telemetry is silent unless both:
+
+```text
+Debug = true
+LadderMapDebug = true
+```
+
+This includes normal events such as `ACQUIRE`, `JUMP`, `MOUNT`,
+`CLIMB-SAFE`, `TRAVERSAL-SUCCESS` and successful `CLIMB-RESULT`.
+
+When `LadderHumanMovementDiagnostics=true`, explicit human/manual teaching
+diagnostics may still be logged.
+
+Critical ladder failures remain visible as warnings even when ladder debug is
+off. These include traversal failures, native dismount failures and trap
+recovery failures. Persistence/store exceptions also remain warnings.
+
+Therefore vision/look-scan tests should keep the broad debug switch off and
+will not receive routine `[LADDER]` success traffic.
+
 ## Stage 6.5 human look scan verification
 
 Stage 6.5 is a separate opt-in experiment:

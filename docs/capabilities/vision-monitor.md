@@ -223,6 +223,9 @@ visionStats
     noCurrentEnemy
     otherEnemyVisible
     otherEnemyNotVisible
+    lookAroundInhibited
+    pathfinderEyeControl
+    visionControlReadFailures
     moving
     stationary
     front
@@ -238,6 +241,23 @@ visionStats
 
 These counters make it possible to compare several maps without requiring
 verbose logs for every session.
+
+During Stage 6 testing, every new vision-gap event also snapshots Valve's
+managed view state. The additional counters mean:
+
+```text
+lookAroundInhibited
+    InhibitLookAroundTimestamp was still in the future when the gap started.
+
+pathfinderEyeControl
+    EyeAnglesUnderPathFinderControl was true when the gap started.
+
+visionControlReadFailures
+    the managed view-state fields could not be read for that event.
+```
+
+The detailed vision-gap event includes the same flags plus the remaining
+look-around inhibit time. VisionMonitor still performs no writes.
 
 `notSelected` is additionally split into:
 

@@ -8,19 +8,22 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Stage 6 managed vision improvement.
 ///
-/// The first Stage 6 experiment deliberately changes only one Valve-managed
-/// state: when look-around is actively inhibited, the service releases that
-/// inhibition in a bounded NormalGunGame state. It never writes EyeAngles and
-/// it only observes EyeAnglesUnderPathFinderControl so the effect of the
-/// inhibit change can be measured independently.
+/// v1 releases Valve's temporary look-around inhibition.
+/// v2 additionally restarts Valve's own look-around state on a bounded cadence
+/// when the bot has no current enemy and pathfinding is not controlling its
+/// eye angles.
+///
+/// The service never writes EyeAngles and never supplies enemy information.
 /// </summary>
 public sealed class VisionEnhancementService
 {
     private const float MinimumAttemptIntervalSeconds = 0.25f;
     private const float FutureTimestampEpsilonSeconds = 0.01f;
+    private const float ZeroTimestampEpsilonSeconds = 0.001f;
 
     private readonly Action<string> _info;
     private readonly Dictionary<int, float> _nextAttemptAtBySlot = new();
+    private readonly Dictionary<int, float> _nextLookAroundRestartAtBySlot = new();
 
     private long _checks;
     private long _eligible;
@@ -28,6 +31,14 @@ public sealed class VisionEnhancementService
     private long _futureInhibit;
     private long _released;
     private long _pathfinderEyeControl;
+
+    private long _lookAroundRestartOpportunities;
+    private long _lookAroundRestarted;
+    private long _lookAroundRestartSkipped;
+    private long _restartSkippedCurrentEnemy;
+    private long _restartSkippedPathfinder;
+    private long _restartSkippedAlreadyReset;
+
     private long _failures;
 
     public VisionEnhancementService(Action<string> info)
@@ -40,17 +51,34 @@ public sealed class VisionEnhancementService
     public string StatisticsSummary =>
         $"checks={_checks}; eligible={_eligible}; combatGated={_combatGated}; " +
         $"futureInhibit={_futureInhibit}; released={_released}; " +
-        $"pathfinderEyeControl={_pathfinderEyeControl}; failures={_failures}";
+        $"pathfinderEyeControl={_pathfinderEyeControl}; " +
+        $"restartOpportunities={_lookAroundRestartOpportunities}; " +
+        $"lookAroundRestarted={_lookAroundRestarted}; " +
+        $"lookAroundRestartSkipped={_lookAroundRestartSkipped}; " +
+        $"restartSkipEnemy={_restartSkippedCurrentEnemy}; " +
+        $"restartSkipPathfinder={_restartSkippedPathfinder}; " +
+        $"restartSkipAlreadyReset={_restartSkippedAlreadyReset}; " +
+        $"failures={_failures}";
 
     public void Reset()
     {
         _nextAttemptAtBySlot.Clear();
+        _nextLookAroundRestartAtBySlot.Clear();
+
         _checks = 0;
         _eligible = 0;
         _combatGated = 0;
         _futureInhibit = 0;
         _released = 0;
         _pathfinderEyeControl = 0;
+
+        _lookAroundRestartOpportunities = 0;
+        _lookAroundRestarted = 0;
+        _lookAroundRestartSkipped = 0;
+        _restartSkippedCurrentEnemy = 0;
+        _restartSkippedPathfinder = 0;
+        _restartSkippedAlreadyReset = 0;
+
         _failures = 0;
     }
 
@@ -71,11 +99,13 @@ public sealed class VisionEnhancementService
     public void ClearRuntimeState()
     {
         _nextAttemptAtBySlot.Clear();
+        _nextLookAroundRestartAtBySlot.Clear();
     }
 
     public void RemoveSlot(int slot)
     {
         _nextAttemptAtBySlot.Remove(slot);
+        _nextLookAroundRestartAtBySlot.Remove(slot);
     }
 
     public void Observe(
@@ -111,7 +141,9 @@ public sealed class VisionEnhancementService
         bool attacking;
         bool aimingAtEnemy;
         bool pathfinderEyeControl;
+        bool hasValidCurrentEnemy;
         float inhibitUntil;
+        float lookAroundStateTimestamp;
 
         try
         {
@@ -120,6 +152,8 @@ public sealed class VisionEnhancementService
             aimingAtEnemy = bot.IsAimingAtEnemy;
             pathfinderEyeControl = bot.EyeAnglesUnderPathFinderControl;
             inhibitUntil = bot.InhibitLookAroundTimestamp;
+            lookAroundStateTimestamp = bot.LookAroundStateTimestamp;
+            hasValidCurrentEnemy = HasValidCurrentEnemy(bot);
         }
         catch
         {
@@ -142,32 +176,123 @@ public sealed class VisionEnhancementService
         if (pathfinderEyeControl)
             _pathfinderEyeControl++;
 
-        if (!float.IsFinite(inhibitUntil) ||
-            inhibitUntil <= now + FutureTimestampEpsilonSeconds)
+        // Keep the proven-safe v1 experiment unchanged for comparability.
+        if (float.IsFinite(inhibitUntil) &&
+            inhibitUntil > now + FutureTimestampEpsilonSeconds)
+        {
+            _futureInhibit++;
+
+            try
+            {
+                bot.InhibitLookAroundTimestamp = now;
+                _released++;
+
+                if (Config.Debug)
+                {
+                    _info(
+                        $"RELEASE-INHIBIT bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                        $"before={inhibitUntil:0.000}; now={now:0.000}; " +
+                        $"remaining={MathF.Max(0.0f, inhibitUntil - now):0.000}; " +
+                        $"pathfinderEyeControl={pathfinderEyeControl}; mode={runtime.Mode}");
+                }
+            }
+            catch
+            {
+                _failures++;
+            }
+        }
+
+        if (_nextLookAroundRestartAtBySlot.TryGetValue(
+                slot,
+                out float nextLookAroundRestartAt) &&
+            now < nextLookAroundRestartAt)
         {
             return;
         }
 
-        _futureInhibit++;
+        _nextLookAroundRestartAtBySlot[slot] =
+            now + Config.VisionLookAroundRestartIntervalSeconds;
+
+        _lookAroundRestartOpportunities++;
+
+        // A valid current enemy may be temporarily outside LOS. Do not restart
+        // Valve's scan state while it is still tracking that target.
+        if (hasValidCurrentEnemy)
+        {
+            _lookAroundRestartSkipped++;
+            _restartSkippedCurrentEnemy++;
+            return;
+        }
+
+        // Navigation-controlled eye angles are observation-only in Stage 6.
+        // Do not fight them with a look-around restart.
+        if (pathfinderEyeControl)
+        {
+            _lookAroundRestartSkipped++;
+            _restartSkippedPathfinder++;
+            return;
+        }
+
+        if (!float.IsFinite(lookAroundStateTimestamp))
+        {
+            _lookAroundRestartSkipped++;
+            _failures++;
+            return;
+        }
+
+        if (MathF.Abs(lookAroundStateTimestamp) <=
+            ZeroTimestampEpsilonSeconds)
+        {
+            _lookAroundRestartSkipped++;
+            _restartSkippedAlreadyReset++;
+            return;
+        }
 
         try
         {
-            bot.InhibitLookAroundTimestamp = now;
-            _released++;
+            float before =
+                lookAroundStateTimestamp;
+
+            bot.LookAroundStateTimestamp =
+                0.0f;
+
+            _lookAroundRestarted++;
 
             if (Config.Debug)
             {
+                float remaining =
+                    before > now
+                        ? before - now
+                        : 0.0f;
+
                 _info(
-                    $"RELEASE-INHIBIT bot={SafeName(controller.PlayerName)}; slot={slot}; " +
-                    $"before={inhibitUntil:0.000}; now={now:0.000}; " +
-                    $"remaining={MathF.Max(0.0f, inhibitUntil - now):0.000}; " +
-                    $"pathfinderEyeControl={pathfinderEyeControl}; mode={runtime.Mode}");
+                    $"RESTART-LOOK-AROUND bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                    $"before={before:0.000}; now={now:0.000}; " +
+                    $"remaining={remaining:0.000}; " +
+                    $"pathfinderEyeControl={pathfinderEyeControl}; " +
+                    $"currentEnemy={hasValidCurrentEnemy}; mode={runtime.Mode}");
             }
         }
         catch
         {
+            _lookAroundRestartSkipped++;
             _failures++;
         }
+    }
+
+    private static bool HasValidCurrentEnemy(
+        CCSBot bot)
+    {
+        CCSPlayerPawn? enemy =
+            bot.Enemy.Value;
+
+        return
+            enemy != null &&
+            enemy.IsValid &&
+            enemy.Handle != nint.Zero &&
+            enemy.Health > 0 &&
+            enemy.LifeState ==
+                (byte)LifeState_t.LIFE_ALIVE;
     }
 
     private static string SafeMap(string? mapName) =>

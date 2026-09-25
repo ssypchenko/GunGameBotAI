@@ -87,6 +87,38 @@ css_ggbotai_debug 0
 The monitor itself can remain enabled without detailed event logging if
 aggregate evidence is still being collected.
 
+At map end, Stage 5 now writes a `MAP-SUMMARY` to the normal plugin log. Use
+that summary for per-map comparisons; `css_ggbotai_status` remains cumulative
+across maps until the runtime is toggled.
+
+
+## Stage 6 managed look-around verification
+
+Stage 6 defaults to disabled:
+
+```text
+css_ggbotai_vision_enhancement 0
+```
+
+Keep Stage 5 monitoring enabled to establish a baseline. Then enable Stage 6:
+
+```text
+css_ggbotai_vision_enhancement 1
+```
+
+The first experiment only releases a future
+`CCSBot.InhibitLookAroundTimestamp` while the bot is in `NormalGunGame`, is
+not on a ladder, and is not in visible-enemy combat. It never writes
+`EyeAngles`. `EyeAnglesUnderPathFinderControl` is observation-only.
+
+Check `css_ggbotai_status` for `visionEnhanceStats`. In particular,
+`released` confirms whether the experiment actually changed Valve state.
+With `Debug=true`, each real intervention is logged as
+`RELEASE-INHIBIT`.
+
+Reject the experiment if navigation, special modes or visible-enemy combat
+regress, if wall awareness appears, or if schema failures are logged.
+
 
 ## CounterStrikeSharp 1.0.375 / KHook
 

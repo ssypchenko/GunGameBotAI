@@ -118,7 +118,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.46";
+    public override string ModuleVersion => "0.7.47";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -528,6 +528,15 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     freezePeriod,
                     now);
 
+                // NormalGunGame deliberately deactivates the shared actuator in
+                // ThinkBot(). A newly started look scan must reacquire fast
+                // actuator ownership, exactly like Knife Rush does.
+                if (_humanLookScan.IsActive(slot))
+                {
+                    _registry.ActivateActuator(
+                        slot);
+                }
+
                 if (state.Mode is
                     BotBehaviorMode.KnifeLevel or
                     BotBehaviorMode.OpportunisticKnifeRush)
@@ -781,9 +790,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         state,
                         now);
 
-                // Fast actuator ownership is exclusive. A learned physical
-                // ladder traversal owns the one-shot jump/mount observation;
-                // otherwise only Knife Rush needs fast continuous actuation.
+                // Fast actuator priority:
+                //   1. learned ladder traversal,
+                //   2. Knife Rush / mandatory knife,
+                //   3. Human Look Scan,
+                //   4. ordinary transient control.
+                //
+                // LookScan never competes with the two higher-priority owners.
                 bool ladderTraversalOwned =
                     _ladderMap?.ApplyFast(
                         pawn,
@@ -802,11 +815,31 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         now);
                 }
 
-                bool externalMovementOwner =
-                    ladderTraversalOwned ||
+                bool knifeActuatorOwned =
                     state.Mode is
                         BotBehaviorMode.KnifeLevel or
                         BotBehaviorMode.OpportunisticKnifeRush;
+
+                bool lookScanOwned =
+                    false;
+
+                if (!ladderTraversalOwned &&
+                    !knifeActuatorOwned &&
+                    state.Mode ==
+                        BotBehaviorMode.NormalGunGame)
+                {
+                    lookScanOwned =
+                        _humanLookScan.ApplyFast(
+                            controller,
+                            pawn,
+                            bot,
+                            state,
+                            now);
+                }
+
+                bool externalMovementOwner =
+                    ladderTraversalOwned ||
+                    knifeActuatorOwned;
 
                 if (externalMovementOwner)
                 {
@@ -819,6 +852,18 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _transientControl.Apply(
                         slot,
                         pawn);
+                }
+
+                // LookScan uses the shared actuator only while its bounded scan
+                // lease is active. Button pulses and transient leases are
+                // independently included in activeSlots, so releasing this
+                // registry ownership does not starve them.
+                if (!ladderTraversalOwned &&
+                    !knifeActuatorOwned &&
+                    !lookScanOwned)
+                {
+                    _registry.DeactivateActuator(
+                        slot);
                 }
 
                 _buttonPulses.Update(
@@ -1365,7 +1410,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             "EyeAnglesUnderPathFinderControl=observe-only.");
     }
 
-    [ConsoleCommand("css_ggbotai_look_scan", "Enable or disable Stage 6.5 direct eye-yaw look scanning.")]
+    [ConsoleCommand("css_ggbotai_look_scan", "Enable or disable Stage 6.5 fast-held eye-yaw look scanning.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnHumanLookScanCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -1387,10 +1432,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         command.ReplyToCommand(
             $"[GunGameBotAI] look scan={(enabled ? "enabled" : "disabled")}; " +
-            "write=CCSPlayerPawn.EyeAngles.Y-only; enemyDirectionInput=none; " +
+            "control=EyeAngles.Y-fast-readback; enemyDirectionInput=none; " +
             $"interval={Config.HumanLookScanMinIntervalSeconds:0.###}.." +
             $"{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"hold={Config.HumanLookScanHoldSeconds:0.###}s; " +
+            $"yawTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
+            $"fastTicks={Config.FastActuatorEveryTicks}; " +
             $"minimumSpeed={Config.HumanLookScanMinimumSpeed:0.#}.");
     }
 
@@ -1772,9 +1819,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             $"lookScan={(Config.HumanLookScanEnabled ? "enabled" : "disabled")}; " +
-            "lookScanControl=EyeAngles.Y; " +
+            "lookScanControl=EyeAngles.Y-fast-readback; " +
             $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}..{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"lookScanHold={Config.HumanLookScanHoldSeconds:0.###}s; " +
+            $"lookScanTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

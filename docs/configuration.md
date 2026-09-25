@@ -55,16 +55,18 @@ The default profile is conservative:
   "AimDebug": false,
   "VisionMonitorEnabled": false,
   "VisionMonitorDistance": 800.0,
+  "VisionEnhancementEnabled": false,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 27
+  "ConfigVersion": 28
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 5 uses version `27`. Existing
+`ConfigVersion` is migrated by the plugin; Stage 6 uses version `28`. Existing
 installations upgrading from an earlier version receive
-`VisionMonitorEnabled=false` and `VisionMonitorDistance=800.0`, so the new
-trace-based diagnostics are never silently enabled by an upgrade.
+`VisionMonitorEnabled=false`, `VisionMonitorDistance=800.0`, and
+`VisionEnhancementEnabled=false`, so neither trace-based diagnostics nor
+managed look-around changes are silently enabled by an upgrade.
 
 `AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook.
 `AimMode` accepts `Mixed`, `Head`, or `Body`. `AimDebug` enables Stage 3
@@ -74,7 +76,15 @@ visibility diagnostics plus Stage 4 correction/performance diagnostics.
 `VisionMonitorDistance` is the maximum nearby-opponent distance considered by
 the monitor and is validated to `100..2000` world units. Detailed Stage 5
 events require the existing `Debug=true`; aggregate statistics remain
-available through `css_ggbotai_status`.
+available through `css_ggbotai_status`. A per-map `MAP-SUMMARY` is written
+automatically when the map ends.
+
+`VisionEnhancementEnabled` controls the Stage 6 managed look-around experiment.
+It defaults to `false`. The first experiment only releases a future
+`CCSBot.InhibitLookAroundTimestamp` while the bot is in safe
+`NormalGunGame` state with no visible/active combat target. It never writes
+`EyeAngles`; `EyeAnglesUnderPathFinderControl` is observation-only in this
+version.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

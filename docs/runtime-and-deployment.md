@@ -114,7 +114,8 @@ not on a ladder, and is not in visible-enemy combat. It never writes
 Check `css_ggbotai_status` for `visionEnhanceStats`. In particular,
 `released` confirms whether the experiment actually changed Valve state.
 With `Debug=true`, each real intervention is logged as
-`RELEASE-INHIBIT`.
+`RELEASE-INHIBIT`. At map end the same Stage 6 counters are written to a
+`[VisionEnhancement] MAP-SUMMARY` log entry and reset for the next map.
 
 Reject the experiment if navigation, special modes or visible-enemy combat
 regress, if wall awareness appears, or if schema failures are logged.

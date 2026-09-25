@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 32;
+    public override int Version { get; set; } = 33;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -264,12 +264,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float VisionLookAroundRestartIntervalSeconds { get; set; } = 0.75f;
 
     // Stage 6.5 experimental human-like physical look scanning. Disabled by
-    // default. v2 writes only CCSPlayerPawn.EyeAngles.Y (yaw); Valve retains
+    // default. v3 uses the shared fast actuator to hold only
+    // CCSPlayerPawn.EyeAngles.Y (yaw) with read-back correction; Valve retains
     // navigation, movement, target selection and combat aim.
     public bool HumanLookScanEnabled { get; set; } = false;
     public float HumanLookScanMinIntervalSeconds { get; set; } = 2.50f;
     public float HumanLookScanMaxIntervalSeconds { get; set; } = 4.50f;
     public float HumanLookScanHoldSeconds { get; set; } = 0.30f;
+    public float HumanLookScanYawToleranceDegrees { get; set; } = 7.5f;
     public float HumanLookScanMinimumSpeed { get; set; } = 30.0f;
     public float HumanLookScanRecentFireGraceSeconds { get; set; } = 0.75f;
 
@@ -319,6 +321,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             0.60f,
             0.30f,
             nameof(HumanLookScanHoldSeconds),
+            warn);
+        HumanLookScanYawToleranceDegrees = Clamp(
+            HumanLookScanYawToleranceDegrees,
+            1.0f,
+            30.0f,
+            7.5f,
+            nameof(HumanLookScanYawToleranceDegrees),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -834,6 +843,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // to opt in again after upgrade.
             HumanLookScanEnabled = false;
             Version = 32;
+        }
+
+        if (Version < 33)
+        {
+            // v33 moves direct eye-yaw enforcement into the shared fast
+            // actuator with read-back correction, mirroring Knife Rush weapon
+            // holding. This is intentionally opt-in again because it reasserts
+            // the yaw more frequently than v32.
+            HumanLookScanEnabled = false;
+            HumanLookScanYawToleranceDegrees = 7.5f;
+            Version = 33;
         }
     }
 

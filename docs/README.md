@@ -12,5 +12,6 @@ The plugin documentation is intentionally kept beside the project source.
 - `capabilities/visibility-trace.md` — Stage 3 point-specific visibility tracing and aim diagnostics.
 - `capabilities/aim-service.md` — Stage 4 bounded PickNewAimSpot targetSpot correction.
 - `capabilities/vision-monitor.md` — Stage 5 observation-only nearby-enemy acquisition diagnostics.
+- `capabilities/vision-enhancement.md` — Stage 6 bounded managed look-around experiment.
 
 - `STABLE_BEHAVIOUR_BASELINE.md` — frozen Stage 0 behavioural baseline and build/dependency identifiers.

@@ -538,7 +538,7 @@ public sealed class VisionMonitorService
                     break;
             }
 
-            if (Config.Debug)
+            if (Config.VisionDebug)
             {
                 _info(
                     $"PHYSICALLY_VISIBLE_BUT_NOT_ACQUIRED map={SafeMap(mapName)}; " +
@@ -633,7 +633,7 @@ public sealed class VisionMonitorService
                 timeToAcquire;
         }
 
-        if (!Config.Debug)
+        if (!Config.VisionDebug)
             return;
 
         float currentDistance =
@@ -707,7 +707,7 @@ public sealed class VisionMonitorService
             _eventsLostUnacquired++;
             _mapStats.Lost++;
 
-            if (Config.Debug)
+            if (Config.VisionDebug)
             {
                 _info(
                     $"LOST_UNACQUIRED map={SafeMap(mapName)}; " +

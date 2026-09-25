@@ -253,20 +253,9 @@ public sealed class VisionEnhancementService
 
             _lookAroundRestarted++;
 
-            if (Config.VisionDebug)
-            {
-                float remaining =
-                    before > now
-                        ? before - now
-                        : 0.0f;
-
-                _info(
-                    $"RESTART-LOOK-AROUND bot={SafeName(controller.PlayerName)}; slot={slot}; " +
-                    $"before={before:0.000}; now={now:0.000}; " +
-                    $"remaining={remaining:0.000}; " +
-                    $"pathfinderEyeControl={pathfinderEyeControl}; " +
-                    $"currentEnemy={hasValidCurrentEnemy}; mode={runtime.Mode}");
-            }
+            // Per-event restart logs are intentionally suppressed. The map
+            // summary records restart counts; VisionMonitor owns the detailed
+            // gap/acquired/lost events needed for Stage 6 effectiveness.
         }
         catch
         {
@@ -295,8 +284,4 @@ public sealed class VisionEnhancementService
             ? "unknown"
             : mapName.Replace(';', '_');
 
-    private static string SafeName(string? name) =>
-        string.IsNullOrWhiteSpace(name)
-            ? "unknown"
-            : name.Replace(';', '_');
 }

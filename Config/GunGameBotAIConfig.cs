@@ -733,8 +733,9 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 28)
         {
-            // v28 adds Stage 6 managed look-around. Keep it OFF on upgrade.
-            VisionEnhancementEnabled = false;
+            // v28 adds Stage 6 managed look-around. Do not overwrite an
+            // explicitly persisted value from the 0.7.40 experiment; configs
+            // which never had the property already deserialize to false.
             Version = 28;
         }
 

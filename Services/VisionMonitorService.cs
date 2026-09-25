@@ -1100,6 +1100,9 @@ public sealed class VisionMonitorService
         public long NoCurrentEnemy { get; set; }
         public long OtherEnemyVisible { get; set; }
         public long OtherEnemyNotVisible { get; set; }
+        public long LookAroundInhibited { get; set; }
+        public long PathfinderEyeControl { get; set; }
+        public long VisionControlReadFailures { get; set; }
         public long Moving { get; set; }
         public long Stationary { get; set; }
         public long Front { get; set; }
@@ -1123,6 +1126,9 @@ public sealed class VisionMonitorService
             NoCurrentEnemy = 0;
             OtherEnemyVisible = 0;
             OtherEnemyNotVisible = 0;
+            LookAroundInhibited = 0;
+            PathfinderEyeControl = 0;
+            VisionControlReadFailures = 0;
             Moving = 0;
             Stationary = 0;
             Front = 0;

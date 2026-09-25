@@ -1,14 +1,34 @@
 # Human Look Scan — Stage 6.5
 
-Stage 6.5 tests a different approach to the side/rear acquisition problem.
+Stage 6.5 tests a different response to the side/rear acquisition problem.
 
 Instead of changing Valve visibility, FOV or enemy-selection logic, the plugin
-periodically asks an otherwise idle-aware bot to physically look in another
-direction. Valve remains responsible for deciding whether an enemy is noticed.
+periodically turns the bot's physical eye yaw while Valve keeps ownership of
+navigation, movement, target selection, firing and combat aim.
 
-The experiment is deliberately isolated from enemy positions: VisionMonitor may
-measure the outcome, but no physically traced enemy coordinate is ever passed to
-the scan service.
+The scan direction is deliberately independent of enemy positions. VisionMonitor
+may measure the result, but no traced enemy coordinate is passed into this
+service.
+
+## Experiment history
+
+Stage 6.5a-v1 wrote only:
+
+```text
+CCSBot.LookYaw
+```
+
+Live testing showed that scheduling worked, but the physical pawn eye yaw usually
+moved only a few degrees even when 50–160 degree turns were requested. Therefore
+`LookYaw` was not strong enough for this purpose.
+
+Stage 6.5a-v2 now tests direct schema-backed yaw control:
+
+```text
+CCSPlayerPawn.EyeAngles.Y
+```
+
+Only yaw is changed. The current pitch and roll are preserved.
 
 ## Feature flag
 
@@ -24,18 +44,16 @@ Runtime command:
 css_ggbotai_look_scan 0|1
 ```
 
-## First implementation
+Because v2 is a stronger intervention than v1, configuration migration to
+ConfigVersion 32 forces the feature OFF once. The operator must explicitly
+enable it again after upgrading.
 
-The first test version writes only:
+## Explicit non-goals
+
+Stage 6.5a-v2 does not write:
 
 ```text
 CCSBot.LookYaw
-```
-
-It does not write:
-
-```text
-CCSPlayerPawn.EyeAngles
 CCSBot.LookPitch
 CCSBot.LookAtSpot
 CCSBot.AimGoal
@@ -45,15 +63,13 @@ CCSBot.EyeAnglesUnderPathFinderControl
 movement commands
 velocity
 navigation path / goal
+entity position
 ```
 
-This is intentional. If `LookYaw` is sufficient to make Valve rotate the
-actual eye direction, it is a much smaller intervention than taking ownership
-of pawn eye angles.
+It also does not call `Teleport`.
 
-The service measures the resulting physical yaw through
-`CCSPlayerPawn.EyeAngles.Y`, so a test can distinguish a requested scan from
-a scan that actually turned the bot's view.
+The implementation mutates only the Y component of the schema-backed
+`CCSPlayerPawn.EyeAngles` QAngle.
 
 ## Eligibility
 
@@ -75,8 +91,8 @@ speed2D >= HumanLookScanMinimumSpeed
 no recent weapon fire inside HumanLookScanRecentFireGraceSeconds
 ```
 
-If an enemy appears while a scan is active, the scan immediately stops writing
-and Valve owns combat again.
+If Valve acquires/owns an enemy while a scan is active, the plugin immediately
+stops writing and Valve owns combat again.
 
 If pathfinding takes eye-angle ownership while a scan is active, the scan also
 stops immediately.
@@ -93,12 +109,11 @@ Defaults:
 "HumanLookScanRecentFireGraceSeconds": 0.75
 ```
 
-Every eligible bot gets a random interval between 2.5 and 4.5 seconds. The
-requested look direction is held for only 0.30 seconds, which is normally three
-DecisionLoop samples at the default 0.10 second decision cadence.
+At the default 0.10 second decision interval, the target yaw is normally written
+three or four times during a 0.30 second scan.
 
-When the hold ends the plugin does not restore an old view angle. It simply
-stops touching `LookYaw` and lets Valve resume naturally.
+When the hold ends the plugin does not restore the old yaw. It simply stops
+writing and Valve resumes naturally.
 
 ## Direction distribution
 
@@ -111,14 +126,6 @@ For each scan:
 - 20%: rear check, 135–165 degrees.
 
 Left/right is selected randomly.
-
-This is intended to imitate a player periodically checking sectors rather than
-oscillating continuously.
-
-## Randomness isolation
-
-Human Look Scan has its own Random instance. Enabling the experiment therefore
-does not consume the random sequence used by Knife Rush decisions.
 
 ## Diagnostics
 
@@ -147,20 +154,11 @@ maxObservedDeg
 failures
 ```
 
-Important fields:
-
-- `started` — scan attempts that actually wrote a target LookYaw;
-- `effectiveTurns` — finished scans where physical EyeAngles moved at least 25°;
-- `avgRequestedDeg` — average requested relative scan magnitude;
-- `avgObservedDeg` — average physical yaw change actually observed;
-- `enemyInterrupts` — Valve acquired/owned an enemy while the scan was active;
-- `failures` — managed schema read/write failures.
-
 With `VisionDebug=true`, one compact line is written when each scan finishes
 or is interrupted:
 
 ```text
-[GunGameBotAI][LookScan] SCAN ...
+[GunGameBotAI][LookScan] SCAN control=EyeAngles.Y ...
 ```
 
 It includes:
@@ -179,6 +177,11 @@ endSpeed
 movementYawDelta
 ```
 
+`observedDelta` is measured by reading the physical pawn EyeAngles on later
+decision samples before the next write. This is important: it tells us whether
+the forced yaw survived long enough to be a real scan rather than only an
+instantaneous memory write.
+
 There is no per-tick scan log.
 
 At map end:
@@ -187,10 +190,9 @@ At map end:
 [GunGameBotAI][LookScan] MAP-SUMMARY ...
 ```
 
-## Recommended first test
+## Recommended Stage 6.5a-v2 test
 
-For the cleanest Stage 6.5 comparison, disable the older Stage 6 state
-experiment:
+For a clean mechanical test:
 
 ```text
 css_ggbotai_debug 0
@@ -201,37 +203,22 @@ css_ggbotai_vision_enhancement 0
 css_ggbotai_look_scan 1
 ```
 
-Keep AimEnhancement in its normal tested state. It only acts after Valve has a
-visible current enemy, while Human Look Scan stops as soon as an enemy appears.
+First test one bot on a normal map and observe:
 
-## Stage 6.5a acceptance
+1. whether the head/view visibly turns;
+2. whether movement continues toward Valve's nav goal;
+3. whether `observedDelta` now tracks `requestedDelta` much more closely;
+4. whether large `movementYawDelta` values or obvious path deviations appear;
+5. whether enemy acquisition interrupts the scan cleanly;
+6. whether `failures=0`.
 
-The first question is mechanical safety, not combat performance.
+If EyeAngles.Y is physically effective but causes unacceptable path disruption,
+do not proceed to combat testing. The next change should reduce/smooth the yaw
+intervention rather than modifying native vision.
 
-Accept the LookYaw mechanism for a broader Stage 6.5 test only if:
+If EyeAngles.Y is overwritten almost immediately by Valve, the next minimal
+experiment is a fast-actuator reassert only for the short scan window.
 
-1. `started` and `writes` are non-zero;
-2. `effectiveTurns` is substantial;
-3. `avgObservedDeg` shows that actual pawn EyeAngles follow the requested yaw;
-4. movement remains normal by visual observation;
-5. SCAN logs do not show systematic large movement-heading disruption;
-6. no ladder, Knife Rush, grenade or combat-aim regressions appear;
-7. `failures=0`.
-
-If requested angles are large but observed physical turns remain near zero,
-`CCSBot.LookYaw` is not sufficient and the next experiment should evaluate a
-stronger but still bounded view-control mechanism.
-
-## Stage 6.5b effectiveness
-
-Once 6.5a is mechanically safe, compare VisionMonitor results against the
-established baseline:
-
-- front acquisition should remain fast;
-- side/rear acquisition time should decrease;
-- side/rear `LOST_UNACQUIRED` should decrease;
-- `enemyInterrupts` during scans provide supporting evidence, but are not by
-  themselves proof of causation.
-
-If physical scanning works but does not materially improve side/rear
-acquisition, proceed to Stage 7 native vision investigation.
+If physical turns work and movement remains healthy, proceed to the Stage 6.5b
+vision-effectiveness comparison against the established front/side/rear
+baseline.

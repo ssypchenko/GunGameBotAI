@@ -115,6 +115,16 @@ With `Debug=true`, each actual intervention emits one bounded event:
 
 There is no per-tick debug trace.
 
+At map end, while the feature is enabled, Stage 6 also writes:
+
+```text
+[GunGameBotAI][VisionEnhancement] MAP-SUMMARY ...
+```
+
+Stage 6 statistics reset at the next map start, so the summary is directly
+comparable with the Stage 5 per-map summary and does not require subtracting
+cumulative counters.
+
 ## Test procedure
 
 Keep Stage 5 monitoring enabled so before/after acquisition data remains

@@ -64,12 +64,12 @@ The default profile is conservative:
 ```
 
 `ConfigVersion` is migrated by the plugin; Stage 6 v2 uses version `29`.
-Existing installations upgrading from an earlier version receive
-`VisionMonitorEnabled=false`, `VisionMonitorDistance=800.0`,
-`VisionEnhancementEnabled=false`, and
-`VisionLookAroundRestartIntervalSeconds=0.75`, so neither trace-based
-diagnostics nor managed look-around changes are silently enabled by an
-upgrade.
+Existing installations which never had the Stage 5/6 properties receive
+safe defaults: `VisionMonitorEnabled=false`,
+`VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
+`VisionLookAroundRestartIntervalSeconds=0.75`. An explicitly persisted
+`VisionEnhancementEnabled=true` from the 0.7.40/0.7.41 experiment is preserved
+during migration.
 
 `AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook.
 `AimMode` accepts `Mixed`, `Head`, or `Body`. `AimDebug` enables Stage 3

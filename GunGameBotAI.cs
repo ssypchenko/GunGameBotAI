@@ -118,7 +118,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.45";
+    public override string ModuleVersion => "0.7.46";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -152,15 +152,15 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         LadderMapStore ladderMapStore = new(
             ModuleDirectory,
-            message => Logger.LogInformation("[GunGameBotAI][LADDER] {Message}", message),
+            LadderInfoLog,
             (exception, message) => Logger.LogWarning(exception, "[GunGameBotAI][LADDER] {Message}", message));
 
         _ladderMap = new LadderMapService(
             ladderMapStore,
             _buttonPulses,
             _corrections,
-            message => Logger.LogInformation("[GunGameBotAI][LADDER] {Message}", message),
-            message => Logger.LogInformation("[GunGameBotAI][LADDER] {Message}", message))
+            LadderInfoLog,
+            LadderDebugLog)
         {
             Config = Config
         };
@@ -1876,6 +1876,72 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         return false;
+    }
+
+    private void LadderInfoLog(string message)
+    {
+        if (Config.Debug &&
+            Config.LadderMapDebug)
+        {
+            Logger.LogInformation(
+                "[GunGameBotAI][LADDER] {Message}",
+                message);
+            return;
+        }
+
+        if (Config.LadderHumanMovementDiagnostics &&
+            (message.StartsWith(
+                 "HUMAN-MOVE",
+                 StringComparison.Ordinal) ||
+             message.StartsWith(
+                 "MANUAL",
+                 StringComparison.Ordinal)))
+        {
+            Logger.LogInformation(
+                "[GunGameBotAI][LADDER] {Message}",
+                message);
+            return;
+        }
+
+        if (IsCriticalLadderMessage(
+                message))
+        {
+            Logger.LogWarning(
+                "[GunGameBotAI][LADDER] {Message}",
+                message);
+        }
+    }
+
+    private void LadderDebugLog(string message)
+    {
+        if (Config.Debug &&
+            Config.LadderMapDebug)
+        {
+            Logger.LogInformation(
+                "[GunGameBotAI][LADDER][DEBUG] {Message}",
+                message);
+        }
+    }
+
+    private static bool IsCriticalLadderMessage(
+        string message)
+    {
+        return
+            message.StartsWith(
+                "TRAVERSAL-FAIL ",
+                StringComparison.Ordinal) ||
+            message.StartsWith(
+                "TRAVERSAL-POSTEXIT-FAIL ",
+                StringComparison.Ordinal) ||
+            message.StartsWith(
+                "POST-LADDER-NATIVE-DISMOUNT-FAIL ",
+                StringComparison.Ordinal) ||
+            message.StartsWith(
+                "LADDER-TRAP-RECOVERY-FAIL ",
+                StringComparison.Ordinal) ||
+            message.StartsWith(
+                "NATIVE-LADDER-FSM init=unavailable",
+                StringComparison.Ordinal);
     }
 
     private void DebugLog(string message)

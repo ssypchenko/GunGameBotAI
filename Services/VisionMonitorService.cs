@@ -484,6 +484,26 @@ public sealed class VisionMonitorService
                 }
             }
 
+            if (!visionControl.Known)
+            {
+                _eventsVisionControlReadFailures++;
+                _mapStats.VisionControlReadFailures++;
+            }
+            else
+            {
+                if (visionControl.LookAroundInhibited)
+                {
+                    _eventsLookAroundInhibited++;
+                    _mapStats.LookAroundInhibited++;
+                }
+
+                if (visionControl.PathfinderEyeControl)
+                {
+                    _eventsPathfinderEyeControl++;
+                    _mapStats.PathfinderEyeControl++;
+                }
+            }
+
             if (movement.Moving)
             {
                 _eventsStartedMoving++;

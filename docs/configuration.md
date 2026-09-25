@@ -55,15 +55,16 @@ The default profile is conservative:
   "AimDebug": false,
   "VisionMonitorEnabled": false,
   "VisionMonitorDistance": 800.0,
+  "VisionDebug": false,
   "VisionEnhancementEnabled": false,
   "VisionLookAroundRestartIntervalSeconds": 0.75,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 29
+  "ConfigVersion": 30
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6 v2 uses version `29`.
+`ConfigVersion` is migrated by the plugin; focused Stage 6 logging uses version `30`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -77,10 +78,11 @@ visibility diagnostics plus Stage 4 correction/performance diagnostics.
 
 `VisionMonitorEnabled` controls the observation-only Stage 5 monitor.
 `VisionMonitorDistance` is the maximum nearby-opponent distance considered by
-the monitor and is validated to `100..2000` world units. Detailed Stage 5
-events require the existing `Debug=true`; aggregate statistics remain
-available through `css_ggbotai_status`. A per-map `MAP-SUMMARY` is written
-automatically when the map ends.
+the monitor and is validated to `100..2000` world units. Detailed Stage 5/6
+vision-gap events are controlled by the separate `VisionDebug` flag, not by
+the broad `Debug` flag. Aggregate statistics remain available through
+`css_ggbotai_status`. A per-map `MAP-SUMMARY` is written automatically when
+the map ends.
 
 `VisionEnhancementEnabled` controls the Stage 6 managed look-around experiment
 and defaults to `false`. Stage 6 v2 retains the v1

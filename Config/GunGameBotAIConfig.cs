@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 29;
+    public override int Version { get; set; } = 30;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -251,6 +251,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Stage 5 is observation-only and opt-in. It never changes Valve vision.
     public bool VisionMonitorEnabled { get; set; } = false;
     public float VisionMonitorDistance { get; set; } = 800.0f;
+
+    // Focused Stage 5/6 diagnostics. Keep separate from the general Debug flag
+    // so vision tests do not enable geometry/knife/other legacy debug streams.
+    public bool VisionDebug { get; set; } = false;
 
     // Stage 6 managed look-around experiment. Disabled until explicitly tested.
     // v1 releases Valve's look-around inhibit. v2 may also restart Valve's own
@@ -744,6 +748,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // v29 adds the Stage 6 v2 bounded Valve look-around-state restart.
             VisionLookAroundRestartIntervalSeconds = 0.75f;
             Version = 29;
+        }
+
+        if (Version < 30)
+        {
+            // v30 separates Stage 5/6 detailed diagnostics from the broad
+            // Debug switch. Keep focused vision logging OFF on upgrade.
+            VisionDebug = false;
+            Version = 30;
         }
     }
 

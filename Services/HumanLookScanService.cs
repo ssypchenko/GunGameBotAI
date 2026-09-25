@@ -9,14 +9,14 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Stage 6.5 experimental human-like look scanning.
 ///
-/// Valve keeps ownership of navigation, movement, target selection, firing and
-/// combat aim. Stage 6.5a-v2 writes only CCSPlayerPawn.EyeAngles.Y for a
-/// short bounded interval while the bot is moving normally and has no current
-/// enemy. Pitch and roll are preserved.
+/// DecisionLoop owns scan decisions only. Once a scan starts, the shared fast
+/// actuator uses a read-back correction loop (the same pattern used by Knife
+/// Rush weapon holding) to keep CCSPlayerPawn.EyeAngles.Y near the requested
+/// target for a short bounded interval.
 ///
-/// The scan direction is deliberately independent of enemy positions.
-/// VisionMonitor may observe the result but never feeds a target into this
-/// service.
+/// Valve keeps ownership of navigation, movement, target selection, firing and
+/// combat aim. Pitch and roll are preserved. Scan direction is deliberately
+/// independent of enemy positions.
 /// </summary>
 public sealed class HumanLookScanService
 {
@@ -28,6 +28,7 @@ public sealed class HumanLookScanService
     private readonly Dictionary<int, ScanState> _states = new();
 
     private long _checks;
+    private long _fastChecks;
     private long _scheduled;
     private long _started;
     private long _finished;
@@ -37,6 +38,8 @@ public sealed class HumanLookScanService
     private long _modeInterrupts;
     private long _effectiveTurns;
     private long _writes;
+    private long _fastCorrections;
+    private long _fastWithinTolerance;
     private long _skippedPathfinder;
     private long _skippedStationary;
     private long _skippedRecentFire;
@@ -72,17 +75,23 @@ public sealed class HumanLookScanService
                     : 0.0;
 
             return
-                $"checks={_checks}; scheduled={_scheduled}; started={_started}; " +
+                $"checks={_checks}; fastChecks={_fastChecks}; scheduled={_scheduled}; started={_started}; " +
                 $"finished={_finished}; completed={_completed}; enemyInterrupts={_enemyInterrupts}; " +
                 $"pathfinderInterrupts={_pathfinderInterrupts}; modeInterrupts={_modeInterrupts}; " +
-                $"effectiveTurns={_effectiveTurns}; writes={_writes}; " +
-                $"skippedPathfinder={_skippedPathfinder}; skippedStationary={_skippedStationary}; " +
-                $"skippedRecentFire={_skippedRecentFire}; nearSide={_nearSideScans}; " +
-                $"side={_sideScans}; rear={_rearScans}; " +
+                $"effectiveTurns={_effectiveTurns}; writes={_writes}; fastCorrections={_fastCorrections}; " +
+                $"fastWithinTolerance={_fastWithinTolerance}; skippedPathfinder={_skippedPathfinder}; " +
+                $"skippedStationary={_skippedStationary}; skippedRecentFire={_skippedRecentFire}; " +
+                $"nearSide={_nearSideScans}; side={_sideScans}; rear={_rearScans}; " +
                 $"avgRequestedDeg={averageRequested:0.0}; avgObservedDeg={averageObserved:0.0}; " +
                 $"maxObservedDeg={_maximumObservedDegrees:0.0}; failures={_failures}";
         }
     }
+
+    public bool IsActive(int slot) =>
+        _states.TryGetValue(
+            slot,
+            out ScanState? state) &&
+        state.Active;
 
     public void BeginMap() =>
         Reset();
@@ -92,6 +101,7 @@ public sealed class HumanLookScanService
         _states.Clear();
 
         _checks = 0;
+        _fastChecks = 0;
         _scheduled = 0;
         _started = 0;
         _finished = 0;
@@ -101,6 +111,8 @@ public sealed class HumanLookScanService
         _modeInterrupts = 0;
         _effectiveTurns = 0;
         _writes = 0;
+        _fastCorrections = 0;
+        _fastWithinTolerance = 0;
         _skippedPathfinder = 0;
         _skippedStationary = 0;
         _skippedRecentFire = 0;
@@ -129,6 +141,11 @@ public sealed class HumanLookScanService
             $"MAP-SUMMARY map={SafeMap(mapName)}; {StatisticsSummary}");
     }
 
+    /// <summary>
+    /// Slow decision loop: decides whether to start/end a scan. It never
+    /// reasserts EyeAngles for an already-active scan; that is fast-actuator
+    /// work only.
+    /// </summary>
     public void Observe(
         CCSPlayerController controller,
         CCSPlayerPawn pawn,
@@ -152,45 +169,41 @@ public sealed class HumanLookScanService
             runtime.Mode != BotBehaviorMode.NormalGunGame ||
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER)
         {
-            if (_states.TryGetValue(slot, out ScanState? gatedState) &&
+            if (_states.TryGetValue(
+                    slot,
+                    out ScanState? gatedState) &&
                 gatedState.Active)
             {
+                _modeInterrupts++;
                 FinishScan(
                     controller,
                     pawn,
                     gatedState,
                     now,
-                    "mode",
-                    completedNormally: false);
-                _modeInterrupts++;
+                    "mode");
             }
 
             _states.Remove(slot);
             return;
         }
 
-        if (!_states.TryGetValue(slot, out ScanState? state))
+        if (!_states.TryGetValue(
+                slot,
+                out ScanState? state))
         {
             state = new ScanState();
-            _states.Add(slot, state);
-            ScheduleNext(state, now);
+            _states.Add(
+                slot,
+                state);
+            ScheduleNext(
+                state,
+                now);
         }
 
-        bool enemyVisible;
-        bool attacking;
-        bool aimingAtEnemy;
-        bool pathfinderEyeControl;
-        bool hasCurrentEnemy;
-
-        try
-        {
-            enemyVisible = bot.IsEnemyVisible;
-            attacking = bot.IsAttacking;
-            aimingAtEnemy = bot.IsAimingAtEnemy;
-            pathfinderEyeControl = bot.EyeAnglesUnderPathFinderControl;
-            hasCurrentEnemy = HasValidCurrentEnemy(bot);
-        }
-        catch
+        if (!TryReadValveControlState(
+                bot,
+                out bool enemyOwned,
+                out bool pathfinderEyeControl))
         {
             _failures++;
             state.NextScanAt =
@@ -206,10 +219,7 @@ public sealed class HumanLookScanService
                 pawn,
                 state);
 
-            if (enemyVisible ||
-                attacking ||
-                aimingAtEnemy ||
-                hasCurrentEnemy)
+            if (enemyOwned)
             {
                 _enemyInterrupts++;
                 FinishScan(
@@ -217,9 +227,10 @@ public sealed class HumanLookScanService
                     pawn,
                     state,
                     now,
-                    "enemy-acquired",
-                    completedNormally: false);
-                ScheduleNext(state, now);
+                    "enemy-acquired");
+                ScheduleNext(
+                    state,
+                    now);
                 return;
             }
 
@@ -231,13 +242,15 @@ public sealed class HumanLookScanService
                     pawn,
                     state,
                     now,
-                    "pathfinder-eye-control",
-                    completedNormally: false);
-                ScheduleNext(state, now);
+                    "pathfinder-eye-control");
+                ScheduleNext(
+                    state,
+                    now);
                 return;
             }
 
-            if (now >= state.EndsAt)
+            if (now >=
+                state.EndsAt)
             {
                 _completed++;
                 FinishScan(
@@ -245,53 +258,41 @@ public sealed class HumanLookScanService
                     pawn,
                     state,
                     now,
-                    "completed",
-                    completedNormally: true);
-                ScheduleNext(state, now);
-                return;
-            }
-
-            try
-            {
-                WriteEyeYaw(
-                    pawn,
-                    state.TargetYaw);
-                _writes++;
-                state.Writes++;
-            }
-            catch
-            {
-                _failures++;
-                FinishScan(
-                    controller,
-                    pawn,
+                    "completed");
+                ScheduleNext(
                     state,
-                    now,
-                    "write-failure",
-                    completedNormally: false);
-                ScheduleNext(state, now);
+                    now);
             }
 
             return;
         }
 
-        if (enemyVisible ||
-            attacking ||
-            aimingAtEnemy ||
-            hasCurrentEnemy)
+        if (enemyOwned)
         {
             // Do not queue a scan to fire immediately after combat ends.
-            // A fresh interval begins once Valve no longer owns a target.
-            if (state.NextScanAt <= now)
-                ScheduleNext(state, now);
+            if (state.NextScanAt <=
+                now)
+            {
+                ScheduleNext(
+                    state,
+                    now);
+            }
+
             return;
         }
 
         if (pathfinderEyeControl)
         {
             _skippedPathfinder++;
-            if (state.NextScanAt <= now)
-                state.NextScanAt = now + 0.50f;
+
+            if (state.NextScanAt <=
+                now)
+            {
+                state.NextScanAt =
+                    now +
+                    0.50f;
+            }
+
             return;
         }
 
@@ -328,7 +329,9 @@ public sealed class HumanLookScanService
                 out float startYaw))
         {
             _failures++;
-            ScheduleNext(state, now);
+            ScheduleNext(
+                state,
+                now);
             return;
         }
 
@@ -359,10 +362,14 @@ public sealed class HumanLookScanService
         state.StartMovementYaw =
             movementYaw;
         state.Writes = 0;
+        state.FastChecks = 0;
+        state.FastCorrections = 0;
+        state.FastWithinTolerance = 0;
 
         _started++;
         _totalRequestedDegrees +=
-            MathF.Abs(relativeAngle);
+            MathF.Abs(
+                relativeAngle);
 
         switch (sector)
         {
@@ -377,13 +384,163 @@ public sealed class HumanLookScanService
                 break;
         }
 
+        // Deliberately no EyeAngles write here. The caller activates the shared
+        // fast actuator after Observe() sees IsActive(slot). This mirrors Knife
+        // Rush: slow loop decides, fast loop enforces.
+    }
+
+    /// <summary>
+    /// Fast actuator loop. Returns true while this service still needs fast
+    /// ownership for the slot.
+    /// </summary>
+    public bool ApplyFast(
+        CCSPlayerController controller,
+        CCSPlayerPawn pawn,
+        CCSBot bot,
+        BotRuntimeState runtime,
+        float now)
+    {
+        int slot = controller.Slot;
+
+        if (!Config.HumanLookScanEnabled ||
+            !_states.TryGetValue(
+                slot,
+                out ScanState? state) ||
+            !state.Active)
+        {
+            return false;
+        }
+
+        _fastChecks++;
+        state.FastChecks++;
+
+        if (runtime.HasBeenControlledByPlayerThisRound ||
+            runtime.Mode != BotBehaviorMode.NormalGunGame ||
+            pawn.MoveType == MoveType_t.MOVETYPE_LADDER)
+        {
+            _modeInterrupts++;
+            FinishScan(
+                controller,
+                pawn,
+                state,
+                now,
+                "fast-mode");
+            ScheduleNext(
+                state,
+                now);
+            return false;
+        }
+
+        if (!TryReadValveControlState(
+                bot,
+                out bool enemyOwned,
+                out bool pathfinderEyeControl))
+        {
+            _failures++;
+            FinishScan(
+                controller,
+                pawn,
+                state,
+                now,
+                "fast-read-failure");
+            ScheduleNext(
+                state,
+                now);
+            return false;
+        }
+
+        // Safety gates are evaluated before every possible EyeAngles write.
+        if (enemyOwned)
+        {
+            _enemyInterrupts++;
+            FinishScan(
+                controller,
+                pawn,
+                state,
+                now,
+                "enemy-acquired-fast");
+            ScheduleNext(
+                state,
+                now);
+            return false;
+        }
+
+        if (pathfinderEyeControl)
+        {
+            _pathfinderInterrupts++;
+            FinishScan(
+                controller,
+                pawn,
+                state,
+                now,
+                "pathfinder-eye-control-fast");
+            ScheduleNext(
+                state,
+                now);
+            return false;
+        }
+
+        if (now >=
+            state.EndsAt)
+        {
+            _completed++;
+            FinishScan(
+                controller,
+                pawn,
+                state,
+                now,
+                "completed-fast");
+            ScheduleNext(
+                state,
+                now);
+            return false;
+        }
+
+        if (!TryReadEyeYaw(
+                pawn,
+                out float currentYaw))
+        {
+            _failures++;
+            FinishScan(
+                controller,
+                pawn,
+                state,
+                now,
+                "fast-yaw-read-failure");
+            ScheduleNext(
+                state,
+                now);
+            return false;
+        }
+
+        ObserveTurn(
+            currentYaw,
+            state);
+
+        float error =
+            MathF.Abs(
+                AngleDelta(
+                    currentYaw,
+                    state.TargetYaw));
+
+        if (error <=
+            Config.HumanLookScanYawToleranceDegrees)
+        {
+            _fastWithinTolerance++;
+            state.FastWithinTolerance++;
+            return true;
+        }
+
         try
         {
             WriteEyeYaw(
                 pawn,
                 state.TargetYaw);
+
             _writes++;
+            _fastCorrections++;
             state.Writes++;
+            state.FastCorrections++;
         }
         catch
         {
@@ -393,10 +550,14 @@ public sealed class HumanLookScanService
                 pawn,
                 state,
                 now,
-                "initial-write-failure",
-                completedNormally: false);
-            ScheduleNext(state, now);
+                "fast-write-failure");
+            ScheduleNext(
+                state,
+                now);
+            return false;
         }
+
+        return true;
     }
 
     private void FinishScan(
@@ -404,8 +565,7 @@ public sealed class HumanLookScanService
         CCSPlayerPawn pawn,
         ScanState state,
         float now,
-        string outcome,
-        bool completedNormally)
+        string outcome)
     {
         ObserveTurn(
             pawn,
@@ -439,7 +599,8 @@ public sealed class HumanLookScanService
 
         float movementYawDelta =
             movementKnown &&
-            float.IsFinite(state.StartMovementYaw)
+            float.IsFinite(
+                state.StartMovementYaw)
                 ? MathF.Abs(
                     AngleDelta(
                         endMovementYaw,
@@ -450,10 +611,12 @@ public sealed class HumanLookScanService
         {
             _info(
                 $"SCAN bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
-                $"control=EyeAngles.Y; outcome={outcome}; requestedSector={state.RequestedSector}; " +
+                $"control=EyeAngles.Y-fast-hold; outcome={outcome}; requestedSector={state.RequestedSector}; " +
                 $"requestedDelta={state.RelativeAngle:0.0}; startYaw={state.StartEyeYaw:0.0}; " +
                 $"targetYaw={state.TargetYaw:0.0}; observedDelta={observed:0.0}; " +
                 $"duration={MathF.Max(0.0f, now - state.StartedAt):0.000}; writes={state.Writes}; " +
+                $"fastChecks={state.FastChecks}; fastCorrections={state.FastCorrections}; " +
+                $"fastWithinTolerance={state.FastWithinTolerance}; " +
                 $"startSpeed={state.StartSpeed2D:0.0}; endSpeed={FormatOptional(endSpeed)}; " +
                 $"movementYawDelta={FormatOptional(movementYawDelta)}");
         }
@@ -463,19 +626,68 @@ public sealed class HumanLookScanService
         state.EndsAt = 0.0f;
         state.MaxObservedTurn = 0.0f;
         state.Writes = 0;
+        state.FastChecks = 0;
+        state.FastCorrections = 0;
+        state.FastWithinTolerance = 0;
     }
 
-    private void ObserveTurn(
+    private static bool TryReadValveControlState(
+        CCSBot bot,
+        out bool enemyOwned,
+        out bool pathfinderEyeControl)
+    {
+        enemyOwned = false;
+        pathfinderEyeControl = false;
+
+        try
+        {
+            bool enemyVisible =
+                bot.IsEnemyVisible;
+
+            bool attacking =
+                bot.IsAttacking;
+
+            bool aimingAtEnemy =
+                bot.IsAimingAtEnemy;
+
+            pathfinderEyeControl =
+                bot.EyeAnglesUnderPathFinderControl;
+
+            enemyOwned =
+                enemyVisible ||
+                attacking ||
+                aimingAtEnemy ||
+                HasValidCurrentEnemy(
+                    bot);
+
+            return true;
+        }
+        catch
+        {
+            enemyOwned = false;
+            pathfinderEyeControl = false;
+            return false;
+        }
+    }
+
+    private static void ObserveTurn(
         CCSPlayerPawn pawn,
         ScanState state)
     {
-        if (!TryReadEyeYaw(
+        if (TryReadEyeYaw(
                 pawn,
                 out float currentYaw))
         {
-            return;
+            ObserveTurn(
+                currentYaw,
+                state);
         }
+    }
 
+    private static void ObserveTurn(
+        float currentYaw,
+        ScanState state)
+    {
         float delta =
             MathF.Abs(
                 AngleDelta(
@@ -585,14 +797,12 @@ public sealed class HumanLookScanService
         float yaw)
     {
         // EyeAngles is a schema-backed QAngle. Mutate only Y (yaw), preserving
-        // Valve's current pitch and roll. We deliberately do not Teleport the
-        // pawn and do not modify entity rotation, movement or velocity.
+        // Valve's current pitch and roll. Never touch position, velocity,
+        // movement commands, nav goal/path or enemy state.
         pawn.EyeAngles.Y =
             NormalizeYaw(
                 yaw);
 
-        // EyeAngles is networked state. Mark the schema member changed so a
-        // spectating/admin client sees the same yaw written on the server.
         Utilities.SetStateChanged(
             pawn,
             "CCSPlayerPawn",
@@ -611,7 +821,8 @@ public sealed class HumanLookScanService
                 pawn.EyeAngles.Y;
 
             return
-                float.IsFinite(yaw);
+                float.IsFinite(
+                    yaw);
         }
         catch
         {
@@ -640,10 +851,14 @@ public sealed class HumanLookScanService
                 velocity.X * velocity.X +
                 velocity.Y * velocity.Y);
 
-        if (!float.IsFinite(speed))
+        if (!float.IsFinite(
+                speed))
+        {
             return false;
+        }
 
-        if (speed > 0.01f)
+        if (speed >
+            0.01f)
         {
             yaw =
                 MathF.Atan2(
@@ -701,18 +916,25 @@ public sealed class HumanLookScanService
             reference);
 
     private static string SafeMap(string? mapName) =>
-        string.IsNullOrWhiteSpace(mapName)
+        string.IsNullOrWhiteSpace(
+            mapName)
             ? "unknown"
-            : mapName.Replace(';', '_');
+            : mapName.Replace(
+                ';',
+                '_');
 
     private static string SafeName(string? name) =>
-        string.IsNullOrWhiteSpace(name)
+        string.IsNullOrWhiteSpace(
+            name)
             ? "unknown"
-            : name.Replace(';', '_');
+            : name.Replace(
+                ';',
+                '_');
 
     private static string FormatOptional(
         float value) =>
-        float.IsFinite(value)
+        float.IsFinite(
+            value)
             ? value.ToString(
                 "0.0",
                 System.Globalization.CultureInfo.InvariantCulture)
@@ -745,5 +967,11 @@ public sealed class HumanLookScanService
             float.NaN;
 
         public int Writes { get; set; }
+
+        public int FastChecks { get; set; }
+
+        public int FastCorrections { get; set; }
+
+        public int FastWithinTolerance { get; set; }
     }
 }

@@ -163,8 +163,12 @@ Stage 6.5 is a separate opt-in experiment:
 css_ggbotai_look_scan 0
 ```
 
-The first implementation writes only `CCSBot.LookYaw`. It does not write
-pawn EyeAngles, movement commands, velocity, nav paths/goals or enemy state.
+Stage 6.5a-v1 wrote only `CCSBot.LookYaw`, but live testing showed that
+requested turns usually did not survive as real pawn eye movement.
+
+Stage 6.5a-v2 now writes only `CCSPlayerPawn.EyeAngles.Y`. Pitch and roll are
+preserved. It still does not write movement commands, velocity, nav paths/goals
+or enemy state, and it does not call `Teleport`.
 
 For a clean comparison, keep the older Stage 6 state experiment disabled:
 
@@ -189,11 +193,12 @@ lookScanStats
 With `VisionDebug=true`, each finished/interrupted scan emits one compact
 `[LookScan] SCAN` line. There is no per-tick scan trace.
 
-For the first mechanical test, verify that `avgObservedDeg` and
-`effectiveTurns` prove the pawn's real eye yaw followed the requested
-`LookYaw` while ordinary movement remained stable. If requested angles are
-large but observed turns stay near zero, stop the experiment before trying to
-judge vision effectiveness.
+For the first v2 mechanical test, verify that `avgObservedDeg` and
+`effectiveTurns` prove the pawn's real eye yaw follows the requested direct
+EyeAngles.Y target while ordinary movement remains stable. If direct yaw is
+overwritten almost immediately, the next experiment should use fast-actuator
+reassert only during the short scan window. If movement is visibly disrupted,
+stop before judging vision effectiveness.
 
 If physical turns are real and movement remains healthy, compare front,
 front-side, side and rear acquisition/loss statistics with the Stage 5/6

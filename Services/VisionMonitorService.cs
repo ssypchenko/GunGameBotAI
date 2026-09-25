@@ -1191,5 +1191,9 @@ public sealed class VisionMonitorService
 
         public bool InitialValveEnemy { get; set; }
         public bool InitialValveVisible { get; set; }
+        public bool InitialVisionControlKnown { get; set; }
+        public bool InitialLookAroundInhibited { get; set; }
+        public float InitialLookAroundInhibitRemaining { get; set; }
+        public bool InitialPathfinderEyeControl { get; set; }
     }
 }

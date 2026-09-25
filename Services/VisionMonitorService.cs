@@ -660,6 +660,9 @@ public sealed class VisionMonitorService
             $"initialVisiblePoint={pair.InitialVisiblePoint.ToString().ToUpperInvariant()}; " +
             $"initialAngle={FormatOptional(pair.InitialEnemyAngleFromView)}; " +
             $"initialViewSector={pair.InitialViewSector}; " +
+            $"initialLookAroundInhibited={FormatOptional(pair.InitialLookAroundInhibited, pair.InitialVisionControlKnown)}; " +
+            $"initialLookAroundInhibitRemaining={FormatOptional(pair.InitialLookAroundInhibitRemaining)}; " +
+            $"initialPathfinderEyeControl={FormatOptional(pair.InitialPathfinderEyeControl, pair.InitialVisionControlKnown)}; " +
             $"initialMoving={pair.InitialMoving}; currentMoving={movement.Moving}; " +
             $"initialMode={pair.InitialMode}; currentMode={runtime.Mode}");
     }

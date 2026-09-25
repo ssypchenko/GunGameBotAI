@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 28;
+    public override int Version { get; set; } = 29;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -253,9 +253,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float VisionMonitorDistance { get; set; } = 800.0f;
 
     // Stage 6 managed look-around experiment. Disabled until explicitly tested.
-    // It releases Valve's look-around inhibit in safe NormalGunGame states and
-    // never writes EyeAngles directly.
+    // v1 releases Valve's look-around inhibit. v2 may also restart Valve's own
+    // look-around state on a bounded cadence when no current enemy exists.
+    // It never writes EyeAngles directly.
     public bool VisionEnhancementEnabled { get; set; } = false;
+    public float VisionLookAroundRestartIntervalSeconds { get; set; } = 0.75f;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
@@ -266,6 +268,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
         VisionMonitorDistance = Clamp(VisionMonitorDistance, 100.0f, 2000.0f, 800.0f, nameof(VisionMonitorDistance), warn);
+        VisionLookAroundRestartIntervalSeconds = Clamp(
+            VisionLookAroundRestartIntervalSeconds,
+            0.50f,
+            5.0f,
+            0.75f,
+            nameof(VisionLookAroundRestartIntervalSeconds),
+            warn);
 
         if (!Enum.IsDefined(
                 typeof(global::GunGameBotAI.Models.AimMode),
@@ -720,6 +729,20 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             VisionMonitorEnabled = false;
             VisionMonitorDistance = 800.0f;
             Version = 27;
+        }
+
+        if (Version < 28)
+        {
+            // v28 adds Stage 6 managed look-around. Keep it OFF on upgrade.
+            VisionEnhancementEnabled = false;
+            Version = 28;
+        }
+
+        if (Version < 29)
+        {
+            // v29 adds the Stage 6 v2 bounded Valve look-around-state restart.
+            VisionLookAroundRestartIntervalSeconds = 0.75f;
+            Version = 29;
         }
     }
 

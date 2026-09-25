@@ -445,6 +445,14 @@ public sealed class VisionMonitorService
                 isValveEnemy;
             pair.InitialValveVisible =
                 isValveVisible;
+            pair.InitialLookAroundInhibited =
+                visionControl.LookAroundInhibited;
+            pair.InitialLookAroundInhibitRemaining =
+                visionControl.LookAroundInhibitRemaining;
+            pair.InitialPathfinderEyeControl =
+                visionControl.PathfinderEyeControl;
+            pair.InitialVisionControlKnown =
+                visionControl.Known;
 
             _eventsStarted++;
             _mapStats.Events++;

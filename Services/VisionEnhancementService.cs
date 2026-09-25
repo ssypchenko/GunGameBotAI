@@ -54,6 +54,20 @@ public sealed class VisionEnhancementService
         _failures = 0;
     }
 
+    public void BeginMap()
+    {
+        Reset();
+    }
+
+    public void LogMapSummary(string mapName)
+    {
+        if (!Config.VisionEnhancementEnabled)
+            return;
+
+        _info(
+            $"MAP-SUMMARY map={SafeMap(mapName)}; {StatisticsSummary}");
+    }
+
     public void ClearRuntimeState()
     {
         _nextAttemptAtBySlot.Clear();
@@ -155,6 +169,11 @@ public sealed class VisionEnhancementService
             _failures++;
         }
     }
+
+    private static string SafeMap(string? mapName) =>
+        string.IsNullOrWhiteSpace(mapName)
+            ? "unknown"
+            : mapName.Replace(';', '_');
 
     private static string SafeName(string? name) =>
         string.IsNullOrWhiteSpace(name)

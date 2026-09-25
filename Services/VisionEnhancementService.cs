@@ -245,9 +245,6 @@ public sealed class VisionEnhancementService
 
         try
         {
-            float before =
-                lookAroundStateTimestamp;
-
             bot.LookAroundStateTimestamp =
                 0.0f;
 

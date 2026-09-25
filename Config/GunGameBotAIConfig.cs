@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 30;
+    public override int Version { get; set; } = 31;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -263,6 +263,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool VisionEnhancementEnabled { get; set; } = false;
     public float VisionLookAroundRestartIntervalSeconds { get; set; } = 0.75f;
 
+    // Stage 6.5 experimental human-like physical look scanning. Disabled by
+    // default. The implementation writes CCSBot.LookYaw only; Valve retains
+    // navigation, movement, target selection and combat aim.
+    public bool HumanLookScanEnabled { get; set; } = false;
+    public float HumanLookScanMinIntervalSeconds { get; set; } = 2.50f;
+    public float HumanLookScanMaxIntervalSeconds { get; set; } = 4.50f;
+    public float HumanLookScanHoldSeconds { get; set; } = 0.30f;
+    public float HumanLookScanMinimumSpeed { get; set; } = 30.0f;
+    public float HumanLookScanRecentFireGraceSeconds { get; set; } = 0.75f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -278,6 +288,51 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             5.0f,
             0.75f,
             nameof(VisionLookAroundRestartIntervalSeconds),
+            warn);
+
+        HumanLookScanMinIntervalSeconds = Clamp(
+            HumanLookScanMinIntervalSeconds,
+            1.0f,
+            10.0f,
+            2.50f,
+            nameof(HumanLookScanMinIntervalSeconds),
+            warn);
+        HumanLookScanMaxIntervalSeconds = Clamp(
+            HumanLookScanMaxIntervalSeconds,
+            1.0f,
+            15.0f,
+            4.50f,
+            nameof(HumanLookScanMaxIntervalSeconds),
+            warn);
+        if (HumanLookScanMaxIntervalSeconds < HumanLookScanMinIntervalSeconds)
+        {
+            warn(
+                $"HumanLookScanMaxIntervalSeconds={HumanLookScanMaxIntervalSeconds:0.###} is below " +
+                $"HumanLookScanMinIntervalSeconds={HumanLookScanMinIntervalSeconds:0.###}; using the minimum for both.");
+            HumanLookScanMaxIntervalSeconds =
+                HumanLookScanMinIntervalSeconds;
+        }
+
+        HumanLookScanHoldSeconds = Clamp(
+            HumanLookScanHoldSeconds,
+            0.15f,
+            0.60f,
+            0.30f,
+            nameof(HumanLookScanHoldSeconds),
+            warn);
+        HumanLookScanMinimumSpeed = Clamp(
+            HumanLookScanMinimumSpeed,
+            0.0f,
+            150.0f,
+            30.0f,
+            nameof(HumanLookScanMinimumSpeed),
+            warn);
+        HumanLookScanRecentFireGraceSeconds = Clamp(
+            HumanLookScanRecentFireGraceSeconds,
+            0.0f,
+            2.0f,
+            0.75f,
+            nameof(HumanLookScanRecentFireGraceSeconds),
             warn);
 
         if (!Enum.IsDefined(
@@ -756,6 +811,19 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // Debug switch. Keep focused vision logging OFF on upgrade.
             VisionDebug = false;
             Version = 30;
+        }
+
+        if (Version < 31)
+        {
+            // v31 adds the Stage 6.5 physical look-scan experiment. Keep it
+            // OFF on upgrade and seed conservative test defaults.
+            HumanLookScanEnabled = false;
+            HumanLookScanMinIntervalSeconds = 2.50f;
+            HumanLookScanMaxIntervalSeconds = 4.50f;
+            HumanLookScanHoldSeconds = 0.30f;
+            HumanLookScanMinimumSpeed = 30.0f;
+            HumanLookScanRecentFireGraceSeconds = 0.75f;
+            Version = 31;
         }
     }
 

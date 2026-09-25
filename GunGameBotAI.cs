@@ -115,7 +115,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.41";
+    public override string ModuleVersion => "0.7.42";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1309,7 +1309,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         command.ReplyToCommand(
             $"[GunGameBotAI] vision enhancement={(enabled ? "enabled" : "disabled")}; " +
-            "mode=managed-look-around; writes=InhibitLookAroundTimestamp-only; " +
+            "mode=managed-look-around-v2; " +
+            "writes=InhibitLookAroundTimestamp+LookAroundStateTimestamp; " +
+            $"restartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             "EyeAnglesUnderPathFinderControl=observe-only.");
     }
 
@@ -1682,6 +1684,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"aimNativeAvailable={_aimNative.Available}; aimHooked={_aimNative.Hooked}; " +
             $"visionMonitor={(Config.VisionMonitorEnabled ? "enabled" : "disabled")}; visionDistance={Config.VisionMonitorDistance:0}; " +
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
+            $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

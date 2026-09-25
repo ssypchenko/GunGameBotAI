@@ -551,6 +551,9 @@ public sealed class VisionMonitorService
                     $"botYaw={FormatOptional(botYaw)}; " +
                     $"enemyAngleFromView={FormatOptional(relative.AngleFromView)}; " +
                     $"relative={Format(relative.Relative)}; viewSector={relative.ViewSector}; " +
+                    $"lookAroundInhibited={FormatOptional(visionControl.LookAroundInhibited, visionControl.Known)}; " +
+                    $"lookAroundInhibitRemaining={FormatOptional(visionControl.LookAroundInhibitRemaining)}; " +
+                    $"pathfinderEyeControl={FormatOptional(visionControl.PathfinderEyeControl, visionControl.Known)}; " +
                     $"speed2D={movement.Speed2D:0.0}; moving={movement.Moving}; " +
                     $"isRunning={movement.IsRunning}; isStopping={movement.IsStopping}; " +
                     $"moveType={botPawn.MoveType}; mode={runtime.Mode}");

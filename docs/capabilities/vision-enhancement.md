@@ -166,14 +166,13 @@ Meaning:
 - `restartSkipAlreadyReset` — skipped because the state timestamp was already zero;
 - `failures` — managed schema read/write failures.
 
-With `Debug=true`, actual interventions emit bounded events:
+Stage 6 interventions are aggregate-only in normal focused testing. The
+per-action `RELEASE-INHIBIT` and `RESTART-LOOK-AROUND` messages were removed
+after those mechanisms were verified, because their counters provide the
+evidence needed for acceptance without flooding the server log.
 
-```text
-[GunGameBotAI][VisionEnhancement] RELEASE-INHIBIT ...
-[GunGameBotAI][VisionEnhancement] RESTART-LOOK-AROUND ...
-```
-
-There is no per-tick debug trace.
+Detailed Stage 5/6 acquisition-gap events are controlled separately by
+`VisionDebug`.
 
 At map end, while the feature is enabled, Stage 6 writes:
 
@@ -191,7 +190,8 @@ same time:
 ```text
 css_ggbotai_aim_debug 0
 css_ggbotai_vision_monitor 1
-css_ggbotai_debug 1
+css_ggbotai_debug 0
+css_ggbotai_vision_debug 1
 css_ggbotai_vision_enhancement 1
 ```
 

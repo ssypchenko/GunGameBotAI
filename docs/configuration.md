@@ -58,13 +58,19 @@ The default profile is conservative:
   "VisionDebug": false,
   "VisionEnhancementEnabled": false,
   "VisionLookAroundRestartIntervalSeconds": 0.75,
+  "HumanLookScanEnabled": false,
+  "HumanLookScanMinIntervalSeconds": 2.50,
+  "HumanLookScanMaxIntervalSeconds": 4.50,
+  "HumanLookScanHoldSeconds": 0.30,
+  "HumanLookScanMinimumSpeed": 30.0,
+  "HumanLookScanRecentFireGraceSeconds": 0.75,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 30
+  "ConfigVersion": 31
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; focused Stage 6 logging uses version `30`.
+`ConfigVersion` is migrated by the plugin; Stage 6.5 Human Look Scan uses version `31`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -92,6 +98,14 @@ no valid current enemy and pathfinding is not controlling the bot's eye
 angles. `VisionLookAroundRestartIntervalSeconds` controls that cadence and is
 validated to `0.50..5.0` seconds. Stage 6 never writes `EyeAngles`;
 `EyeAnglesUnderPathFinderControl` remains observation-only.
+
+`HumanLookScanEnabled` controls the Stage 6.5 physical look-scan experiment
+and defaults to `false`. It writes only `CCSBot.LookYaw` during short,
+randomly spaced scans while the bot is moving in `NormalGunGame` with no
+current enemy and no pathfinder eye-angle ownership. The scan direction is
+independent of enemy positions. The default interval is 2.5–4.5 seconds, hold
+time is 0.30 seconds, minimum movement speed is 30 units/s, and recent-fire
+grace is 0.75 seconds.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

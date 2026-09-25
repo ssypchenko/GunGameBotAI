@@ -188,7 +188,9 @@ css_ggbotai_look_scan 0
 Stage 6.5a-v1 wrote only `CCSBot.LookYaw`, but live testing showed that
 requested turns usually did not survive as real pawn eye movement.
 
-Stage 6.5a-v2 now writes only `CCSPlayerPawn.EyeAngles.Y`. Pitch and roll are
+Stage 6.5a-v2 established direct `CCSPlayerPawn.EyeAngles.Y` control. Stage
+6.5a-v3 keeps the same yaw-only write but uses the shared fast actuator with
+read-back correction, mirroring Knife Rush weapon holding. Pitch and roll are
 preserved. It still does not write movement commands, velocity, nav paths/goals
 or enemy state, and it does not call `Teleport`.
 
@@ -215,12 +217,11 @@ lookScanStats
 With `VisionDebug=true`, each finished/interrupted scan emits one compact
 `[LookScan] SCAN` line. There is no per-tick scan trace.
 
-For the first v2 mechanical test, verify that `avgObservedDeg` and
-`effectiveTurns` prove the pawn's real eye yaw follows the requested direct
-EyeAngles.Y target while ordinary movement remains stable. If direct yaw is
-overwritten almost immediately, the next experiment should use fast-actuator
-reassert only during the short scan window. If movement is visibly disrupted,
-stop before judging vision effectiveness.
+For the v3 mechanical test, verify that `avgObservedDeg` and
+`effectiveTurns` now show the real eye yaw following the requested target.
+`fastCorrections` should show how often Valve drift was corrected, while
+`fastWithinTolerance` shows ticks where no rewrite was needed. If movement is
+visibly disrupted, stop before judging vision effectiveness.
 
 If physical turns are real and movement remains healthy, compare front,
 front-side, side and rear acquisition/loss statistics with the Stage 5/6

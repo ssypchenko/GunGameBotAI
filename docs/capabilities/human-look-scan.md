@@ -22,10 +22,24 @@ Live testing showed that scheduling worked, but the physical pawn eye yaw usuall
 moved only a few degrees even when 50–160 degree turns were requested. Therefore
 `LookYaw` was not strong enough for this purpose.
 
-Stage 6.5a-v2 now tests direct schema-backed yaw control:
+Stage 6.5a-v2 established that direct schema-backed yaw control can
+physically turn the bot:
 
 ```text
 CCSPlayerPawn.EyeAngles.Y
+```
+
+but DecisionLoop-only writes were usually overwritten by Valve before the next
+0.10 second sample.
+
+Stage 6.5a-v3 therefore uses the same enforcement pattern that already works
+for Knife Rush weapon selection:
+
+```text
+DecisionLoop -> decide/start scan
+FastActuator -> read actual yaw
+             -> if outside tolerance, write target yaw again
+             -> repeat until scan ends or a safety gate fires
 ```
 
 Only yaw is changed. The current pitch and roll are preserved.
@@ -109,11 +123,16 @@ Defaults:
 "HumanLookScanRecentFireGraceSeconds": 0.75
 ```
 
-At the default 0.10 second decision interval, the target yaw is normally written
-three or four times during a 0.30 second scan.
+DecisionLoop does not repeatedly write the yaw. It only creates the bounded scan
+state and activates the shared fast actuator.
 
-When the hold ends the plugin does not restore the old yaw. It simply stops
-writing and Valve resumes naturally.
+With the default `FastActuatorEveryTicks=1`, every server tick the fast loop
+reads the current yaw. If the error from the scan target is greater than
+`HumanLookScanYawToleranceDegrees` (default 7.5°), it rewrites only
+`EyeAngles.Y`. If the yaw is already within tolerance, it does nothing.
+
+When the hold ends the plugin does not restore the old yaw. It simply releases
+fast ownership and Valve resumes naturally.
 
 ## Direction distribution
 
@@ -133,6 +152,7 @@ Left/right is selected randomly.
 
 ```text
 checks
+fastChecks
 scheduled
 started
 finished
@@ -142,6 +162,8 @@ pathfinderInterrupts
 modeInterrupts
 effectiveTurns
 writes
+fastCorrections
+fastWithinTolerance
 skippedPathfinder
 skippedStationary
 skippedRecentFire
@@ -158,7 +180,7 @@ With `VisionDebug=true`, one compact line is written when each scan finishes
 or is interrupted:
 
 ```text
-[GunGameBotAI][LookScan] SCAN control=EyeAngles.Y ...
+[GunGameBotAI][LookScan] SCAN control=EyeAngles.Y-fast-hold ...
 ```
 
 It includes:
@@ -172,6 +194,9 @@ targetYaw
 observedDelta
 duration
 writes
+fastChecks
+fastCorrections
+fastWithinTolerance
 startSpeed
 endSpeed
 movementYawDelta
@@ -190,7 +215,7 @@ At map end:
 [GunGameBotAI][LookScan] MAP-SUMMARY ...
 ```
 
-## Recommended Stage 6.5a-v2 test
+## Recommended Stage 6.5a-v3 test
 
 For a clean mechanical test:
 
@@ -208,16 +233,17 @@ First test one bot on a normal map and observe:
 1. whether the head/view visibly turns;
 2. whether movement continues toward Valve's nav goal;
 3. whether `observedDelta` now tracks `requestedDelta` much more closely;
-4. whether large `movementYawDelta` values or obvious path deviations appear;
-5. whether enemy acquisition interrupts the scan cleanly;
-6. whether `failures=0`.
+4. whether `fastCorrections` is non-zero, proving Valve attempted to overwrite
+   the requested yaw and the actuator corrected it;
+5. whether `fastWithinTolerance` is also non-zero, proving the loop sometimes
+   observes the target already being held;
+6. whether large `movementYawDelta` values or obvious path deviations appear;
+7. whether enemy acquisition interrupts the scan cleanly on the fast path;
+8. whether `failures=0`.
 
-If EyeAngles.Y is physically effective but causes unacceptable path disruption,
-do not proceed to combat testing. The next change should reduce/smooth the yaw
-intervention rather than modifying native vision.
-
-If EyeAngles.Y is overwritten almost immediately by Valve, the next minimal
-experiment is a fast-actuator reassert only for the short scan window.
+If fast-held EyeAngles.Y causes unacceptable path disruption, stop before
+combat-effectiveness testing and reduce the hold/tolerance intervention rather
+than modifying native vision.
 
 If physical turns work and movement remains healthy, proceed to the Stage 6.5b
 vision-effectiveness comparison against the established front/side/rear

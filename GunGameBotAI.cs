@@ -115,7 +115,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.42";
+    public override string ModuleVersion => "0.7.43";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1284,7 +1284,32 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] vision monitor={(enabled ? "enabled" : "disabled")}; " +
             $"distance={Config.VisionMonitorDistance:0}; mode=observe-only; " +
-            $"detailedEvents={(Config.Debug ? "enabled" : "disabled")}.");
+            $"detailedEvents={(Config.VisionDebug ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_vision_debug", "Enable or disable focused Stage 5/6 vision diagnostics.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnVisionDebugCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_vision_debug 0|1");
+            return;
+        }
+
+        Config.VisionDebug =
+            enabled;
+
+        _visionMonitor.Config =
+            Config;
+        _visionEnhancement.Config =
+            Config;
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] visionDebug={(enabled ? "enabled" : "disabled")}; " +
+            "events=vision-gap/acquired/lost; Stage6 interventions=aggregate-only.");
     }
 
     [ConsoleCommand("css_ggbotai_vision_enhancement", "Enable or disable Stage 6 managed look-around enhancement.")]
@@ -1679,6 +1704,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; " +
             $"focusedDebug={(Config.Debug ? "enabled" : "disabled")}; " +
+            $"visionDebug={(Config.VisionDebug ? "enabled" : "disabled")}; " +
             $"aimDebug={(Config.AimDebug ? "enabled" : "disabled")}; aimDiagTracked={_aimDiagnostics.TrackedCount}; " +
             $"aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}; aimMode={Config.AimMode}; " +
             $"aimNativeAvailable={_aimNative.Available}; aimHooked={_aimNative.Hooked}; " +

@@ -220,6 +220,9 @@ visionStats
     events
     notSelected
     currentEnemyNotVisible
+    noCurrentEnemy
+    otherEnemyVisible
+    otherEnemyNotVisible
     moving
     stationary
     front
@@ -236,10 +239,36 @@ visionStats
 These counters make it possible to compare several maps without requiring
 verbose logs for every session.
 
+`notSelected` is additionally split into:
+
+```text
+noCurrentEnemy
+    Valve has no valid current enemy.
+
+otherEnemyVisible
+    Valve has a different current enemy and already considers that enemy visible.
+    This is usually target-priority behaviour rather than a missed-vision problem.
+
+otherEnemyNotVisible
+    Valve has a different current enemy but does not currently consider that
+    enemy visible.
+```
+
 Aggregate counters survive normal round/map runtime-state cleanup. Active
 bot/enemy events do not.
 
-The counters are reset when the managed plugin runtime itself is toggled.
+At map end the monitor writes an automatic:
+
+```text
+[GunGameBotAI][Vision] MAP-SUMMARY ...
+```
+
+The summary contains the same core counters for that map only, including the
+three `notSelected` subcategories. This avoids losing the map boundary when
+`css_ggbotai_status` output itself is not captured by the server log.
+
+The aggregate counters are reset when the managed plugin runtime itself is
+toggled.
 
 ## Spawn and lifecycle safety
 
@@ -303,3 +332,25 @@ noticeability gate
 ordinary Valve acquisition delay
 target-priority behaviour
 ```
+
+
+## Stage 5 acceptance — 25 September 2026
+
+Stage 5 was accepted after live bot-only GunGame sessions produced 516
+`PHYSICALLY_VISIBLE_BUT_NOT_ACQUIRED` events with zero trace failures in the
+captured aggregate status.
+
+The important diagnostic result was not the raw event count. The evidence
+showed:
+
+- `notSelected` dominated the sample, while `currentEnemyNotVisible` was rare;
+- a large part of `notSelected` occurred while Valve already had another
+  visible enemy, so those events are target-priority cases rather than proof of
+  a vision failure;
+- movement by itself did not explain acquisition delay;
+- side/rear acquisition was materially slower than front acquisition,
+  especially when the bot had no current enemy.
+
+Therefore Stage 5 does **not** justify a moving-gate patch as the first vision
+change. Stage 6 starts with a bounded managed look-around experiment and keeps
+FOV/native vision patches out of scope until that experiment is measured.

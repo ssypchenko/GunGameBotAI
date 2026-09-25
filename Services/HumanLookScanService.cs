@@ -1,3 +1,4 @@
+using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Utils;
 using GunGameBotAI.Config;
@@ -589,6 +590,13 @@ public sealed class HumanLookScanService
         pawn.EyeAngles.Y =
             NormalizeYaw(
                 yaw);
+
+        // EyeAngles is networked state. Mark the schema member changed so a
+        // spectating/admin client sees the same yaw written on the server.
+        Utilities.SetStateChanged(
+            pawn,
+            "CCSPlayerPawn",
+            "m_angEyeAngles");
     }
 
     private static bool TryReadEyeYaw(

@@ -744,6 +744,26 @@ public sealed class VisionMonitorService
         }
     }
 
+    private static VisionControlSnapshot ReadVisionControlSnapshot(
+        CCSBot bot,
+        float now)
+    {
+        try
+        {
+            float inhibitUntil = bot.InhibitLookAroundTimestamp;
+            bool pathfinderEyeControl = bot.EyeAnglesUnderPathFinderControl;
+
+            bool finite = float.IsFinite(inhibitUntil);
+            float remaining = finite ? MathF.Max(0.0f, inhibitUntil - now) : float.NaN;
+            bool inhibited = finite && inhibitUntil > now + FutureTimestampEpsilonSeconds;
+
+            return new VisionControlSnapshot(true, inhibited, remaining, pathfinderEyeControl);
+        }
+        catch
+        {
+            return new VisionControlSnapshot(false, false, float.NaN, false);
+        }
+    }
     private static bool TryReadValveEnemy(
         CCSBot bot,
         out int enemyEntityIndex,

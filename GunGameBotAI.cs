@@ -63,6 +63,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private bool _loaded;
     private bool _enabled;
     private bool _mapChanging;
+    private string _currentMapName = "unknown";
 
     public GunGameBotAI()
     {
@@ -114,7 +115,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.40";
+    public override string ModuleVersion => "0.7.41";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -164,6 +165,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         string currentMap = Server.MapName;
         if (!string.IsNullOrWhiteSpace(currentMap))
         {
+            _currentMapName = currentMap;
             _ladderMap.OnMapStart(currentMap);
             _visionMonitor.BeginMap(currentMap);
             _visionEnhancement.BeginMap();
@@ -930,8 +932,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private void OnMapStart(string mapName)
     {
         _mapChanging = false;
+        _currentMapName =
+            string.IsNullOrWhiteSpace(mapName)
+                ? "unknown"
+                : mapName;
         ResetRuntimeState();
-        _visionMonitor.BeginMap(mapName);
+        _visionMonitor.BeginMap(_currentMapName);
         _visionEnhancement.BeginMap();
         _ladderMap?.OnMapStart(mapName);
 
@@ -943,8 +949,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = true;
         StopSharedTimers();
-        _visionMonitor.LogMapSummary(Server.MapName);
-        _visionEnhancement.LogMapSummary(Server.MapName);
+        _visionMonitor.LogMapSummary(_currentMapName);
+        _visionEnhancement.LogMapSummary(_currentMapName);
         _ladderMap?.OnMapEnd();
         ResetRuntimeState();
     }

@@ -405,6 +405,11 @@ public sealed class VisionMonitorService
                     enemyOrigin,
                     botYaw);
 
+            VisionControlSnapshot visionControl =
+                ReadVisionControlSnapshot(
+                    bot,
+                    now);
+
             pair.Active =
                 true;
             pair.StartedAt =

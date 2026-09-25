@@ -166,6 +166,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         {
             _ladderMap.OnMapStart(currentMap);
             _visionMonitor.BeginMap(currentMap);
+            _visionEnhancement.BeginMap();
         }
 
         RegisterListener<Listeners.OnMapStart>(OnMapStart);
@@ -931,6 +932,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _mapChanging = false;
         ResetRuntimeState();
         _visionMonitor.BeginMap(mapName);
+        _visionEnhancement.BeginMap();
         _ladderMap?.OnMapStart(mapName);
 
         if (_loaded)
@@ -942,6 +944,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _mapChanging = true;
         StopSharedTimers();
         _visionMonitor.LogMapSummary(Server.MapName);
+        _visionEnhancement.LogMapSummary(Server.MapName);
         _ladderMap?.OnMapEnd();
         ResetRuntimeState();
     }

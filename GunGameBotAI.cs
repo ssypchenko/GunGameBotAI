@@ -96,7 +96,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement = new VisionEnhancementService(
             message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
         _humanLookScan = new HumanLookScanService(
-            _random,
             message => Logger.LogInformation("[GunGameBotAI][LookScan] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,

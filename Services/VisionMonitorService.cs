@@ -1151,6 +1151,12 @@ public sealed class VisionMonitorService
         float AngleFromView,
         string ViewSector);
 
+    private readonly record struct VisionControlSnapshot(
+        bool Known,
+        bool LookAroundInhibited,
+        float LookAroundInhibitRemaining,
+        bool PathfinderEyeControl);
+
     private sealed class VisionPairState
     {
         public bool Active { get; set; }

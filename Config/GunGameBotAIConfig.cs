@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 31;
+    public override int Version { get; set; } = 32;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -264,7 +264,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float VisionLookAroundRestartIntervalSeconds { get; set; } = 0.75f;
 
     // Stage 6.5 experimental human-like physical look scanning. Disabled by
-    // default. The implementation writes CCSBot.LookYaw only; Valve retains
+    // default. v2 writes only CCSPlayerPawn.EyeAngles.Y (yaw); Valve retains
     // navigation, movement, target selection and combat aim.
     public bool HumanLookScanEnabled { get; set; } = false;
     public float HumanLookScanMinIntervalSeconds { get; set; } = 2.50f;
@@ -824,6 +824,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             HumanLookScanMinimumSpeed = 30.0f;
             HumanLookScanRecentFireGraceSeconds = 0.75f;
             Version = 31;
+        }
+
+        if (Version < 32)
+        {
+            // v32 changes Stage 6.5 from the weak CCSBot.LookYaw experiment to
+            // direct schema-backed CCSPlayerPawn.EyeAngles.Y control. Because
+            // this is a stronger behavioural intervention, require the operator
+            // to opt in again after upgrade.
+            HumanLookScanEnabled = false;
+            Version = 32;
         }
     }
 

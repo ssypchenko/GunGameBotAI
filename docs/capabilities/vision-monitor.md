@@ -171,9 +171,13 @@ These are not used to change bot behaviour.
 
 Detailed events require both:
 
+The focused flag is deliberately separate from general `Debug`, so a vision
+test does not enable geometry, Knife Rush or legacy correction traces.
+
+
 ```text
 VisionMonitorEnabled=true
-Debug=true
+VisionDebug=true
 ```
 
 Example:
@@ -204,7 +208,7 @@ mode=NormalGunGame
 
 This is event-level logging, not per-sample logging.
 
-With `Debug=false`, the monitor still accumulates statistics but emits no
+With `VisionDebug=false`, the monitor still accumulates statistics but emits no
 detailed vision-gap events.
 
 ## Statistics
@@ -311,7 +315,7 @@ Runtime tracking is cleaned on:
 
 ```text
 css_ggbotai_vision_monitor 0|1
-css_ggbotai_debug 0|1
+css_ggbotai_vision_debug 0|1
 css_ggbotai_status
 ```
 
@@ -320,7 +324,7 @@ For a focused Stage 5 test:
 ```text
 css_ggbotai_aim_debug 0
 css_ggbotai_vision_monitor 1
-css_ggbotai_debug 1
+css_ggbotai_vision_debug 1
 ```
 
 `AimEnhancementEnabled` may remain enabled. Stage 5 only observes Valve vision

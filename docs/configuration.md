@@ -56,17 +56,20 @@ The default profile is conservative:
   "VisionMonitorEnabled": false,
   "VisionMonitorDistance": 800.0,
   "VisionEnhancementEnabled": false,
+  "VisionLookAroundRestartIntervalSeconds": 0.75,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 28
+  "ConfigVersion": 29
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6 uses version `28`. Existing
-installations upgrading from an earlier version receive
-`VisionMonitorEnabled=false`, `VisionMonitorDistance=800.0`, and
-`VisionEnhancementEnabled=false`, so neither trace-based diagnostics nor
-managed look-around changes are silently enabled by an upgrade.
+`ConfigVersion` is migrated by the plugin; Stage 6 v2 uses version `29`.
+Existing installations upgrading from an earlier version receive
+`VisionMonitorEnabled=false`, `VisionMonitorDistance=800.0`,
+`VisionEnhancementEnabled=false`, and
+`VisionLookAroundRestartIntervalSeconds=0.75`, so neither trace-based
+diagnostics nor managed look-around changes are silently enabled by an
+upgrade.
 
 `AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook.
 `AimMode` accepts `Mixed`, `Head`, or `Body`. `AimDebug` enables Stage 3
@@ -79,12 +82,14 @@ events require the existing `Debug=true`; aggregate statistics remain
 available through `css_ggbotai_status`. A per-map `MAP-SUMMARY` is written
 automatically when the map ends.
 
-`VisionEnhancementEnabled` controls the Stage 6 managed look-around experiment.
-It defaults to `false`. The first experiment only releases a future
-`CCSBot.InhibitLookAroundTimestamp` while the bot is in safe
-`NormalGunGame` state with no visible/active combat target. It never writes
-`EyeAngles`; `EyeAnglesUnderPathFinderControl` is observation-only in this
-version.
+`VisionEnhancementEnabled` controls the Stage 6 managed look-around experiment
+and defaults to `false`. Stage 6 v2 retains the v1
+`CCSBot.InhibitLookAroundTimestamp` release and may also reset
+`CCSBot.LookAroundStateTimestamp` to zero on a bounded cadence when there is
+no valid current enemy and pathfinding is not controlling the bot's eye
+angles. `VisionLookAroundRestartIntervalSeconds` controls that cadence and is
+validated to `0.50..5.0` seconds. Stage 6 never writes `EyeAngles`;
+`EyeAnglesUnderPathFinderControl` remains observation-only.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

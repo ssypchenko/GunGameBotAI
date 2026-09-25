@@ -130,9 +130,23 @@ restartSkipAlreadyReset
 failures
 ```
 
-With `Debug=true`, real interventions are logged as `RELEASE-INHIBIT` and
-`RESTART-LOOK-AROUND`. At map end the same Stage 6 counters are written to a
+Stage 6 intervention details are intentionally aggregate-only. The previously
+high-volume `RELEASE-INHIBIT` and `RESTART-LOOK-AROUND` per-action messages
+are no longer emitted. At map end the Stage 6 counters are written to a
 `[VisionEnhancement] MAP-SUMMARY` log entry and reset for the next map.
+
+For focused Stage 6 testing use:
+
+```text
+css_ggbotai_debug 0
+css_ggbotai_aim_debug 0
+css_ggbotai_vision_monitor 1
+css_ggbotai_vision_debug 1
+css_ggbotai_vision_enhancement 1
+```
+
+The broad `css_ggbotai_debug` switch should remain off during a vision test;
+otherwise unrelated geometry and legacy diagnostics are enabled.
 
 Reject the experiment if navigation, special modes or visible-enemy combat
 regress, if wall awareness appears, or if schema failures are logged. If

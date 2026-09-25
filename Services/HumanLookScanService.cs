@@ -21,7 +21,7 @@ public sealed class HumanLookScanService
     private const float EffectiveTurnThresholdDegrees = 25.0f;
     private const float EnemyReadFailureRetrySeconds = 0.50f;
 
-    private readonly Random _random;
+    private readonly Random _random = new();
     private readonly Action<string> _info;
     private readonly Dictionary<int, ScanState> _states = new();
 
@@ -47,10 +47,8 @@ public sealed class HumanLookScanService
     private float _maximumObservedDegrees;
 
     public HumanLookScanService(
-        Random random,
         Action<string> info)
     {
-        _random = random;
         _info = info;
     }
 
@@ -294,9 +292,10 @@ public sealed class HumanLookScanService
         }
 
         float speed2D =
-            TryReadSpeed2D(
+            TryReadMovement2D(
                 pawn,
-                out float currentSpeed)
+                out float currentSpeed,
+                out float movementYaw)
                 ? currentSpeed
                 : 0.0f;
 
@@ -346,6 +345,8 @@ public sealed class HumanLookScanService
         state.MaxObservedTurn = 0.0f;
         state.StartSpeed2D =
             speed2D;
+        state.StartMovementYaw =
+            movementYaw;
         state.Writes = 0;
 
         _started++;
@@ -420,11 +421,19 @@ public sealed class HumanLookScanService
             }
         }
 
-        float endSpeed =
-            TryReadSpeed2D(
+        bool movementKnown =
+            TryReadMovement2D(
                 pawn,
-                out float speed)
-                ? speed
+                out float endSpeed,
+                out float endMovementYaw);
+
+        float movementYawDelta =
+            movementKnown &&
+            float.IsFinite(state.StartMovementYaw)
+                ? MathF.Abs(
+                    AngleDelta(
+                        endMovementYaw,
+                        state.StartMovementYaw))
                 : float.NaN;
 
         if (Config.VisionDebug)
@@ -435,7 +444,8 @@ public sealed class HumanLookScanService
                 $"requestedDelta={state.RelativeAngle:0.0}; startYaw={state.StartEyeYaw:0.0}; " +
                 $"targetYaw={state.TargetYaw:0.0}; observedDelta={observed:0.0}; " +
                 $"duration={MathF.Max(0.0f, now - state.StartedAt):0.000}; writes={state.Writes}; " +
-                $"startSpeed={state.StartSpeed2D:0.0}; endSpeed={FormatOptional(endSpeed)}");
+                $"startSpeed={state.StartSpeed2D:0.0}; endSpeed={FormatOptional(endSpeed)}; " +
+                $"movementYawDelta={FormatOptional(movementYawDelta)}");
         }
 
         state.Active = false;
@@ -581,11 +591,13 @@ public sealed class HumanLookScanService
         }
     }
 
-    private static bool TryReadSpeed2D(
+    private static bool TryReadMovement2D(
         CCSPlayerPawn pawn,
-        out float speed)
+        out float speed,
+        out float yaw)
     {
         speed = 0.0f;
+        yaw = float.NaN;
 
         if (!NativeValueReader.TryGetVelocity(
                 pawn,
@@ -599,8 +611,19 @@ public sealed class HumanLookScanService
                 velocity.X * velocity.X +
                 velocity.Y * velocity.Y);
 
-        return
-            float.IsFinite(speed);
+        if (!float.IsFinite(speed))
+            return false;
+
+        if (speed > 0.01f)
+        {
+            yaw =
+                MathF.Atan2(
+                    velocity.Y,
+                    velocity.X) *
+                (180.0f / MathF.PI);
+        }
+
+        return true;
     }
 
     private static string ClassifyRequestedSector(
@@ -688,6 +711,9 @@ public sealed class HumanLookScanService
         public float MaxObservedTurn { get; set; }
 
         public float StartSpeed2D { get; set; }
+
+        public float StartMovementYaw { get; set; } =
+            float.NaN;
 
         public int Writes { get; set; }
     }

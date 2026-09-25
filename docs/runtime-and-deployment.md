@@ -106,19 +106,39 @@ Keep Stage 5 monitoring enabled to establish a baseline. Then enable Stage 6:
 css_ggbotai_vision_enhancement 1
 ```
 
-The first experiment only releases a future
-`CCSBot.InhibitLookAroundTimestamp` while the bot is in `NormalGunGame`, is
-not on a ladder, and is not in visible-enemy combat. It never writes
-`EyeAngles`. `EyeAnglesUnderPathFinderControl` is observation-only.
+Stage 6 v2 retains the future
+`CCSBot.InhibitLookAroundTimestamp` release and adds a bounded restart of
+Valve's own look-around state through `LookAroundStateTimestamp=0`.
 
-Check `css_ggbotai_status` for `visionEnhanceStats`. In particular,
-`released` confirms whether the experiment actually changed Valve state.
-With `Debug=true`, each real intervention is logged as
-`RELEASE-INHIBIT`. At map end the same Stage 6 counters are written to a
+The restart only runs in `NormalGunGame` when the bot is not on a ladder, is
+not in visible-enemy combat, has no valid current enemy, and
+`EyeAnglesUnderPathFinderControl=false`. It never writes `EyeAngles` and
+never supplies enemy information.
+
+The default restart interval is 0.75 seconds and can be adjusted with
+`VisionLookAroundRestartIntervalSeconds`.
+
+Check `css_ggbotai_status` for `visionEnhanceStats`. In particular:
+
+```text
+released
+lookAroundRestarted
+lookAroundRestartSkipped
+restartSkipEnemy
+restartSkipPathfinder
+restartSkipAlreadyReset
+failures
+```
+
+With `Debug=true`, real interventions are logged as `RELEASE-INHIBIT` and
+`RESTART-LOOK-AROUND`. At map end the same Stage 6 counters are written to a
 `[VisionEnhancement] MAP-SUMMARY` log entry and reset for the next map.
 
 Reject the experiment if navigation, special modes or visible-enemy combat
-regress, if wall awareness appears, or if schema failures are logged.
+regress, if wall awareness appears, or if schema failures are logged. If
+`lookAroundRestarted` is substantial but side/rear acquisition remains much
+worse than front acquisition, Stage 6 managed-state work is complete and the
+next investigation belongs to Stage 7 selective native vision.
 
 
 ## CounterStrikeSharp 1.0.375 / KHook

@@ -13,5 +13,6 @@ The plugin documentation is intentionally kept beside the project source.
 - `capabilities/aim-service.md` — Stage 4 bounded PickNewAimSpot targetSpot correction.
 - `capabilities/vision-monitor.md` — Stage 5 observation-only nearby-enemy acquisition diagnostics.
 - `capabilities/vision-enhancement.md` — Stage 6 bounded managed look-around experiment.
+- `capabilities/forced-enemy-acquisition.md` — Stage 6.6 continuous-LOS forced enemy acquisition experiment.
 
 - `STABLE_BEHAVIOUR_BASELINE.md` — frozen Stage 0 behavioural baseline and build/dependency identifiers.

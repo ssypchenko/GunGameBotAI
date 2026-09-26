@@ -1,5 +1,21 @@
 # Configuration
 
+`ForcedEnemyAcquisitionEnabled` controls the Stage 6.6 fallback and defaults to
+`false`. The service measures physical LOS with the same point traces used by
+the vision diagnostics, independent of the bot's view angle. If the same enemy
+remains physically visible continuously for
+`ForcedEnemyAcquisitionDelaySeconds` (default 1.0 s), is within
+`ForcedEnemyAcquisitionDistance` (default 800 units), and Valve still has no
+valid current enemy, the plugin seeds only the CCSBot perception state:
+`Enemy`, `IsEnemyVisible`, `LastEnemyPosition`,
+`FirstSawEnemyTimestamp`, `LastSawEnemyTimestamp`,
+`CurrentEnemyAcquireTimestamp`, and `IsLastEnemyDead`. It does not set
+`IsAttacking`, does not press Fire, and does not invoke a native Attack
+transition. The experiment logs whether Valve holds or drops the forced target
+and whether it subsequently enters attack state. Migration to config version 36
+forces this behavioural experiment OFF once so it must be explicitly enabled.
+
+
 The plugin creates its configuration through CounterStrikeSharp's normal plugin
 configuration mechanism. Numeric values are validated when loaded or reloaded;
 invalid values are clamped to safe bounds and a warning is logged.
@@ -71,13 +87,16 @@ The default profile is conservative:
   "HumanLookScanGeometryMinimumClearDistance": 160.0,
   "HumanLookScanMinimumSpeed": 30.0,
   "HumanLookScanRecentFireGraceSeconds": 0.75,
+  "ForcedEnemyAcquisitionEnabled": false,
+  "ForcedEnemyAcquisitionDelaySeconds": 1.00,
+  "ForcedEnemyAcquisitionDistance": 800.0,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 35
+  "ConfigVersion": 36
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.5 immediate-hint testing uses version `35`.
+`ConfigVersion` is migrated by the plugin; Stage 6.6 Forced Enemy Acquisition testing uses version `36`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and

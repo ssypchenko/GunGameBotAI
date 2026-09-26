@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 37;
+    public override int Version { get; set; } = 38;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -299,6 +299,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // naturally enters attack state. This does not change bot behaviour.
     public float ForcedEnemyAcquisitionPostObservationSeconds { get; set; } = 1.00f;
 
+    // Stage 6.6b: after a forced target is seeded, briefly reassert the same
+    // perception state if Valve clears it while the same enemy is still alive
+    // and physically visible. This is still not an Attack() call and never
+    // presses Fire. The original acquisition timestamp is preserved.
+    public float ForcedEnemyAcquisitionReassertSeconds { get; set; } = 0.60f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -401,6 +407,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             3.00f,
             1.00f,
             nameof(ForcedEnemyAcquisitionPostObservationSeconds),
+            warn);
+        ForcedEnemyAcquisitionReassertSeconds = Clamp(
+            ForcedEnemyAcquisitionReassertSeconds,
+            0.10f,
+            1.50f,
+            0.60f,
+            nameof(ForcedEnemyAcquisitionReassertSeconds),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -972,6 +985,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // operator's existing ForcedEnemyAcquisitionEnabled choice.
             ForcedEnemyAcquisitionPostObservationSeconds = 1.00f;
             Version = 37;
+        }
+
+        if (Version < 38)
+        {
+            // v38 briefly reasserts the same forced enemy/perception state if
+            // Valve drops it while physical LOS still exists. Preserve the
+            // operator's existing opt-in because this is a bounded extension of
+            // the already-enabled Stage 6.6 experiment.
+            ForcedEnemyAcquisitionReassertSeconds = 0.60f;
+            Version = 38;
         }
     }
 

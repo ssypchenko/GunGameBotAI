@@ -137,7 +137,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.50";
+    public override string ModuleVersion => "0.7.51";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1520,6 +1520,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] forced acquisition={(enabled ? "enabled" : "disabled")}; " +
             $"delay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s continuous physical LOS; " +
             $"distance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
+            $"postObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
             "viewAngleGate=none; writes=enemy/perception-only; " +
             "IsAttackingWrite=false; FireWrite=false.");
     }
@@ -1918,6 +1919,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"forcedAcquire={(Config.ForcedEnemyAcquisitionEnabled ? "enabled" : "disabled")}; " +
             $"forcedAcquireDelay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s; " +
             $"forcedAcquireDistance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
+            $"forcedAcquirePostObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

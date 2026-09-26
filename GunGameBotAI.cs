@@ -253,6 +253,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.ClearRuntimeState();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
+        _forcedEnemyAcquisition.Reset();
         _aimDiagnostics.Reset();
         _transientControl.Clear();
         ReleaseAllKnownButtonPulses();
@@ -344,6 +345,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.RemoveSlot(slot);
         _visionEnhancement.RemoveSlot(slot);
         _humanLookScan.RemoveSlot(slot);
+        _forcedEnemyAcquisition.RemoveSlot(slot);
         _aimDiagnostics.RemoveSlot(slot);
         _aimNative.RemoveSlot(slot);
         _transientControl.CancelSlot(slot);
@@ -1085,7 +1087,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _forcedEnemyAcquisition.ClearRuntimeState();
-        _forcedEnemyAcquisition.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         return HookResult.Continue;
@@ -1809,6 +1810,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
+        _forcedEnemyAcquisition.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         _transientControl.Clear();

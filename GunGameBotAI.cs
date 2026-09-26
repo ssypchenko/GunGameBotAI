@@ -96,6 +96,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement = new VisionEnhancementService(
             message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
         _humanLookScan = new HumanLookScanService(
+            new HumanLookDirectionService(
+                _visibilityTrace,
+                (candidate, now) =>
+                    IsBotInSpawnGrace(
+                        candidate,
+                        now)),
             message => Logger.LogInformation("[GunGameBotAI][LookScan] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
@@ -118,7 +124,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.47";
+    public override string ModuleVersion => "0.7.48";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1437,6 +1443,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"hold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"yawTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
+            "direction=visible-enemy-hint>geometry>random; " +
+            $"hintDistance={Config.HumanLookScanVisibleEnemyHintDistance:0.#}; " +
+            $"geometryDistance={Config.HumanLookScanGeometryTraceDistance:0.#}; " +
             $"fastTicks={Config.FastActuatorEveryTicks}; " +
             $"minimumSpeed={Config.HumanLookScanMinimumSpeed:0.#}.");
     }
@@ -1823,6 +1832,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}..{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"lookScanHold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"lookScanTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
+            $"lookScanDirection={(Config.HumanLookScanVisibleEnemyHintEnabled ? "hint>" : "")}" +
+            $"{(Config.HumanLookScanGeometryFallbackEnabled ? "geometry>" : "")}random; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

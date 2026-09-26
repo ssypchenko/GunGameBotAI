@@ -90,13 +90,14 @@ The default profile is conservative:
   "ForcedEnemyAcquisitionEnabled": false,
   "ForcedEnemyAcquisitionDelaySeconds": 1.00,
   "ForcedEnemyAcquisitionDistance": 800.0,
+  "ForcedEnemyAcquisitionPostObservationSeconds": 1.00,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 36
+  "ConfigVersion": 37
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.6 Forced Enemy Acquisition testing uses version `36`.
+`ConfigVersion` is migrated by the plugin; Stage 6.6 extended outcome diagnostics use version `37`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -158,6 +159,13 @@ valid current enemy, the plugin seeds only the CCSBot perception state:
 `IsAttacking`, does not press Fire, and does not invoke a native
 `CCSBot::Attack()` transition. Migration to config version 36 forces this
 experiment OFF once so it must be explicitly enabled.
+
+`ForcedEnemyAcquisitionPostObservationSeconds` (default 1.0 s) is diagnostic-only.
+After a successful forced write the service continues observing the target for
+the full window and classifies the outcome as attack, drop before first readback,
+drop after a confirmed hold, or still-not-attacking at the end of the window.
+Version 37 preserves the operator's existing `ForcedEnemyAcquisitionEnabled`
+choice because this migration changes diagnostics only.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

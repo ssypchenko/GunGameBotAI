@@ -237,6 +237,26 @@ public sealed class VisionMonitorService
         }
     }
 
+    public void ClearForcedAcquisitionMarker(
+        int botSlot,
+        int enemyEntityIndex)
+    {
+        VisionPairKey key =
+            new(
+                botSlot,
+                enemyEntityIndex);
+
+        if (_pairs.TryGetValue(
+                key,
+                out VisionPairState? pair))
+        {
+            pair.ForcedByPlugin =
+                false;
+            pair.ForcedAt =
+                0.0f;
+        }
+    }
+
     public void Observe(
         CCSPlayerController controller,
         CCSPlayerPawn botPawn,

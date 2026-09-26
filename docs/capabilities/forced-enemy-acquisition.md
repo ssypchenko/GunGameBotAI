@@ -66,6 +66,15 @@ At the configured force threshold:
 FORCED-ACQUIRE
 ```
 
+VisionMonitor marks the plugin-induced target transition separately:
+
+```text
+ACQUIRED_FORCED
+```
+
+It is excluded from natural `acquired`, `avgAcquireMs`, and
+`maxAcquireMs` statistics.
+
 On later DecisionLoops:
 
 ```text

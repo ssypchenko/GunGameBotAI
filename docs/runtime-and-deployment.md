@@ -274,6 +274,8 @@ Relevant log lines:
 VISIBLE-NOT-ATTACKING
 FORCED-ACQUIRE
 FORCED-ACQUIRE-HELD
+FORCED-ACQUIRE-REASSERT
+FORCED-ACQUIRE-ABORTED
 FORCED-ACQUIRE-DROPPED-BEFORE-HELD
 FORCED-ACQUIRE-DROPPED-AFTER-HELD
 FORCED-ACQUIRE-ATTACKING
@@ -285,6 +287,11 @@ Interpretation:
 - VisionMonitor logs the corresponding target transition as `ACQUIRED_FORCED`
   and excludes it from natural `acquired/avgAcquireMs` statistics.
 - `HELD` means Valve kept the supplied `m_enemy` on a later DecisionLoop.
+- `REASSERT` means Valve cleared the target during the bounded hold, but the
+  same opponent was still alive, in range, physically visible, and no different
+  Valve target existed; the original acquire timestamp is preserved.
+- `ABORTED` means the forced episode ended for a lifecycle/safety reason
+  rather than proving an attack/drop outcome.
 - `DROPPED-BEFORE-HELD` means Valve rejected/cleared the supplied target
   before the first later DecisionLoop confirmed it.
 - `DROPPED-AFTER-HELD` means Valve initially retained the target but cleared
@@ -298,7 +305,10 @@ Interpretation:
   attack state.
 
 Use `css_ggbotai_status` and retain `forcedAcquireStats` plus the
-`[ForcedAcquire] MAP-SUMMARY`.
+`[ForcedAcquire] MAP-SUMMARY`. For the reassert test, verify
+`forcedAcquireReassert=0.6s` and compare `reasserted`,
+`startedAttacking`, `droppedAfterHeld`,
+`stillNotAttackingAfterWindow`, and `aborted`.
 
 ## CounterStrikeSharp 1.0.375 / KHook
 

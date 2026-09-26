@@ -1483,6 +1483,40 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"minimumSpeed={Config.HumanLookScanMinimumSpeed:0.#}.");
     }
 
+    [ConsoleCommand("css_ggbotai_forced_acquire", "Enable or disable Stage 6.6 forced enemy acquisition.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnForcedEnemyAcquisitionCommand(
+        CCSPlayerController? player,
+        CommandInfo command)
+    {
+        if (!TryParseBinary(
+                command.GetArg(1),
+                out bool enabled))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_forced_acquire 0|1");
+            return;
+        }
+
+        Config.ForcedEnemyAcquisitionEnabled =
+            enabled;
+        _forcedEnemyAcquisition.Config =
+            Config;
+
+        if (!enabled)
+            _forcedEnemyAcquisition.ClearRuntimeState();
+
+        PersistConfig(
+            command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] forced acquisition={(enabled ? "enabled" : "disabled")}; " +
+            $"delay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s continuous physical LOS; " +
+            $"distance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
+            "viewAngleGate=none; writes=enemy/perception-only; " +
+            "IsAttackingWrite=false; FireWrite=false.");
+    }
+
     [ConsoleCommand("css_ggbotai_aim_debug", "Enable or disable point-specific aim visibility diagnostics.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnAimDebugCommand(CCSPlayerController? player, CommandInfo command)

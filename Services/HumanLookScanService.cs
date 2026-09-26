@@ -15,8 +15,9 @@ namespace GunGameBotAI.Services;
 /// target for a short bounded interval.
 ///
 /// Valve keeps ownership of navigation, movement, target selection, firing and
-/// combat aim. Pitch and roll are preserved. Scan direction is deliberately
-/// independent of enemy positions.
+/// combat aim. Pitch and roll are preserved. Direction selection is separate:
+/// first a physically visible but Valve-unacquired enemy, then open map
+/// geometry, then the legacy random fallback.
 /// </summary>
 public sealed class HumanLookScanService
 {
@@ -24,6 +25,7 @@ public sealed class HumanLookScanService
     private const float EnemyReadFailureRetrySeconds = 0.50f;
 
     private readonly Random _random = new();
+    private readonly HumanLookDirectionService _directionSelector;
     private readonly Action<string> _info;
     private readonly Dictionary<int, ScanState> _states = new();
 
@@ -46,6 +48,9 @@ public sealed class HumanLookScanService
     private long _nearSideScans;
     private long _sideScans;
     private long _rearScans;
+    private long _visibleEnemyHintScans;
+    private long _geometryScans;
+    private long _randomScans;
     private long _failures;
 
     private double _totalRequestedDegrees;
@@ -53,8 +58,11 @@ public sealed class HumanLookScanService
     private float _maximumObservedDegrees;
 
     public HumanLookScanService(
+        HumanLookDirectionService directionSelector,
         Action<string> info)
     {
+        _directionSelector =
+            directionSelector;
         _info = info;
     }
 
@@ -82,7 +90,9 @@ public sealed class HumanLookScanService
                 $"fastWithinTolerance={_fastWithinTolerance}; skippedPathfinder={_skippedPathfinder}; " +
                 $"skippedStationary={_skippedStationary}; skippedRecentFire={_skippedRecentFire}; " +
                 $"nearSide={_nearSideScans}; side={_sideScans}; rear={_rearScans}; " +
-                $"avgRequestedDeg={averageRequested:0.0}; avgObservedDeg={averageObserved:0.0}; " +
+                $"directionHint={_visibleEnemyHintScans}; directionGeometry={_geometryScans}; " +
+                $"directionRandom={_randomScans}; avgRequestedDeg={averageRequested:0.0}; " +
+                $"avgObservedDeg={averageObserved:0.0}; " +
                 $"maxObservedDeg={_maximumObservedDegrees:0.0}; failures={_failures}";
         }
     }
@@ -119,6 +129,9 @@ public sealed class HumanLookScanService
         _nearSideScans = 0;
         _sideScans = 0;
         _rearScans = 0;
+        _visibleEnemyHintScans = 0;
+        _geometryScans = 0;
+        _randomScans = 0;
         _failures = 0;
 
         _totalRequestedDegrees = 0.0;
@@ -335,8 +348,35 @@ public sealed class HumanLookScanService
             return;
         }
 
+        HumanLookDirectionSelection selection;
+
+        if (!_directionSelector.TrySelect(
+                controller,
+                pawn,
+                startYaw,
+                now,
+                Config,
+                out selection))
+        {
+            float randomRelativeAngle =
+                ChooseRelativeAngle();
+
+            selection =
+                new HumanLookDirectionSelection(
+                    "random",
+                    NormalizeYaw(
+                        startYaw +
+                        randomRelativeAngle),
+                    randomRelativeAngle,
+                    null,
+                    float.NaN,
+                    null,
+                    float.NaN,
+                    0);
+        }
+
         float relativeAngle =
-            ChooseRelativeAngle();
+            selection.RelativeAngle;
 
         string sector =
             ClassifyRequestedSector(
@@ -350,12 +390,23 @@ public sealed class HumanLookScanService
         state.StartEyeYaw = startYaw;
         state.TargetYaw =
             NormalizeYaw(
-                startYaw +
-                relativeAngle);
+                selection.TargetYaw);
         state.RelativeAngle =
             relativeAngle;
         state.RequestedSector =
             sector;
+        state.DirectionSource =
+            selection.Source;
+        state.HintEnemyEntityIndex =
+            selection.EnemyEntityIndex;
+        state.HintEnemyDistance =
+            selection.EnemyDistance;
+        state.HintVisiblePoint =
+            selection.VisiblePoint;
+        state.GeometryClearDistance =
+            selection.GeometryClearDistance;
+        state.GeometryTraceCount =
+            selection.GeometryTraceCount;
         state.MaxObservedTurn = 0.0f;
         state.StartSpeed2D =
             speed2D;
@@ -381,6 +432,19 @@ public sealed class HumanLookScanService
                 break;
             default:
                 _rearScans++;
+                break;
+        }
+
+        switch (state.DirectionSource)
+        {
+            case "visible-enemy-hint":
+                _visibleEnemyHintScans++;
+                break;
+            case "geometry":
+                _geometryScans++;
+                break;
+            default:
+                _randomScans++;
                 break;
         }
 
@@ -611,9 +675,14 @@ public sealed class HumanLookScanService
         {
             _info(
                 $"SCAN bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
-                $"control=EyeAngles.Y-fast-hold; outcome={outcome}; requestedSector={state.RequestedSector}; " +
-                $"requestedDelta={state.RelativeAngle:0.0}; startYaw={state.StartEyeYaw:0.0}; " +
-                $"targetYaw={state.TargetYaw:0.0}; observedDelta={observed:0.0}; " +
+                $"control=EyeAngles.Y-fast-hold; outcome={outcome}; directionSource={state.DirectionSource}; " +
+                $"requestedSector={state.RequestedSector}; requestedDelta={state.RelativeAngle:0.0}; " +
+                $"startYaw={state.StartEyeYaw:0.0}; targetYaw={state.TargetYaw:0.0}; " +
+                $"hintEnemy={FormatOptional(state.HintEnemyEntityIndex)}; " +
+                $"hintDistance={FormatOptional(state.HintEnemyDistance)}; " +
+                $"hintPoint={FormatOptional(state.HintVisiblePoint)}; " +
+                $"geometryClear={FormatOptional(state.GeometryClearDistance)}; " +
+                $"geometryTraces={state.GeometryTraceCount}; observedDelta={observed:0.0}; " +
                 $"duration={MathF.Max(0.0f, now - state.StartedAt):0.000}; writes={state.Writes}; " +
                 $"fastChecks={state.FastChecks}; fastCorrections={state.FastCorrections}; " +
                 $"fastWithinTolerance={state.FastWithinTolerance}; " +
@@ -629,6 +698,12 @@ public sealed class HumanLookScanService
         state.FastChecks = 0;
         state.FastCorrections = 0;
         state.FastWithinTolerance = 0;
+        state.DirectionSource = "unknown";
+        state.HintEnemyEntityIndex = null;
+        state.HintEnemyDistance = float.NaN;
+        state.HintVisiblePoint = null;
+        state.GeometryClearDistance = float.NaN;
+        state.GeometryTraceCount = 0;
     }
 
     private static bool TryReadValveControlState(
@@ -940,6 +1015,16 @@ public sealed class HumanLookScanService
                 System.Globalization.CultureInfo.InvariantCulture)
             : "unknown";
 
+    private static string FormatOptional(
+        int? value) =>
+        value?.ToString() ??
+        "none";
+
+    private static string FormatOptional(
+        AimPointKind? value) =>
+        value?.ToString().ToUpperInvariant() ??
+        "none";
+
     private sealed class ScanState
     {
         public bool Active { get; set; }
@@ -973,5 +1058,20 @@ public sealed class HumanLookScanService
         public int FastCorrections { get; set; }
 
         public int FastWithinTolerance { get; set; }
+
+        public string DirectionSource { get; set; } =
+            "unknown";
+
+        public int? HintEnemyEntityIndex { get; set; }
+
+        public float HintEnemyDistance { get; set; } =
+            float.NaN;
+
+        public AimPointKind? HintVisiblePoint { get; set; }
+
+        public float GeometryClearDistance { get; set; } =
+            float.NaN;
+
+        public int GeometryTraceCount { get; set; }
     }
 }

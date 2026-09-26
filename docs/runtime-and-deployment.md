@@ -243,6 +243,57 @@ If physical turns are real and movement remains healthy, compare front,
 front-side, side and rear acquisition/loss statistics with the Stage 5/6
 baseline.
 
+## Stage 6.6 Forced Enemy Acquisition verification
+
+Stage 6.6 is a separate opt-in experiment:
+
+```text
+css_ggbotai_forced_acquire 1
+```
+
+The trigger is **continuous physical LOS**, not field of view. An opponent at
+160 degrees behind the bot can therefore qualify if HEAD/CHEST/GUT/PELVIS
+remains physically trace-visible for the full delay. View angle is logged only
+for diagnostics and never gates acquisition.
+
+Default trigger:
+
+```text
+continuous physical LOS >= 1.0 s
+distance <= 800
+Valve current enemy = none
+mode = NormalGunGame
+```
+
+The write is intentionally limited to enemy/perception state. Stage 6.6 never
+sets `IsAttacking`, never presses Fire, and does not call `CCSBot::Attack`.
+
+Relevant log lines:
+
+```text
+VISIBLE-NOT-ATTACKING
+FORCED-ACQUIRE
+FORCED-ACQUIRE-HELD
+FORCED-ACQUIRE-DROPPED
+FORCED-ACQUIRE-ATTACKING
+FORCED-ACQUIRE-STILL-NOT-ATTACKING
+```
+
+Interpretation:
+
+- `HELD` means Valve kept the supplied `m_enemy` on a later DecisionLoop.
+- `DROPPED` means Valve immediately rejected/cleared it.
+- `ATTACKING` means Valve naturally progressed into its own attack state.
+- `STILL-NOT-ATTACKING` means the target survived for at least 0.5 s but
+  Valve still did not enter attack state; repeated cases are evidence for the
+  next experiment using the native `CCSBot::Attack()` transition.
+- `VISIBLE-NOT-ATTACKING state=acquired-not-attacking` means Valve already
+  selected the physically visible target itself but still has not entered its
+  attack state.
+
+Use `css_ggbotai_status` and retain `forcedAcquireStats` plus the
+`[ForcedAcquire] MAP-SUMMARY`.
+
 ## CounterStrikeSharp 1.0.375 / KHook
 
 GunGameBotAI targets CounterStrikeSharp API 1.0.375.

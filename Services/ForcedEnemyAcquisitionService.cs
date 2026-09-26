@@ -170,7 +170,8 @@ public sealed class ForcedEnemyAcquisitionService
     private void AbortPair(
         PairKey key,
         PairState pair,
-        string reason)
+        string reason,
+        string details = "")
     {
         if (!pair.ForcedThisEpisode ||
             pair.AttackOutcomeLogged)
@@ -187,7 +188,8 @@ public sealed class ForcedEnemyAcquisitionService
             $"bot={SafeName(pair.BotName)}; slot={key.BotSlot}; " +
             $"enemy={pair.EnemyName}#{key.EnemyEntityIndex}; " +
             $"reason={reason}; reasserts={pair.ReassertCount}; " +
-            $"held={pair.EverHeldAfterForce}");
+            $"held={pair.EverHeldAfterForce}" +
+            (string.IsNullOrWhiteSpace(details) ? "" : $"; {details}"));
     }
 
     public void Observe(
@@ -634,15 +636,14 @@ public sealed class ForcedEnemyAcquisitionService
             valveEnemyEntityIndex ==
             enemyEntityIndex;
 
-        if (!pair.ReadbackLogged &&
-            elapsed >
-                0.0f)
+        if (thisIsValveEnemy)
         {
-            pair.ReadbackLogged =
-                true;
-
-            if (thisIsValveEnemy)
+            if (!pair.ReadbackLogged &&
+                elapsed >
+                    0.0f)
             {
+                pair.ReadbackLogged =
+                    true;
                 pair.EverHeldAfterForce =
                     true;
                 _held++;
@@ -652,108 +653,249 @@ public sealed class ForcedEnemyAcquisitionService
                     $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
                     $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
                     $"after={elapsed:0.000}s; isEnemyVisible={valveEnemyVisible}; " +
-                    $"isAttacking={valveAttacking}");
+                    $"isAttacking={valveAttacking}; reasserts={pair.ReassertCount}");
             }
-            else
+
+            pair.EverHeldAfterForce =
+                true;
+
+            if (valveAttacking)
             {
-                _droppedBeforeHeld++;
+                _startedAttacking++;
                 pair.AttackOutcomeLogged =
                     true;
 
-                PostForceVisibilitySnapshot visibility =
-                    ReadPostForceVisibility(
-                        botPawn,
-                        enemyEntityIndex);
-
                 _info(
-                    $"FORCED-ACQUIRE-DROPPED-BEFORE-HELD map={SafeMap(mapName)}; " +
+                    $"FORCED-ACQUIRE-ATTACKING map={SafeMap(mapName)}; " +
                     $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
-                    $"enemy={pair.EnemyName}#{enemyEntityIndex}; after={elapsed:0.000}s; " +
-                    $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
-                    $"physicalLosNow={FormatKnownBool(visibility.PhysicalLos, visibility.Known)}; " +
-                    $"targetAlive={visibility.TargetAlive}");
+                    $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
+                    $"after={elapsed:0.000}s; observationWindow=" +
+                    $"{Config.ForcedEnemyAcquisitionPostObservationSeconds:0.000}s; " +
+                    $"reasserts={pair.ReassertCount}");
 
                 return;
             }
-        }
 
-        if (pair.AttackOutcomeLogged)
-            return;
-
-        if (!thisIsValveEnemy)
-        {
-            if (pair.EverHeldAfterForce)
+            if (elapsed <
+                Config.ForcedEnemyAcquisitionPostObservationSeconds)
             {
-                _droppedAfterHeld++;
-                pair.AttackOutcomeLogged =
-                    true;
-
-                PostForceVisibilitySnapshot visibility =
-                    ReadPostForceVisibility(
-                        botPawn,
-                        enemyEntityIndex);
-
-                _info(
-                    $"FORCED-ACQUIRE-DROPPED-AFTER-HELD map={SafeMap(mapName)}; " +
-                    $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
-                    $"enemy={pair.EnemyName}#{enemyEntityIndex}; after={elapsed:0.000}s; " +
-                    $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
-                    $"physicalLosNow={FormatKnownBool(visibility.PhysicalLos, visibility.Known)}; " +
-                    $"targetAlive={visibility.TargetAlive}; " +
-                    $"distanceNow={FormatOptional(visibility.Distance)}; " +
-                    $"angleFromViewNow={FormatOptional(visibility.AngleFromView)}");
+                return;
             }
 
-            return;
-        }
-
-        pair.EverHeldAfterForce =
-            true;
-
-        if (valveAttacking)
-        {
-            _startedAttacking++;
+            _stillNotAttackingAfterWindow++;
             pair.AttackOutcomeLogged =
                 true;
 
+            PostForceVisibilitySnapshot finalVisibility =
+                ReadPostForceVisibility(
+                    botPawn,
+                    enemyEntityIndex);
+
             _info(
-                $"FORCED-ACQUIRE-ATTACKING map={SafeMap(mapName)}; " +
+                $"FORCED-ACQUIRE-STILL-NOT-ATTACKING map={SafeMap(mapName)}; " +
                 $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
                 $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
                 $"after={elapsed:0.000}s; observationWindow=" +
-                $"{Config.ForcedEnemyAcquisitionPostObservationSeconds:0.000}s");
+                $"{Config.ForcedEnemyAcquisitionPostObservationSeconds:0.000}s; " +
+                $"reasserts={pair.ReassertCount}; " +
+                $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
+                $"isEnemyVisible={valveEnemyVisible}; isAimingAtEnemy={valveAimingAtEnemy}; " +
+                $"physicalLosNow={FormatKnownBool(finalVisibility.PhysicalLos, finalVisibility.Known)}; " +
+                $"targetAlive={finalVisibility.TargetAlive}; " +
+                $"distanceNow={FormatOptional(finalVisibility.Distance)}; " +
+                $"angleFromViewNow={FormatOptional(finalVisibility.AngleFromView)}; " +
+                $"visiblePointNow={FormatOptional(finalVisibility.VisiblePoint)}");
 
             return;
         }
 
-        if (elapsed <
-            Config.ForcedEnemyAcquisitionPostObservationSeconds)
+        // Never fight a different valid Valve target. Reassertion is only for
+        // the "Valve cleared our target back to none" case.
+        if (valveEnemyEntityIndex >
+            0)
         {
+            AbortPair(
+                new PairKey(
+                    controller.Slot,
+                    enemyEntityIndex),
+                pair,
+                "other-valve-enemy",
+                $"valveCurrentEnemy={valveEnemyEntityIndex}");
+
             return;
         }
 
-        _stillNotAttackingAfterWindow++;
-        pair.AttackOutcomeLogged =
-            true;
+        // During the short hold window, reassert the same target only while it
+        // is still alive, in range and physically visible. This is intentionally
+        // a DecisionLoop read-back correction, not a fast-tick attack controller.
+        if (elapsed <=
+            Config.ForcedEnemyAcquisitionReassertSeconds)
+        {
+            if (!allowReassert)
+            {
+                AbortPair(
+                    new PairKey(
+                        controller.Slot,
+                        enemyEntityIndex),
+                    pair,
+                    "reassert-gated-by-mode");
 
-        PostForceVisibilitySnapshot finalVisibility =
+                return;
+            }
+
+            if (!TryResolveEntityPawn(
+                    enemyEntityIndex,
+                    out CCSPlayerPawn? enemyPawn,
+                    out Vector3 enemyOrigin) ||
+                enemyPawn == null)
+            {
+                AbortPair(
+                    new PairKey(
+                        controller.Slot,
+                        enemyEntityIndex),
+                    pair,
+                    "target-unavailable-or-dead");
+
+                return;
+            }
+
+            PostForceVisibilitySnapshot visibility =
+                ReadPostForceVisibility(
+                    botPawn,
+                    enemyEntityIndex);
+
+            if (!visibility.Known ||
+                !visibility.TargetAlive)
+            {
+                AbortPair(
+                    new PairKey(
+                        controller.Slot,
+                        enemyEntityIndex),
+                    pair,
+                    "target-unavailable-or-dead");
+
+                return;
+            }
+
+            if (float.IsFinite(
+                    visibility.Distance) &&
+                visibility.Distance >
+                    Config.ForcedEnemyAcquisitionDistance)
+            {
+                AbortPair(
+                    new PairKey(
+                        controller.Slot,
+                        enemyEntityIndex),
+                    pair,
+                    "target-out-of-range",
+                    $"distanceNow={FormatOptional(visibility.Distance)}");
+
+                return;
+            }
+
+            if (!visibility.PhysicalLos)
+            {
+                AbortPair(
+                    new PairKey(
+                        controller.Slot,
+                        enemyEntityIndex),
+                    pair,
+                    "physical-los-lost",
+                    $"distanceNow={FormatOptional(visibility.Distance)}; " +
+                    $"angleFromViewNow={FormatOptional(visibility.AngleFromView)}");
+
+                return;
+            }
+
+            _reassertAttempts++;
+
+            if (!TryForceAcquire(
+                    bot,
+                    enemyPawn,
+                    enemyOrigin,
+                    pair,
+                    now,
+                    pair.ForcedAt))
+            {
+                _reassertFailures++;
+
+                AbortPair(
+                    new PairKey(
+                        controller.Slot,
+                        enemyEntityIndex),
+                    pair,
+                    "reassert-write-failed");
+
+                return;
+            }
+
+            _reasserted++;
+            pair.ReassertCount++;
+
+            // If no read-back has ever confirmed the target, let the next loop
+            // produce the normal HELD diagnostic after this reassert.
+            if (!pair.EverHeldAfterForce)
+            {
+                pair.ReadbackLogged =
+                    false;
+            }
+
+            _onForcedAcquisition(
+                controller.Slot,
+                enemyEntityIndex,
+                now);
+
+            _info(
+                $"FORCED-ACQUIRE-REASSERT map={SafeMap(mapName)}; " +
+                $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
+                $"after={elapsed:0.000}s; reason=" +
+                $"{(pair.EverHeldAfterForce ? "dropped-after-held" : "dropped-before-held")}; " +
+                $"reassertCount={pair.ReassertCount}; " +
+                $"physicalLosNow=True; distanceNow={FormatOptional(visibility.Distance)}; " +
+                $"angleFromViewNow={FormatOptional(visibility.AngleFromView)}; " +
+                $"acquireTimestampPreserved={pair.ForcedAt:0.000}; " +
+                "IsAttackingWrite=false; FireWrite=false");
+
+            return;
+        }
+
+        PostForceVisibilitySnapshot droppedVisibility =
             ReadPostForceVisibility(
                 botPawn,
                 enemyEntityIndex);
 
-        _info(
-            $"FORCED-ACQUIRE-STILL-NOT-ATTACKING map={SafeMap(mapName)}; " +
-            $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
-            $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
-            $"after={elapsed:0.000}s; observationWindow=" +
-            $"{Config.ForcedEnemyAcquisitionPostObservationSeconds:0.000}s; " +
-            $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
-            $"isEnemyVisible={valveEnemyVisible}; isAimingAtEnemy={valveAimingAtEnemy}; " +
-            $"physicalLosNow={FormatKnownBool(finalVisibility.PhysicalLos, finalVisibility.Known)}; " +
-            $"targetAlive={finalVisibility.TargetAlive}; " +
-            $"distanceNow={FormatOptional(finalVisibility.Distance)}; " +
-            $"angleFromViewNow={FormatOptional(finalVisibility.AngleFromView)}; " +
-            $"visiblePointNow={FormatOptional(finalVisibility.VisiblePoint)}");
+        if (pair.EverHeldAfterForce)
+        {
+            _droppedAfterHeld++;
+
+            _info(
+                $"FORCED-ACQUIRE-DROPPED-AFTER-HELD map={SafeMap(mapName)}; " +
+                $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                $"enemy={pair.EnemyName}#{enemyEntityIndex}; after={elapsed:0.000}s; " +
+                $"reasserts={pair.ReassertCount}; " +
+                $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
+                $"physicalLosNow={FormatKnownBool(droppedVisibility.PhysicalLos, droppedVisibility.Known)}; " +
+                $"targetAlive={droppedVisibility.TargetAlive}; " +
+                $"distanceNow={FormatOptional(droppedVisibility.Distance)}; " +
+                $"angleFromViewNow={FormatOptional(droppedVisibility.AngleFromView)}");
+        }
+        else
+        {
+            _droppedBeforeHeld++;
+
+            _info(
+                $"FORCED-ACQUIRE-DROPPED-BEFORE-HELD map={SafeMap(mapName)}; " +
+                $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                $"enemy={pair.EnemyName}#{enemyEntityIndex}; after={elapsed:0.000}s; " +
+                $"reasserts={pair.ReassertCount}; " +
+                $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
+                $"physicalLosNow={FormatKnownBool(droppedVisibility.PhysicalLos, droppedVisibility.Known)}; " +
+                $"targetAlive={droppedVisibility.TargetAlive}");
+        }
+
+        pair.AttackOutcomeLogged =
+            true;
     }
 
     private PostForceVisibilitySnapshot ReadPostForceVisibility(
@@ -906,7 +1048,8 @@ public sealed class ForcedEnemyAcquisitionService
         CCSPlayerPawn enemyPawn,
         Vector3 enemyOrigin,
         PairState pair,
-        float now)
+        float now,
+        float acquireTimestamp)
     {
         try
         {
@@ -929,7 +1072,7 @@ public sealed class ForcedEnemyAcquisitionService
             bot.LastSawEnemyTimestamp =
                 now;
             bot.CurrentEnemyAcquireTimestamp =
-                now;
+                acquireTimestamp;
             bot.IsLastEnemyDead =
                 false;
 
@@ -1193,7 +1336,13 @@ public sealed class ForcedEnemyAcquisitionService
 
         public float LastVisibleAt { get; set; }
 
+        public string BotName { get; set; } =
+            "unknown";
+
         public string EnemyName { get; set; } =
+            "unknown";
+
+        public string MapName { get; set; } =
             "unknown";
 
         public AimPointKind LastVisiblePoint { get; set; } =
@@ -1213,6 +1362,8 @@ public sealed class ForcedEnemyAcquisitionService
         public bool ReadbackLogged { get; set; }
 
         public bool EverHeldAfterForce { get; set; }
+
+        public int ReassertCount { get; set; }
 
         public bool AttackOutcomeLogged { get; set; }
     }

@@ -274,7 +274,8 @@ Relevant log lines:
 VISIBLE-NOT-ATTACKING
 FORCED-ACQUIRE
 FORCED-ACQUIRE-HELD
-FORCED-ACQUIRE-DROPPED
+FORCED-ACQUIRE-DROPPED-BEFORE-HELD
+FORCED-ACQUIRE-DROPPED-AFTER-HELD
 FORCED-ACQUIRE-ATTACKING
 FORCED-ACQUIRE-STILL-NOT-ATTACKING
 ```
@@ -284,11 +285,14 @@ Interpretation:
 - VisionMonitor logs the corresponding target transition as `ACQUIRED_FORCED`
   and excludes it from natural `acquired/avgAcquireMs` statistics.
 - `HELD` means Valve kept the supplied `m_enemy` on a later DecisionLoop.
-- `DROPPED` means Valve immediately rejected/cleared it.
+- `DROPPED-BEFORE-HELD` means Valve rejected/cleared the supplied target
+  before the first later DecisionLoop confirmed it.
+- `DROPPED-AFTER-HELD` means Valve initially retained the target but cleared
+  or replaced it later within the observation window.
 - `ATTACKING` means Valve naturally progressed into its own attack state.
-- `STILL-NOT-ATTACKING` means the target survived for at least 0.5 s but
-  Valve still did not enter attack state; repeated cases are evidence for the
-  next experiment using the native `CCSBot::Attack()` transition.
+- `STILL-NOT-ATTACKING` is emitted only after the full configured observation
+  window (default 1.0 s) and records current physical LOS, target-alive state,
+  distance, angle, visible point, `IsEnemyVisible`, and `IsAimingAtEnemy`.
 - `VISIBLE-NOT-ATTACKING state=acquired-not-attacking` means Valve already
   selected the physically visible target itself but still has not entered its
   attack state.

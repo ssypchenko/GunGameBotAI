@@ -350,7 +350,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.RemoveSlot(slot);
         _visionEnhancement.RemoveSlot(slot);
         _humanLookScan.RemoveSlot(slot);
-        _forcedEnemyAcquisition.RemoveSlot(slot);
+        _forcedEnemyAcquisition.RemoveSlot(
+            slot,
+            "spawn-grace");
         _aimDiagnostics.RemoveSlot(slot);
         _aimNative.RemoveSlot(slot);
         _transientControl.CancelSlot(slot);
@@ -438,7 +440,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _visionMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(slot);
+                    _forcedEnemyAcquisition.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _aimDiagnostics.RemoveSlot(slot);
                     _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
@@ -456,7 +460,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _visionMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(slot);
+                    _forcedEnemyAcquisition.RemoveSlot(
+                        slot,
+                        "human-takeover");
                     _aimDiagnostics.RemoveSlot(slot);
                     _aimNative.RemoveSlot(slot);
                     _transientControl.CancelSlot(slot);
@@ -503,7 +509,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _stuckMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(slot);
+                    _forcedEnemyAcquisition.RemoveSlot(
+                        slot,
+                        "ladder-traversal");
 
                     _visionMonitor.Observe(
                         controller,
@@ -1073,7 +1081,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.RemoveSlot(playerSlot);
         _visionEnhancement.RemoveSlot(playerSlot);
         _humanLookScan.RemoveSlot(playerSlot);
-        _forcedEnemyAcquisition.RemoveSlot(playerSlot);
+        _forcedEnemyAcquisition.RemoveSlot(
+            playerSlot,
+            "disconnect");
         _aimDiagnostics.RemoveSlot(playerSlot);
         _aimNative.RemoveSlot(playerSlot);
         _transientControl.CancelSlot(playerSlot);
@@ -1154,7 +1164,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
-            _forcedEnemyAcquisition.RemoveSlot(slot);
+            _forcedEnemyAcquisition.RemoveSlot(
+                slot,
+                "player-death");
             _aimDiagnostics.RemoveSlot(slot);
             _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);
@@ -1224,7 +1236,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
-            _forcedEnemyAcquisition.RemoveSlot(slot);
+            _forcedEnemyAcquisition.RemoveSlot(
+                slot,
+                "bot-takeover");
             _aimDiagnostics.RemoveSlot(slot);
             _aimNative.RemoveSlot(slot);
             _transientControl.CancelSlot(slot);

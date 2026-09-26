@@ -91,13 +91,14 @@ The default profile is conservative:
   "ForcedEnemyAcquisitionDelaySeconds": 1.00,
   "ForcedEnemyAcquisitionDistance": 800.0,
   "ForcedEnemyAcquisitionPostObservationSeconds": 1.00,
+  "ForcedEnemyAcquisitionReassertSeconds": 0.60,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 37
+  "ConfigVersion": 38
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.6 extended outcome diagnostics use version `37`.
+`ConfigVersion` is migrated by the plugin; Stage 6.6 bounded reassert testing uses version `38`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -166,6 +167,15 @@ the full window and classifies the outcome as attack, drop before first readback
 drop after a confirmed hold, or still-not-attacking at the end of the window.
 Version 37 preserves the operator's existing `ForcedEnemyAcquisitionEnabled`
 choice because this migration changes diagnostics only.
+
+`ForcedEnemyAcquisitionReassertSeconds` (default 0.60 s) adds a bounded
+read-back hold after the initial forced write. If Valve clears the same target
+back to no current enemy during this window, the target is reasserted only when
+it is still alive, within `ForcedEnemyAcquisitionDistance`, and physically
+trace-visible. A different Valve-selected enemy is never overwritten.
+Reassertion preserves the original `CurrentEnemyAcquireTimestamp`, never sets
+`IsAttacking`, and never presses Fire. Config version 38 preserves the
+existing Stage 6.6 opt-in state.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

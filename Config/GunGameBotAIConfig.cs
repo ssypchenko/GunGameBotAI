@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 36;
+    public override int Version { get; set; } = 37;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -294,6 +294,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float ForcedEnemyAcquisitionDelaySeconds { get; set; } = 1.00f;
     public float ForcedEnemyAcquisitionDistance { get; set; } = 800.0f;
 
+    // Diagnostic-only window after a successful forced write. During this
+    // period we observe whether Valve keeps/drops the target and whether it
+    // naturally enters attack state. This does not change bot behaviour.
+    public float ForcedEnemyAcquisitionPostObservationSeconds { get; set; } = 1.00f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -389,6 +394,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             2000.0f,
             800.0f,
             nameof(ForcedEnemyAcquisitionDistance),
+            warn);
+        ForcedEnemyAcquisitionPostObservationSeconds = Clamp(
+            ForcedEnemyAcquisitionPostObservationSeconds,
+            0.50f,
+            3.00f,
+            1.00f,
+            nameof(ForcedEnemyAcquisitionPostObservationSeconds),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -951,6 +963,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             ForcedEnemyAcquisitionDelaySeconds = 1.00f;
             ForcedEnemyAcquisitionDistance = 800.0f;
             Version = 36;
+        }
+
+        if (Version < 37)
+        {
+            // v37 is diagnostic-only: extend post-force observation to classify
+            // late target drops versus attack transitions. Preserve the
+            // operator's existing ForcedEnemyAcquisitionEnabled choice.
+            ForcedEnemyAcquisitionPostObservationSeconds = 1.00f;
+            Version = 37;
         }
     }
 

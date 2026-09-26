@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 34;
+    public override int Version { get; set; } = 35;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -278,6 +278,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Random selection remains the final fallback if neither source succeeds.
     public bool HumanLookScanVisibleEnemyHintEnabled { get; set; } = true;
     public float HumanLookScanVisibleEnemyHintDistance { get; set; } = 800.0f;
+    public float HumanLookScanVisibleEnemyHintCooldownSeconds { get; set; } = 0.75f;
     public bool HumanLookScanGeometryFallbackEnabled { get; set; } = true;
     public float HumanLookScanGeometryTraceDistance { get; set; } = 1200.0f;
     public float HumanLookScanGeometryMinimumClearDistance { get; set; } = 160.0f;
@@ -345,6 +346,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             2000.0f,
             800.0f,
             nameof(HumanLookScanVisibleEnemyHintDistance),
+            warn);
+        HumanLookScanVisibleEnemyHintCooldownSeconds = Clamp(
+            HumanLookScanVisibleEnemyHintCooldownSeconds,
+            0.25f,
+            5.0f,
+            0.75f,
+            nameof(HumanLookScanVisibleEnemyHintCooldownSeconds),
             warn);
         HumanLookScanGeometryTraceDistance = Clamp(
             HumanLookScanGeometryTraceDistance,
@@ -899,6 +907,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             HumanLookScanGeometryTraceDistance = 1200.0f;
             HumanLookScanGeometryMinimumClearDistance = 160.0f;
             Version = 34;
+        }
+
+        if (Version < 35)
+        {
+            // v35 makes a physically visible but Valve-unacquired enemy an
+            // immediate trigger instead of waiting for the regular scan timer.
+            // A short per-bot cooldown prevents repeated hint scans when Valve
+            // still does not acquire the same continuing LOS opportunity.
+            HumanLookScanEnabled = false;
+            HumanLookScanVisibleEnemyHintCooldownSeconds = 0.75f;
+            Version = 35;
         }
     }
 

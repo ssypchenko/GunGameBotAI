@@ -115,6 +115,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     slot,
                     enemyEntityIndex,
                     now),
+            (slot, enemyEntityIndex) =>
+                _visionMonitor.ClearForcedAcquisitionMarker(
+                    slot,
+                    enemyEntityIndex),
             message => Logger.LogInformation("[GunGameBotAI][ForcedAcquire] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,

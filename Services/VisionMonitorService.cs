@@ -440,6 +440,14 @@ public sealed class VisionMonitorService
                     bot,
                     now);
 
+            // A forced marker belongs only to one active vision episode.
+            // Reusing the pair object for a later natural event must never
+            // inherit an earlier plugin-forced classification.
+            pair.ForcedByPlugin =
+                false;
+            pair.ForcedAt =
+                0.0f;
+
             pair.Active =
                 true;
             pair.StartedAt =
@@ -644,6 +652,17 @@ public sealed class VisionMonitorService
 
         if (pair.ForcedByPlugin)
         {
+            float forcedAt =
+                pair.ForcedAt;
+
+            // Consume the marker with this exact vision episode. Without this,
+            // a later natural event for the same bot/enemy pair can be
+            // incorrectly classified as ACQUIRED_FORCED.
+            pair.ForcedByPlugin =
+                false;
+            pair.ForcedAt =
+                0.0f;
+
             _eventsForcedAcquired++;
             _mapStats.ForcedAcquired++;
 
@@ -654,7 +673,7 @@ public sealed class VisionMonitorService
                     $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
                     $"enemy={pair.EnemyName}#{valveEnemyEntityIndex}; " +
                     $"timeFromVisionEvent={timeToAcquire:0.000}; " +
-                    $"forcedAt={pair.ForcedAt:0.000}; " +
+                    $"forcedAt={forcedAt:0.000}; " +
                     $"initialAngle={FormatOptional(pair.InitialEnemyAngleFromView)}; " +
                     $"initialViewSector={pair.InitialViewSector}; " +
                     "excludedFromNaturalAcquireStats=true");
@@ -754,6 +773,10 @@ public sealed class VisionMonitorService
             pair.SuppressUntil =
                 now +
                 EventRestartCooldownSeconds;
+            pair.ForcedByPlugin =
+                false;
+            pair.ForcedAt =
+                0.0f;
 
             _eventsLostUnacquired++;
             _mapStats.Lost++;

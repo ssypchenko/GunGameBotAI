@@ -27,6 +27,7 @@ public sealed class ForcedEnemyAcquisitionService
 
     private readonly VisibilityTraceService _visibility;
     private readonly Func<CCSPlayerController, float, bool> _isBotInSpawnGrace;
+    private readonly Action<int, int, float> _onForcedAcquisition;
     private readonly Action<string> _info;
     private readonly Dictionary<PairKey, PairState> _pairs =
         new();
@@ -45,12 +46,15 @@ public sealed class ForcedEnemyAcquisitionService
     public ForcedEnemyAcquisitionService(
         VisibilityTraceService visibility,
         Func<CCSPlayerController, float, bool> isBotInSpawnGrace,
+        Action<int, int, float> onForcedAcquisition,
         Action<string> info)
     {
         _visibility =
             visibility;
         _isBotInSpawnGrace =
             isBotInSpawnGrace;
+        _onForcedAcquisition =
+            onForcedAcquisition;
         _info =
             info;
     }
@@ -80,6 +84,9 @@ public sealed class ForcedEnemyAcquisitionService
         _stillNotAttacking = 0;
         _episodesLostBeforeThreshold = 0;
     }
+
+    public void BeginMap() =>
+        Reset();
 
     public void ClearRuntimeState() =>
         _pairs.Clear();
@@ -372,6 +379,12 @@ public sealed class ForcedEnemyAcquisitionService
             }
 
             _forced++;
+
+            _onForcedAcquisition(
+                slot,
+                enemyEntityIndex,
+                now);
+
             pair.ForcedThisEpisode =
                 true;
             pair.ForcedAt =

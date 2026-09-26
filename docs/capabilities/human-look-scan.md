@@ -6,9 +6,16 @@ Instead of changing Valve visibility, FOV or enemy-selection logic, the plugin
 periodically turns the bot's physical eye yaw while Valve keeps ownership of
 navigation, movement, target selection, firing and combat aim.
 
-The scan direction is deliberately independent of enemy positions. VisionMonitor
-may measure the result, but no traced enemy coordinate is passed into this
-service.
+Direction selection is deliberately separated from view enforcement. Starting
+with 0.7.48, the policy is:
+
+1. physically visible but not Valve-acquired enemy hint;
+2. most open world-geometry direction;
+3. random human-like fallback.
+
+The enemy hint is allowed only when the normal scan eligibility gates prove
+Valve has no valid current enemy. It uses the same physical LOS trace as
+VisionMonitor and never selects an enemy through a wall.
 
 ## Experiment history
 
@@ -58,9 +65,10 @@ Runtime command:
 css_ggbotai_look_scan 0|1
 ```
 
-Because v2 is a stronger intervention than v1, configuration migration to
-ConfigVersion 32 forces the feature OFF once. The operator must explicitly
-enable it again after upgrading.
+Configuration migration to ConfigVersion 34 forces the feature OFF once. The
+operator must explicitly enable it again after upgrading because the direction
+policy now uses physically visible enemy information before geometry/random
+fallbacks.
 
 ## Explicit non-goals
 
@@ -119,6 +127,12 @@ Defaults:
 "HumanLookScanMinIntervalSeconds": 2.50,
 "HumanLookScanMaxIntervalSeconds": 4.50,
 "HumanLookScanHoldSeconds": 0.30,
+"HumanLookScanYawToleranceDegrees": 7.5,
+"HumanLookScanVisibleEnemyHintEnabled": true,
+"HumanLookScanVisibleEnemyHintDistance": 800.0,
+"HumanLookScanGeometryFallbackEnabled": true,
+"HumanLookScanGeometryTraceDistance": 1200.0,
+"HumanLookScanGeometryMinimumClearDistance": 160.0,
 "HumanLookScanMinimumSpeed": 30.0,
 "HumanLookScanRecentFireGraceSeconds": 0.75
 ```
@@ -134,17 +148,50 @@ reads the current yaw. If the error from the scan target is greater than
 When the hold ends the plugin does not restore the old yaw. It simply releases
 fast ownership and Valve resumes naturally.
 
-## Direction distribution
+## Direction policy
 
-The direction is independent of every enemy location.
+Direction choice is separate from the fast yaw-hold mechanism.
 
-For each scan:
+### 1. VisibleEnemyHint
 
-- 50%: modest left/right check, 45–70 degrees;
-- 30%: side check, 80–110 degrees;
-- 20%: rear check, 135–165 degrees.
+When the bot has no valid Valve current enemy, the selector examines live
+opponents inside `HumanLookScanVisibleEnemyHintDistance` (default 800 units).
 
-Left/right is selected randomly.
+For each candidate it uses `VisibilityTraceService.TryFindFirstVisiblePoint`.
+Only a candidate with a real physical line of sight to HEAD/CHEST/GUT/PELVIS is
+eligible. The closest physically visible candidate is selected.
+
+The scan target is yaw-only toward the first visible point. Pitch is not aimed
+at the enemy. If Valve acquires any enemy, the fast safety gate immediately
+ends the scan.
+
+This path never hints through walls.
+
+### 2. Geometry fallback
+
+If no visible-unacquired enemy exists, ten horizontal world-only rays are tested
+relative to the current eye yaw:
+
+```text
+-150 -120 -90 -60 -30 +30 +60 +90 +120 +150
+```
+
+The ray mask is `Masks.SolidBrushOnly`, so players/NPCs do not make a direction
+look artificially blocked.
+
+The selector chooses among directions within 24 world units of the best clear
+distance. The geometry result is accepted only when the best ray is at least
+`HumanLookScanGeometryMinimumClearDistance` (default 160 units).
+
+### 3. Random fallback
+
+If enemy-hint and geometry selection both fail, the original distribution is
+used:
+
+- 50%: 45–70 degrees;
+- 30%: 80–110 degrees;
+- 20%: 135–165 degrees;
+- left/right random.
 
 ## Diagnostics
 
@@ -170,6 +217,9 @@ skippedRecentFire
 nearSide
 side
 rear
+directionHint
+directionGeometry
+directionRandom
 avgRequestedDeg
 avgObservedDeg
 maxObservedDeg
@@ -187,10 +237,16 @@ It includes:
 
 ```text
 outcome
+directionSource
 requestedSector
 requestedDelta
 startYaw
 targetYaw
+hintEnemy
+hintDistance
+hintPoint
+geometryClear
+geometryTraces
 observedDelta
 duration
 writes

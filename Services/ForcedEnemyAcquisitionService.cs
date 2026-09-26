@@ -23,7 +23,6 @@ public sealed class ForcedEnemyAcquisitionService
 {
     private const float DiagnosticAfterSeconds = 0.50f;
     private const float DiagnosticRepeatSeconds = 0.75f;
-    private const float PostForceAttackCheckSeconds = 0.50f;
 
     private readonly VisibilityTraceService _visibility;
     private readonly Func<CCSPlayerController, float, bool> _isBotInSpawnGrace;
@@ -38,9 +37,10 @@ public sealed class ForcedEnemyAcquisitionService
     private long _forced;
     private long _forceFailures;
     private long _held;
-    private long _dropped;
+    private long _droppedBeforeHeld;
+    private long _droppedAfterHeld;
     private long _startedAttacking;
-    private long _stillNotAttacking;
+    private long _stillNotAttackingAfterWindow;
     private long _episodesLostBeforeThreshold;
 
     public ForcedEnemyAcquisitionService(
@@ -62,11 +62,20 @@ public sealed class ForcedEnemyAcquisitionService
     public GunGameBotAIConfig Config { get; set; } =
         new();
 
+    private int PendingOutcomeCount =>
+        _pairs.Values.Count(
+            pair =>
+                pair.ForcedThisEpisode &&
+                !pair.AttackOutcomeLogged);
+
     public string StatisticsSummary =>
         $"checks={_checks}; visiblePairs={_visiblePairs}; " +
         $"visibleNotAttackingLogs={_visibleNotAttackingLogs}; forced={_forced}; " +
-        $"forceFailures={_forceFailures}; held={_held}; dropped={_dropped}; " +
-        $"startedAttacking={_startedAttacking}; stillNotAttacking={_stillNotAttacking}; " +
+        $"forceFailures={_forceFailures}; held={_held}; " +
+        $"droppedBeforeHeld={_droppedBeforeHeld}; droppedAfterHeld={_droppedAfterHeld}; " +
+        $"startedAttacking={_startedAttacking}; " +
+        $"stillNotAttackingAfterWindow={_stillNotAttackingAfterWindow}; " +
+        $"pendingOutcomes={PendingOutcomeCount}; " +
         $"lostBeforeThreshold={_episodesLostBeforeThreshold}; trackedPairs={_pairs.Count}";
 
     public void Reset()
@@ -79,9 +88,10 @@ public sealed class ForcedEnemyAcquisitionService
         _forced = 0;
         _forceFailures = 0;
         _held = 0;
-        _dropped = 0;
+        _droppedBeforeHeld = 0;
+        _droppedAfterHeld = 0;
         _startedAttacking = 0;
-        _stillNotAttacking = 0;
+        _stillNotAttackingAfterWindow = 0;
         _episodesLostBeforeThreshold = 0;
     }
 
@@ -161,9 +171,13 @@ public sealed class ForcedEnemyAcquisitionService
         // attack state.
         ObservePendingForcedResultsForSlot(
             controller,
+            botPawn,
             bot,
+            mapName,
             valveEnemyEntityIndex,
+            valveEnemyVisible,
             valveAttacking,
+            valveAimingAtEnemy,
             now);
 
         if (runtime.Mode !=
@@ -395,6 +409,8 @@ public sealed class ForcedEnemyAcquisitionService
                 now;
             pair.ReadbackLogged =
                 false;
+            pair.EverHeldAfterForce =
+                false;
             pair.AttackOutcomeLogged =
                 false;
 
@@ -459,9 +475,13 @@ public sealed class ForcedEnemyAcquisitionService
 
     private void ObservePendingForcedResultsForSlot(
         CCSPlayerController controller,
+        CCSPlayerPawn botPawn,
         CCSBot bot,
+        string mapName,
         int valveEnemyEntityIndex,
+        bool valveEnemyVisible,
         bool valveAttacking,
+        bool valveAimingAtEnemy,
         float now)
     {
         foreach ((PairKey key, PairState pair) in
@@ -476,12 +496,15 @@ public sealed class ForcedEnemyAcquisitionService
         {
             ObserveForcedResult(
                 controller,
+                botPawn,
                 bot,
+                mapName,
                 pair,
                 key.EnemyEntityIndex,
-                valveEnemyEntityIndex ==
-                    key.EnemyEntityIndex,
+                valveEnemyEntityIndex,
+                valveEnemyVisible,
                 valveAttacking,
+                valveAimingAtEnemy,
                 now);
         }
     }
@@ -513,11 +536,15 @@ public sealed class ForcedEnemyAcquisitionService
 
     private void ObserveForcedResult(
         CCSPlayerController controller,
+        CCSPlayerPawn botPawn,
         CCSBot bot,
+        string mapName,
         PairState pair,
         int enemyEntityIndex,
-        bool thisIsValveEnemy,
+        int valveEnemyEntityIndex,
+        bool valveEnemyVisible,
         bool valveAttacking,
+        bool valveAimingAtEnemy,
         float now)
     {
         float elapsed =
@@ -525,6 +552,10 @@ public sealed class ForcedEnemyAcquisitionService
                 0.0f,
                 now -
                 pair.ForcedAt);
+
+        bool thisIsValveEnemy =
+            valveEnemyEntityIndex ==
+            enemyEntityIndex;
 
         if (!pair.ReadbackLogged &&
             elapsed >
@@ -535,33 +566,72 @@ public sealed class ForcedEnemyAcquisitionService
 
             if (thisIsValveEnemy)
             {
+                pair.EverHeldAfterForce =
+                    true;
                 _held++;
 
                 _info(
-                    $"FORCED-ACQUIRE-HELD bot={SafeName(controller.PlayerName)}; " +
-                    $"slot={controller.Slot}; enemy={pair.EnemyName}#{enemyEntityIndex}; " +
-                    $"after={elapsed:0.000}s; isEnemyVisible={SafeReadBool(() => bot.IsEnemyVisible)}; " +
+                    $"FORCED-ACQUIRE-HELD map={SafeMap(mapName)}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                    $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
+                    $"after={elapsed:0.000}s; isEnemyVisible={valveEnemyVisible}; " +
                     $"isAttacking={valveAttacking}");
             }
             else
             {
-                _dropped++;
-
-                _info(
-                    $"FORCED-ACQUIRE-DROPPED bot={SafeName(controller.PlayerName)}; " +
-                    $"slot={controller.Slot}; enemy={pair.EnemyName}#{enemyEntityIndex}; " +
-                    $"after={elapsed:0.000}s");
-
+                _droppedBeforeHeld++;
                 pair.AttackOutcomeLogged =
                     true;
+
+                PostForceVisibilitySnapshot visibility =
+                    ReadPostForceVisibility(
+                        botPawn,
+                        enemyEntityIndex);
+
+                _info(
+                    $"FORCED-ACQUIRE-DROPPED-BEFORE-HELD map={SafeMap(mapName)}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                    $"enemy={pair.EnemyName}#{enemyEntityIndex}; after={elapsed:0.000}s; " +
+                    $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
+                    $"physicalLosNow={FormatKnownBool(visibility.PhysicalLos, visibility.Known)}; " +
+                    $"targetAlive={visibility.TargetAlive}");
+
+                return;
             }
         }
 
-        if (pair.AttackOutcomeLogged ||
-            !thisIsValveEnemy)
+        if (pair.AttackOutcomeLogged)
+            return;
+
+        if (!thisIsValveEnemy)
         {
+            if (pair.EverHeldAfterForce)
+            {
+                _droppedAfterHeld++;
+                pair.AttackOutcomeLogged =
+                    true;
+
+                PostForceVisibilitySnapshot visibility =
+                    ReadPostForceVisibility(
+                        botPawn,
+                        enemyEntityIndex);
+
+                _info(
+                    $"FORCED-ACQUIRE-DROPPED-AFTER-HELD map={SafeMap(mapName)}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                    $"enemy={pair.EnemyName}#{enemyEntityIndex}; after={elapsed:0.000}s; " +
+                    $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
+                    $"physicalLosNow={FormatKnownBool(visibility.PhysicalLos, visibility.Known)}; " +
+                    $"targetAlive={visibility.TargetAlive}; " +
+                    $"distanceNow={FormatOptional(visibility.Distance)}; " +
+                    $"angleFromViewNow={FormatOptional(visibility.AngleFromView)}");
+            }
+
             return;
         }
+
+        pair.EverHeldAfterForce =
+            true;
 
         if (valveAttacking)
         {
@@ -570,25 +640,150 @@ public sealed class ForcedEnemyAcquisitionService
                 true;
 
             _info(
-                $"FORCED-ACQUIRE-ATTACKING bot={SafeName(controller.PlayerName)}; " +
-                $"slot={controller.Slot}; enemy={pair.EnemyName}#{enemyEntityIndex}; " +
-                $"after={elapsed:0.000}s");
+                $"FORCED-ACQUIRE-ATTACKING map={SafeMap(mapName)}; " +
+                $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
+                $"after={elapsed:0.000}s; observationWindow=" +
+                $"{Config.ForcedEnemyAcquisitionPostObservationSeconds:0.000}s");
 
             return;
         }
 
-        if (elapsed >=
-            PostForceAttackCheckSeconds)
+        if (elapsed <
+            Config.ForcedEnemyAcquisitionPostObservationSeconds)
         {
-            _stillNotAttacking++;
-            pair.AttackOutcomeLogged =
-                true;
+            return;
+        }
 
-            _info(
-                $"FORCED-ACQUIRE-STILL-NOT-ATTACKING bot={SafeName(controller.PlayerName)}; " +
-                $"slot={controller.Slot}; enemy={pair.EnemyName}#{enemyEntityIndex}; " +
-                $"after={elapsed:0.000}s; isEnemyVisible={SafeReadBool(() => bot.IsEnemyVisible)}; " +
-                $"isAimingAtEnemy={SafeReadBool(() => bot.IsAimingAtEnemy)}");
+        _stillNotAttackingAfterWindow++;
+        pair.AttackOutcomeLogged =
+            true;
+
+        PostForceVisibilitySnapshot finalVisibility =
+            ReadPostForceVisibility(
+                botPawn,
+                enemyEntityIndex);
+
+        _info(
+            $"FORCED-ACQUIRE-STILL-NOT-ATTACKING map={SafeMap(mapName)}; " +
+            $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+            $"enemy={pair.EnemyName}#{enemyEntityIndex}; " +
+            $"after={elapsed:0.000}s; observationWindow=" +
+            $"{Config.ForcedEnemyAcquisitionPostObservationSeconds:0.000}s; " +
+            $"valveCurrentEnemy={FormatEntityIndex(valveEnemyEntityIndex)}; " +
+            $"isEnemyVisible={valveEnemyVisible}; isAimingAtEnemy={valveAimingAtEnemy}; " +
+            $"physicalLosNow={FormatKnownBool(finalVisibility.PhysicalLos, finalVisibility.Known)}; " +
+            $"targetAlive={finalVisibility.TargetAlive}; " +
+            $"distanceNow={FormatOptional(finalVisibility.Distance)}; " +
+            $"angleFromViewNow={FormatOptional(finalVisibility.AngleFromView)}; " +
+            $"visiblePointNow={FormatOptional(finalVisibility.VisiblePoint)}");
+    }
+
+    private PostForceVisibilitySnapshot ReadPostForceVisibility(
+        CCSPlayerPawn botPawn,
+        int enemyEntityIndex)
+    {
+        if (!TryResolveEntityPawn(
+                enemyEntityIndex,
+                out CCSPlayerPawn? enemyPawn,
+                out Vector3 enemyOrigin) ||
+            enemyPawn == null)
+        {
+            return
+                new PostForceVisibilitySnapshot(
+                    false,
+                    false,
+                    false,
+                    null,
+                    float.NaN,
+                    float.NaN);
+        }
+
+        bool physicalLos =
+            _visibility.TryFindFirstVisiblePoint(
+                botPawn,
+                enemyPawn,
+                out AimPointKind? visiblePoint,
+                out _) &&
+            visiblePoint !=
+                null;
+
+        float distance =
+            float.NaN;
+
+        float angle =
+            float.NaN;
+
+        if (NativeValueReader.TryGetOrigin(
+                botPawn,
+                out Vector3 botOrigin))
+        {
+            distance =
+                NativeValueReader.Distance3D(
+                    botOrigin,
+                    enemyOrigin);
+
+            if (TryReadBotYaw(
+                    botPawn,
+                    out float botYaw))
+            {
+                angle =
+                    CalculateAngleFromView(
+                        botOrigin,
+                        enemyOrigin,
+                        botYaw);
+            }
+        }
+
+        return
+            new PostForceVisibilitySnapshot(
+                true,
+                true,
+                physicalLos,
+                visiblePoint,
+                distance,
+                angle);
+    }
+
+    private static bool TryResolveEntityPawn(
+        int entityIndex,
+        out CCSPlayerPawn? pawn,
+        out Vector3 origin)
+    {
+        pawn = null;
+        origin = default;
+
+        try
+        {
+            CCSPlayerPawn? resolved =
+                Utilities.GetEntityFromIndex<CCSPlayerPawn>(
+                    entityIndex);
+
+            if (resolved == null ||
+                !resolved.IsValid ||
+                resolved.Handle ==
+                    nint.Zero ||
+                resolved.Health <=
+                    0 ||
+                resolved.LifeState !=
+                    (byte)LifeState_t.LIFE_ALIVE ||
+                !NativeValueReader.TryGetOrigin(
+                    resolved,
+                    out origin))
+            {
+                return false;
+            }
+
+            pawn =
+                resolved;
+
+            return true;
+        }
+        catch
+        {
+            pawn = null;
+            origin = default;
+            return false;
         }
     }
 
@@ -884,9 +1079,36 @@ public sealed class ForcedEnemyAcquisitionService
                 System.Globalization.CultureInfo.InvariantCulture)
             : "unknown";
 
+    private static string FormatOptional(
+        AimPointKind? value) =>
+        value?.ToString().ToUpperInvariant() ??
+        "none";
+
+    private static string FormatEntityIndex(
+        int entityIndex) =>
+        entityIndex >
+            0
+            ? entityIndex.ToString()
+            : "none";
+
+    private static string FormatKnownBool(
+        bool value,
+        bool known) =>
+        known
+            ? value.ToString()
+            : "unknown";
+
     private readonly record struct PairKey(
         int BotSlot,
         int EnemyEntityIndex);
+
+    private readonly record struct PostForceVisibilitySnapshot(
+        bool Known,
+        bool TargetAlive,
+        bool PhysicalLos,
+        AimPointKind? VisiblePoint,
+        float Distance,
+        float AngleFromView);
 
     private sealed class PairState
     {
@@ -912,6 +1134,8 @@ public sealed class ForcedEnemyAcquisitionService
         public float ForcedAt { get; set; }
 
         public bool ReadbackLogged { get; set; }
+
+        public bool EverHeldAfterForce { get; set; }
 
         public bool AttackOutcomeLogged { get; set; }
     }

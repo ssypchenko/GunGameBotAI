@@ -84,6 +84,16 @@ public sealed class ForcedEnemyAcquisitionService
     public void ClearRuntimeState() =>
         _pairs.Clear();
 
+    public void LogMapSummary(
+        string mapName)
+    {
+        if (!Config.ForcedEnemyAcquisitionEnabled)
+            return;
+
+        _info(
+            $"MAP-SUMMARY map={SafeMap(mapName)}; {StatisticsSummary}");
+    }
+
     public void RemoveSlot(
         int slot)
     {
@@ -283,7 +293,9 @@ public sealed class ForcedEnemyAcquisitionService
 
             if (thisIsValveEnemy)
             {
-                if (!valveAttacking)
+                if (!valveAttacking &&
+                    visibleSeconds >=
+                        DiagnosticAfterSeconds)
                 {
                     MaybeLogVisibleNotAttacking(
                         controller,
@@ -380,6 +392,14 @@ public sealed class ForcedEnemyAcquisitionService
                 "FirstSawEnemyTimestamp+LastSawEnemyTimestamp+" +
                 "CurrentEnemyAcquireTimestamp+IsLastEnemyDead; " +
                 "IsAttackingWrite=false; FireWrite=false");
+
+            // Do not force a second visible opponent during the same decision
+            // pass. Subsequent candidates may still be traced for continuity,
+            // but this local snapshot now reflects the target we just supplied.
+            valveEnemyEntityIndex =
+                enemyEntityIndex;
+            valveEnemyVisible =
+                true;
         }
 
         foreach (PairKey key in

@@ -6,12 +6,11 @@ Instead of changing Valve visibility, FOV or enemy-selection logic, the plugin
 periodically turns the bot's physical eye yaw while Valve keeps ownership of
 navigation, movement, target selection, firing and combat aim.
 
-Direction selection is deliberately separated from view enforcement. Starting
-with 0.7.48, the policy is:
+Direction selection is deliberately separated from view enforcement. Starting with 0.7.49, the policy is:
 
-1. physically visible but not Valve-acquired enemy hint;
-2. most open world-geometry direction;
-3. random human-like fallback.
+1. physically visible but not Valve-acquired enemy hint — immediate trigger;
+2. most open world-geometry direction — regular scheduled scan;
+3. random human-like fallback — regular scheduled scan.
 
 The enemy hint is allowed only when the normal scan eligibility gates prove
 Valve has no valid current enemy. It uses the same physical LOS trace as
@@ -130,6 +129,7 @@ Defaults:
 "HumanLookScanYawToleranceDegrees": 7.5,
 "HumanLookScanVisibleEnemyHintEnabled": true,
 "HumanLookScanVisibleEnemyHintDistance": 800.0,
+"HumanLookScanVisibleEnemyHintCooldownSeconds": 0.75,
 "HumanLookScanGeometryFallbackEnabled": true,
 "HumanLookScanGeometryTraceDistance": 1200.0,
 "HumanLookScanGeometryMinimumClearDistance": 160.0,
@@ -157,6 +157,11 @@ Direction choice is separate from the fast yaw-hold mechanism.
 When the bot has no valid Valve current enemy, the selector examines live
 opponents inside `HumanLookScanVisibleEnemyHintDistance` (default 800 units).
 
+This check happens every DecisionLoop after the existing safety, recent-fire and
+minimum-speed gates. It deliberately bypasses `NextScanAt`: a real
+physically-visible missed enemy no longer waits for the normal 2.5–4.5 second
+human-look interval.
+
 For each candidate it uses `VisibilityTraceService.TryFindFirstVisiblePoint`.
 Only a candidate with a real physical line of sight to HEAD/CHEST/GUT/PELVIS is
 eligible. The closest physically visible candidate is selected.
@@ -166,6 +171,11 @@ at the enemy. If Valve acquires any enemy, the fast safety gate immediately
 ends the scan.
 
 This path never hints through walls.
+
+After an immediate hint starts, the bot gets a short per-bot cooldown controlled
+by `HumanLookScanVisibleEnemyHintCooldownSeconds` (default 0.75 s). While a
+visible missed enemy still exists but the hint is on cooldown, geometry/random
+scans are suppressed instead of making the bot look away.
 
 ### 2. Geometry fallback
 
@@ -218,6 +228,8 @@ nearSide
 side
 rear
 directionHint
+immediateHints
+hintCooldownSkips
 directionGeometry
 directionRandom
 avgRequestedDeg

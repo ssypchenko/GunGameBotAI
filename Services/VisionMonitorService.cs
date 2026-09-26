@@ -56,6 +56,7 @@ public sealed class VisionMonitorService
     private long _eventsSide;
     private long _eventsRear;
     private long _eventsAcquired;
+    private long _eventsForcedAcquired;
     private long _eventsLostUnacquired;
     private double _totalAcquireSeconds;
     private double _maximumAcquireSeconds;
@@ -103,7 +104,8 @@ public sealed class VisionMonitorService
                 $"visionControlReadFailures={_eventsVisionControlReadFailures}; " +
                 $"moving={_eventsStartedMoving}; stationary={_eventsStartedStationary}; " +
                 $"front={_eventsFront}; frontSide={_eventsFrontSide}; side={_eventsSide}; rear={_eventsRear}; " +
-                $"acquired={_eventsAcquired}; lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
+                $"acquired={_eventsAcquired}; forcedAcquired={_eventsForcedAcquired}; " +
+                $"lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
                 $"avgAcquireMs={averageAcquireMs:0.0}; " +
                 $"maxAcquireMs={_maximumAcquireSeconds * 1000.0:0.0}";
         }
@@ -134,6 +136,7 @@ public sealed class VisionMonitorService
         _eventsSide = 0;
         _eventsRear = 0;
         _eventsAcquired = 0;
+        _eventsForcedAcquired = 0;
         _eventsLostUnacquired = 0;
         _totalAcquireSeconds = 0.0;
         _maximumAcquireSeconds = 0.0;
@@ -178,7 +181,8 @@ public sealed class VisionMonitorService
             $"visionControlReadFailures={_mapStats.VisionControlReadFailures}; " +
             $"moving={_mapStats.Moving}; stationary={_mapStats.Stationary}; " +
             $"front={_mapStats.Front}; frontSide={_mapStats.FrontSide}; side={_mapStats.Side}; rear={_mapStats.Rear}; " +
-            $"acquired={_mapStats.Acquired}; lost={_mapStats.Lost}; active={ActiveEventCount}; " +
+            $"acquired={_mapStats.Acquired}; forcedAcquired={_mapStats.ForcedAcquired}; " +
+            $"lost={_mapStats.Lost}; active={ActiveEventCount}; " +
             $"avgAcquireMs={averageAcquireMs:0.0}; maxAcquireMs={_mapStats.MaximumAcquireSeconds * 1000.0:0.0}");
     }
 
@@ -204,6 +208,32 @@ public sealed class VisionMonitorService
         {
             _pairs.Remove(
                 key);
+        }
+    }
+
+    /// <summary>
+    /// Marks a current missed-acquisition event as plugin-forced so it is not
+    /// counted as a natural Valve acquisition on the next Observe() pass.
+    /// </summary>
+    public void MarkForcedAcquisition(
+        int botSlot,
+        int enemyEntityIndex,
+        float now)
+    {
+        VisionPairKey key =
+            new(
+                botSlot,
+                enemyEntityIndex);
+
+        if (_pairs.TryGetValue(
+                key,
+                out VisionPairState? pair) &&
+            pair.Active)
+        {
+            pair.ForcedByPlugin =
+                true;
+            pair.ForcedAt =
+                now;
         }
     }
 
@@ -611,6 +641,27 @@ public sealed class VisionMonitorService
         pair.SuppressUntil =
             now +
             EventRestartCooldownSeconds;
+
+        if (pair.ForcedByPlugin)
+        {
+            _eventsForcedAcquired++;
+            _mapStats.ForcedAcquired++;
+
+            if (Config.VisionDebug)
+            {
+                _info(
+                    $"ACQUIRED_FORCED map={SafeMap(mapName)}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
+                    $"enemy={pair.EnemyName}#{valveEnemyEntityIndex}; " +
+                    $"timeFromVisionEvent={timeToAcquire:0.000}; " +
+                    $"forcedAt={pair.ForcedAt:0.000}; " +
+                    $"initialAngle={FormatOptional(pair.InitialEnemyAngleFromView)}; " +
+                    $"initialViewSector={pair.InitialViewSector}; " +
+                    "excludedFromNaturalAcquireStats=true");
+            }
+
+            return;
+        }
 
         _eventsAcquired++;
         _mapStats.Acquired++;
@@ -1113,6 +1164,7 @@ public sealed class VisionMonitorService
         public long Side { get; set; }
         public long Rear { get; set; }
         public long Acquired { get; set; }
+        public long ForcedAcquired { get; set; }
         public long Lost { get; set; }
         public double TotalAcquireSeconds { get; set; }
         public double MaximumAcquireSeconds { get; set; }
@@ -1139,6 +1191,7 @@ public sealed class VisionMonitorService
             Side = 0;
             Rear = 0;
             Acquired = 0;
+            ForcedAcquired = 0;
             Lost = 0;
             TotalAcquireSeconds = 0.0;
             MaximumAcquireSeconds = 0.0;
@@ -1198,5 +1251,9 @@ public sealed class VisionMonitorService
         public bool InitialLookAroundInhibited { get; set; }
         public float InitialLookAroundInhibitRemaining { get; set; }
         public bool InitialPathfinderEyeControl { get; set; }
+
+        public bool ForcedByPlugin { get; set; }
+
+        public float ForcedAt { get; set; }
     }
 }

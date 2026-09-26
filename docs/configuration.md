@@ -63,15 +63,20 @@ The default profile is conservative:
   "HumanLookScanMaxIntervalSeconds": 4.50,
   "HumanLookScanHoldSeconds": 0.30,
   "HumanLookScanYawToleranceDegrees": 7.5,
+  "HumanLookScanVisibleEnemyHintEnabled": true,
+  "HumanLookScanVisibleEnemyHintDistance": 800.0,
+  "HumanLookScanGeometryFallbackEnabled": true,
+  "HumanLookScanGeometryTraceDistance": 1200.0,
+  "HumanLookScanGeometryMinimumClearDistance": 160.0,
   "HumanLookScanMinimumSpeed": 30.0,
   "HumanLookScanRecentFireGraceSeconds": 0.75,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 33
+  "ConfigVersion": 34
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.5 fast-held eye-yaw testing uses version `33`.
+`ConfigVersion` is migrated by the plugin; Stage 6.5 direction-policy testing uses version `34`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -108,11 +113,15 @@ keeps the same write surface but moves enforcement to the shared fast actuator:
 each fast tick reads the actual yaw and rewrites the target only when it has
 drifted outside `HumanLookScanYawToleranceDegrees` (default 7.5°), while the
 bot is moving in `NormalGunGame` with no current enemy and no pathfinder
-eye-angle ownership. The scan direction is
-independent of enemy positions. The default interval is 2.5–4.5 seconds, hold
-time is 0.30 seconds, minimum movement speed is 30 units/s, and recent-fire
-grace is 0.75 seconds. Migration to config version 33 forces the fast-held experiment OFF once so it
-must be explicitly re-enabled.
+eye-angle ownership. Direction selection now uses
+`VisibleEnemyHint -> Geometry -> Random`: the hint considers only physically
+visible opponents within `HumanLookScanVisibleEnemyHintDistance` while Valve
+has no current enemy; geometry fallback tests horizontal world-only rays out to
+`HumanLookScanGeometryTraceDistance` and requires
+`HumanLookScanGeometryMinimumClearDistance`. The default interval is 2.5–4.5
+seconds, hold time is 0.30 seconds, minimum movement speed is 30 units/s, and
+recent-fire grace is 0.75 seconds. Migration to config version 34 forces the
+experiment OFF once so it must be explicitly re-enabled.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

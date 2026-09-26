@@ -65,6 +65,7 @@ The default profile is conservative:
   "HumanLookScanYawToleranceDegrees": 7.5,
   "HumanLookScanVisibleEnemyHintEnabled": true,
   "HumanLookScanVisibleEnemyHintDistance": 800.0,
+  "HumanLookScanVisibleEnemyHintCooldownSeconds": 0.75,
   "HumanLookScanGeometryFallbackEnabled": true,
   "HumanLookScanGeometryTraceDistance": 1200.0,
   "HumanLookScanGeometryMinimumClearDistance": 160.0,
@@ -72,11 +73,11 @@ The default profile is conservative:
   "HumanLookScanRecentFireGraceSeconds": 0.75,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 34
+  "ConfigVersion": 35
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.5 direction-policy testing uses version `34`.
+`ConfigVersion` is migrated by the plugin; Stage 6.5 immediate-hint testing uses version `35`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -113,15 +114,18 @@ keeps the same write surface but moves enforcement to the shared fast actuator:
 each fast tick reads the actual yaw and rewrites the target only when it has
 drifted outside `HumanLookScanYawToleranceDegrees` (default 7.5°), while the
 bot is moving in `NormalGunGame` with no current enemy and no pathfinder
-eye-angle ownership. Direction selection now uses
-`VisibleEnemyHint -> Geometry -> Random`: the hint considers only physically
-visible opponents within `HumanLookScanVisibleEnemyHintDistance` while Valve
-has no current enemy; geometry fallback tests horizontal world-only rays out to
-`HumanLookScanGeometryTraceDistance` and requires
-`HumanLookScanGeometryMinimumClearDistance`. The default interval is 2.5–4.5
-seconds, hold time is 0.30 seconds, minimum movement speed is 30 units/s, and
-recent-fire grace is 0.75 seconds. Migration to config version 34 forces the
-experiment OFF once so it must be explicitly re-enabled.
+eye-angle ownership. Direction selection uses
+`VisibleEnemyHint -> Geometry -> Random`, but the hint is now an immediate
+trigger: after the normal safety/recent-fire/minimum-speed gates it is checked
+every DecisionLoop and bypasses the normal scan interval. Repeated missed-enemy
+hints are limited by `HumanLookScanVisibleEnemyHintCooldownSeconds` (default
+0.75 s). While a physically visible missed enemy exists during that cooldown,
+geometry/random are suppressed. Geometry fallback remains scheduled and tests
+horizontal world-only rays out to `HumanLookScanGeometryTraceDistance`,
+requiring `HumanLookScanGeometryMinimumClearDistance`. The default regular
+scan interval is 2.5–4.5 seconds and hold time is 0.30 seconds. Migration to
+config version 35 forces the experiment OFF once so it must be explicitly
+re-enabled.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

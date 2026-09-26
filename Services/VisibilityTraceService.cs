@@ -30,6 +30,14 @@ public sealed class VisibilityTraceService
             InteractsExclude = Contents.Pickup
         };
 
+    private static readonly TraceOptions GeometryTraceOptions =
+        new()
+        {
+            // World/brush geometry only. Players/NPCs must not make an open
+            // direction look artificially blocked.
+            InteractsWith = Masks.SolidBrushOnly
+        };
+
     private readonly IAimPointProvider _aimPointProvider;
 
     public VisibilityTraceService(
@@ -160,6 +168,102 @@ public sealed class VisibilityTraceService
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Traces horizontally from the bot's current eye position into static
+    /// world/brush geometry and returns the free distance before the first
+    /// obstruction.
+    ///
+    /// This is intentionally independent of players and enemy state. It is
+    /// used only by Human Look Scan geometry fallback to answer "which
+    /// direction is physically most open?".
+    ///
+    /// Returns false only when the trace itself cannot be completed safely.
+    /// </summary>
+    public bool TryTraceHorizontalClearDistance(
+        CCSPlayerPawn botPawn,
+        float yawDegrees,
+        float maximumDistance,
+        out float clearDistance)
+    {
+        clearDistance = 0.0f;
+
+        if (!float.IsFinite(
+                yawDegrees) ||
+            !float.IsFinite(
+                maximumDistance) ||
+            maximumDistance <=
+                0.0f ||
+            !TryGetBotEyePosition(
+                botPawn,
+                out Vector3 eyePosition))
+        {
+            return false;
+        }
+
+        float radians =
+            yawDegrees *
+            (MathF.PI / 180.0f);
+
+        Vector3 target =
+            new(
+                eyePosition.X +
+                    MathF.Cos(radians) *
+                    maximumDistance,
+                eyePosition.Y +
+                    MathF.Sin(radians) *
+                    maximumDistance,
+                eyePosition.Z);
+
+        try
+        {
+            CssVector start =
+                new(
+                    eyePosition.X,
+                    eyePosition.Y,
+                    eyePosition.Z);
+
+            CssVector end =
+                new(
+                    target.X,
+                    target.Y,
+                    target.Z);
+
+            TraceResult trace =
+                Trace.TraceEndShape(
+                    start,
+                    end,
+                    ignoreEntity: botPawn,
+                    options: GeometryTraceOptions);
+
+            if (!trace.DidHit())
+            {
+                clearDistance =
+                    maximumDistance;
+
+                return true;
+            }
+
+            float fraction =
+                Math.Clamp(
+                    trace.Fraction,
+                    0.0f,
+                    1.0f);
+
+            clearDistance =
+                maximumDistance *
+                fraction;
+
+            return
+                float.IsFinite(
+                    clearDistance);
+        }
+        catch
+        {
+            clearDistance = 0.0f;
+            return false;
+        }
     }
 
     /// <summary>

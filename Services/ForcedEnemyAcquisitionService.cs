@@ -853,10 +853,9 @@ public sealed class ForcedEnemyAcquisitionService
                     false;
             }
 
-            _onForcedAcquisition(
-                controller.Slot,
-                enemyEntityIndex,
-                now);
+            // Reassertion belongs to the existing forced episode. Do not
+            // create/refresh a VisionMonitor forced marker here: one initial
+            // FORCED-ACQUIRE must produce at most one ACQUIRED_FORCED event.
 
             _info(
                 $"FORCED-ACQUIRE-REASSERT map={SafeMap(mapName)}; " +

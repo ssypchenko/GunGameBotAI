@@ -49,6 +49,8 @@ public sealed class HumanLookScanService
     private long _sideScans;
     private long _rearScans;
     private long _visibleEnemyHintScans;
+    private long _immediateHintStarts;
+    private long _hintCooldownSkips;
     private long _geometryScans;
     private long _randomScans;
     private long _failures;
@@ -90,7 +92,8 @@ public sealed class HumanLookScanService
                 $"fastWithinTolerance={_fastWithinTolerance}; skippedPathfinder={_skippedPathfinder}; " +
                 $"skippedStationary={_skippedStationary}; skippedRecentFire={_skippedRecentFire}; " +
                 $"nearSide={_nearSideScans}; side={_sideScans}; rear={_rearScans}; " +
-                $"directionHint={_visibleEnemyHintScans}; directionGeometry={_geometryScans}; " +
+                $"directionHint={_visibleEnemyHintScans}; immediateHints={_immediateHintStarts}; " +
+                $"hintCooldownSkips={_hintCooldownSkips}; directionGeometry={_geometryScans}; " +
                 $"directionRandom={_randomScans}; avgRequestedDeg={averageRequested:0.0}; " +
                 $"avgObservedDeg={averageObserved:0.0}; " +
                 $"maxObservedDeg={_maximumObservedDegrees:0.0}; failures={_failures}";
@@ -130,6 +133,8 @@ public sealed class HumanLookScanService
         _sideScans = 0;
         _rearScans = 0;
         _visibleEnemyHintScans = 0;
+        _immediateHintStarts = 0;
+        _hintCooldownSkips = 0;
         _geometryScans = 0;
         _randomScans = 0;
         _failures = 0;
@@ -331,30 +336,73 @@ public sealed class HumanLookScanService
             return;
         }
 
+        if (!TryReadEyeYaw(
+                pawn,
+                out float startYaw))
+        {
+            _failures++;
+
+            if (state.NextScanAt <=
+                now)
+            {
+                ScheduleNext(
+                    state,
+                    now);
+            }
+
+            return;
+        }
+
+        // A physically visible but Valve-unacquired enemy is an immediate
+        // trigger. It deliberately bypasses the normal 2.5..4.5 second scan
+        // schedule, but all safety/recent-fire/speed gates above still apply.
+        //
+        // Even while this hint is on cooldown we suppress geometry/random:
+        // looking away from a currently visible missed enemy would defeat the
+        // purpose of the hint policy.
+        if (_directionSelector.TrySelectVisibleEnemyHint(
+                controller,
+                pawn,
+                startYaw,
+                now,
+                Config,
+                out HumanLookDirectionSelection hintSelection))
+        {
+            if (now <
+                state.HintCooldownUntil)
+            {
+                _hintCooldownSkips++;
+                return;
+            }
+
+            state.HintCooldownUntil =
+                now +
+                Config.HumanLookScanVisibleEnemyHintCooldownSeconds;
+
+            _immediateHintStarts++;
+
+            StartScan(
+                state,
+                hintSelection,
+                startYaw,
+                speed2D,
+                movementYaw,
+                now);
+
+            return;
+        }
+
         if (now <
             state.NextScanAt)
         {
             return;
         }
 
-        if (!TryReadEyeYaw(
-                pawn,
-                out float startYaw))
-        {
-            _failures++;
-            ScheduleNext(
-                state,
-                now);
-            return;
-        }
-
         HumanLookDirectionSelection selection;
 
-        if (!_directionSelector.TrySelect(
-                controller,
+        if (!_directionSelector.TrySelectGeometryFallback(
                 pawn,
                 startYaw,
-                now,
                 Config,
                 out selection))
         {
@@ -375,6 +423,23 @@ public sealed class HumanLookScanService
                     0);
         }
 
+        StartScan(
+            state,
+            selection,
+            startYaw,
+            speed2D,
+            movementYaw,
+            now);
+    }
+
+    private void StartScan(
+        ScanState state,
+        HumanLookDirectionSelection selection,
+        float startYaw,
+        float speed2D,
+        float movementYaw,
+        float now)
+    {
         float relativeAngle =
             selection.RelativeAngle;
 
@@ -448,9 +513,8 @@ public sealed class HumanLookScanService
                 break;
         }
 
-        // Deliberately no EyeAngles write here. The caller activates the shared
-        // fast actuator after Observe() sees IsActive(slot). This mirrors Knife
-        // Rush: slow loop decides, fast loop enforces.
+        // No EyeAngles write here. The caller sees IsActive(slot), activates
+        // the shared actuator, and the fast loop performs read-back correction.
     }
 
     /// <summary>
@@ -1030,6 +1094,8 @@ public sealed class HumanLookScanService
         public bool Active { get; set; }
 
         public float NextScanAt { get; set; }
+
+        public float HintCooldownUntil { get; set; }
 
         public float StartedAt { get; set; }
 

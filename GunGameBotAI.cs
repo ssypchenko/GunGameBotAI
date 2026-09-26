@@ -110,6 +110,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 IsBotInSpawnGrace(
                     candidate,
                     now),
+            (slot, enemyEntityIndex, now) =>
+                _visionMonitor.MarkForcedAcquisition(
+                    slot,
+                    enemyEntityIndex,
+                    now),
             message => Logger.LogInformation("[GunGameBotAI][ForcedAcquire] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
@@ -187,7 +192,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.BeginMap(currentMap);
             _visionEnhancement.BeginMap();
             _humanLookScan.BeginMap();
-            _forcedEnemyAcquisition.ClearRuntimeState();
+            _forcedEnemyAcquisition.BeginMap();
         }
 
         RegisterListener<Listeners.OnMapStart>(OnMapStart);
@@ -1036,7 +1041,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.BeginMap(_currentMapName);
         _visionEnhancement.BeginMap();
         _humanLookScan.BeginMap();
-        _forcedEnemyAcquisition.ClearRuntimeState();
+        _forcedEnemyAcquisition.BeginMap();
         _ladderMap?.OnMapStart(mapName);
 
         if (_loaded)

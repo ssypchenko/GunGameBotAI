@@ -194,6 +194,12 @@ read-back correction, mirroring Knife Rush weapon holding. Pitch and roll are
 preserved. It still does not write movement commands, velocity, nav paths/goals
 or enemy state, and it does not call `Teleport`.
 
+0.7.48 changes direction choice without changing the yaw-control mechanism.
+The policy is `VisibleEnemyHint -> Geometry -> Random`. The hint uses a real
+physical LOS trace only while Valve has no current enemy. Geometry fallback
+uses world-only horizontal rays (`Masks.SolidBrushOnly`), so it does not
+peek through walls or use hidden enemies.
+
 For a clean comparison, keep the older Stage 6 state experiment disabled:
 
 ```text

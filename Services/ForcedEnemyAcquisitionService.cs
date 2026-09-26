@@ -114,11 +114,7 @@ public sealed class ForcedEnemyAcquisitionService
 
         if (!Config.ForcedEnemyAcquisitionEnabled ||
             freezePeriod ||
-            runtime.HasBeenControlledByPlayerThisRound ||
-            runtime.Mode !=
-                BotBehaviorMode.NormalGunGame ||
-            botPawn.MoveType ==
-                MoveType_t.MOVETYPE_LADDER)
+            runtime.HasBeenControlledByPlayerThisRound)
         {
             RemoveSlot(
                 slot);
@@ -128,16 +124,6 @@ public sealed class ForcedEnemyAcquisitionService
 
         _checks++;
 
-        if (!NativeValueReader.TryGetOrigin(
-                botPawn,
-                out Vector3 botOrigin))
-        {
-            RemoveSlot(
-                slot);
-
-            return;
-        }
-
         if (!TryReadValveState(
                 bot,
                 out int valveEnemyEntityIndex,
@@ -146,6 +132,39 @@ public sealed class ForcedEnemyAcquisitionService
                 out bool valveAimingAtEnemy))
         {
             RemoveSlot(
+                slot);
+
+            return;
+        }
+
+        // Read back the result of a previous forced write before applying the
+        // normal-mode gate. A successful forced target may immediately cause
+        // another service (for example Knife Rush) to change BotBehaviorMode;
+        // that must not hide whether Valve held/dropped the target or entered
+        // attack state.
+        ObservePendingForcedResultsForSlot(
+            controller,
+            bot,
+            valveEnemyEntityIndex,
+            valveAttacking,
+            now);
+
+        if (runtime.Mode !=
+                BotBehaviorMode.NormalGunGame ||
+            botPawn.MoveType ==
+                MoveType_t.MOVETYPE_LADDER)
+        {
+            RemoveNonPendingPairs(
+                slot);
+
+            return;
+        }
+
+        if (!NativeValueReader.TryGetOrigin(
+                botPawn,
+                out Vector3 botOrigin))
+        {
+            RemoveNonPendingPairs(
                 slot);
 
             return;
@@ -255,21 +274,6 @@ public sealed class ForcedEnemyAcquisitionService
             bool thisIsValveEnemy =
                 valveEnemyEntityIndex ==
                 enemyEntityIndex;
-
-            // Post-write diagnostics are deliberately independent of the force
-            // threshold. They tell us whether Valve kept the supplied enemy and
-            // whether it progressed into its own attack state.
-            if (pair.ForcedThisEpisode)
-            {
-                ObserveForcedResult(
-                    controller,
-                    bot,
-                    pair,
-                    enemyEntityIndex,
-                    thisIsValveEnemy,
-                    valveAttacking,
-                    now);
-            }
 
             float visibleSeconds =
                 MathF.Max(
@@ -388,15 +392,81 @@ public sealed class ForcedEnemyAcquisitionService
                                  key.EnemyEntityIndex))
                      .ToArray())
         {
-            if (_pairs.TryGetValue(
+            if (!_pairs.TryGetValue(
                     key,
-                    out PairState? ended) &&
-                !ended.ForcedThisEpisode &&
+                    out PairState? ended))
+            {
+                continue;
+            }
+
+            // Keep a forced pair alive just long enough to finish read-back
+            // diagnostics even if LOS disappears after the write.
+            if (ended.ForcedThisEpisode &&
+                !ended.AttackOutcomeLogged)
+            {
+                continue;
+            }
+
+            if (!ended.ForcedThisEpisode &&
                 now -
                     ended.StartedAt <
                     Config.ForcedEnemyAcquisitionDelaySeconds)
             {
                 _episodesLostBeforeThreshold++;
+            }
+
+            _pairs.Remove(
+                key);
+        }
+    }
+
+    private void ObservePendingForcedResultsForSlot(
+        CCSPlayerController controller,
+        CCSBot bot,
+        int valveEnemyEntityIndex,
+        bool valveAttacking,
+        float now)
+    {
+        foreach ((PairKey key, PairState pair) in
+                 _pairs
+                     .Where(
+                         entry =>
+                             entry.Key.BotSlot ==
+                                 controller.Slot &&
+                             entry.Value.ForcedThisEpisode &&
+                             !entry.Value.AttackOutcomeLogged)
+                     .ToArray())
+        {
+            ObserveForcedResult(
+                controller,
+                bot,
+                pair,
+                key.EnemyEntityIndex,
+                valveEnemyEntityIndex ==
+                    key.EnemyEntityIndex,
+                valveAttacking,
+                now);
+        }
+    }
+
+    private void RemoveNonPendingPairs(
+        int slot)
+    {
+        foreach (PairKey key in
+                 _pairs.Keys
+                     .Where(
+                         key =>
+                             key.BotSlot ==
+                             slot)
+                     .ToArray())
+        {
+            if (_pairs.TryGetValue(
+                    key,
+                    out PairState? pair) &&
+                pair.ForcedThisEpisode &&
+                !pair.AttackOutcomeLogged)
+            {
+                continue;
             }
 
             _pairs.Remove(

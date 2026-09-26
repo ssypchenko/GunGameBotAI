@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 35;
+    public override int Version { get; set; } = 36;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -286,6 +286,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float HumanLookScanMinimumSpeed { get; set; } = 30.0f;
     public float HumanLookScanRecentFireGraceSeconds { get; set; } = 0.75f;
 
+    // Stage 6.6: if the same enemy remains physically visible by trace for the
+    // configured time while Valve still has no current enemy, seed Valve's
+    // enemy/perception fields. This is independent of view angle. It does not
+    // set IsAttacking and does not press Fire.
+    public bool ForcedEnemyAcquisitionEnabled { get; set; } = false;
+    public float ForcedEnemyAcquisitionDelaySeconds { get; set; } = 1.00f;
+    public float ForcedEnemyAcquisitionDistance { get; set; } = 800.0f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -367,6 +375,20 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             1024.0f,
             160.0f,
             nameof(HumanLookScanGeometryMinimumClearDistance),
+            warn);
+        ForcedEnemyAcquisitionDelaySeconds = Clamp(
+            ForcedEnemyAcquisitionDelaySeconds,
+            0.25f,
+            5.0f,
+            1.00f,
+            nameof(ForcedEnemyAcquisitionDelaySeconds),
+            warn);
+        ForcedEnemyAcquisitionDistance = Clamp(
+            ForcedEnemyAcquisitionDistance,
+            100.0f,
+            2000.0f,
+            800.0f,
+            nameof(ForcedEnemyAcquisitionDistance),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -918,6 +940,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             HumanLookScanEnabled = false;
             HumanLookScanVisibleEnemyHintCooldownSeconds = 0.75f;
             Version = 35;
+        }
+
+        if (Version < 36)
+        {
+            // v36 adds the guarded Forced Enemy Acquisition experiment. Keep it
+            // OFF after migration so the operator explicitly opts into writing
+            // CCSBot enemy/perception state after validating the build.
+            ForcedEnemyAcquisitionEnabled = false;
+            ForcedEnemyAcquisitionDelaySeconds = 1.00f;
+            ForcedEnemyAcquisitionDistance = 800.0f;
+            Version = 36;
         }
     }
 

@@ -146,6 +146,19 @@ scan interval is 2.5–4.5 seconds and hold time is 0.30 seconds. Migration to
 config version 35 forces the experiment OFF once so it must be explicitly
 re-enabled.
 
+`ForcedEnemyAcquisitionEnabled` controls the Stage 6.6 fallback and defaults to
+`false`. It measures physical LOS independently of the bot's view angle. If
+the same enemy remains physically visible continuously for
+`ForcedEnemyAcquisitionDelaySeconds` (default 1.0 s), is within
+`ForcedEnemyAcquisitionDistance` (default 800 units), and Valve still has no
+valid current enemy, the plugin seeds only the CCSBot perception state:
+`Enemy`, `IsEnemyVisible`, `LastEnemyPosition`,
+`FirstSawEnemyTimestamp`, `LastSawEnemyTimestamp`,
+`CurrentEnemyAcquireTimestamp`, and `IsLastEnemyDead`. It does not set
+`IsAttacking`, does not press Fire, and does not invoke a native
+`CCSBot::Attack()` transition. Migration to config version 36 forces this
+experiment OFF once so it must be explicitly enabled.
+
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It
 does not teleport the bot or replace the game's navigation mesh.

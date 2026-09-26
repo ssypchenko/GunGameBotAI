@@ -137,7 +137,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.51";
+    public override string ModuleVersion => "0.7.52";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1052,6 +1052,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = true;
         StopSharedTimers();
+        _forcedEnemyAcquisition.AbortPending(
+            "map-end");
         _visionMonitor.LogMapSummary(_currentMapName);
         _visionEnhancement.LogMapSummary(_currentMapName);
         _humanLookScan.LogMapSummary(_currentMapName);
@@ -1092,7 +1094,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
-        _forcedEnemyAcquisition.ClearRuntimeState();
+        _forcedEnemyAcquisition.ClearRuntimeState(
+            "round-end");
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         return HookResult.Continue;
@@ -1511,7 +1514,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             Config;
 
         if (!enabled)
-            _forcedEnemyAcquisition.ClearRuntimeState();
+            _forcedEnemyAcquisition.ClearRuntimeState(
+                "operator-disabled");
 
         PersistConfig(
             command);
@@ -1521,6 +1525,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"delay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s continuous physical LOS; " +
             $"distance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
             $"postObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
+            $"reassert={Config.ForcedEnemyAcquisitionReassertSeconds:0.###}s; " +
             "viewAngleGate=none; writes=enemy/perception-only; " +
             "IsAttackingWrite=false; FireWrite=false.");
     }
@@ -1870,7 +1875,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _humanLookScan.ClearRuntimeState();
 
         if (!Config.ForcedEnemyAcquisitionEnabled)
-            _forcedEnemyAcquisition.ClearRuntimeState();
+            _forcedEnemyAcquisition.ClearRuntimeState(
+                "config-disabled");
 
         if (!Config.AimDebug)
             _aimDiagnostics.Reset();
@@ -1920,6 +1926,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"forcedAcquireDelay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s; " +
             $"forcedAcquireDistance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
             $"forcedAcquirePostObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
+            $"forcedAcquireReassert={Config.ForcedEnemyAcquisitionReassertSeconds:0.###}s; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

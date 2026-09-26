@@ -41,6 +41,10 @@ public sealed class ForcedEnemyAcquisitionService
     private long _droppedAfterHeld;
     private long _startedAttacking;
     private long _stillNotAttackingAfterWindow;
+    private long _reassertAttempts;
+    private long _reasserted;
+    private long _reassertFailures;
+    private long _aborted;
     private long _episodesLostBeforeThreshold;
 
     public ForcedEnemyAcquisitionService(
@@ -75,6 +79,8 @@ public sealed class ForcedEnemyAcquisitionService
         $"droppedBeforeHeld={_droppedBeforeHeld}; droppedAfterHeld={_droppedAfterHeld}; " +
         $"startedAttacking={_startedAttacking}; " +
         $"stillNotAttackingAfterWindow={_stillNotAttackingAfterWindow}; " +
+        $"reassertAttempts={_reassertAttempts}; reasserted={_reasserted}; " +
+        $"reassertFailures={_reassertFailures}; aborted={_aborted}; " +
         $"pendingOutcomes={PendingOutcomeCount}; " +
         $"lostBeforeThreshold={_episodesLostBeforeThreshold}; trackedPairs={_pairs.Count}";
 
@@ -92,14 +98,24 @@ public sealed class ForcedEnemyAcquisitionService
         _droppedAfterHeld = 0;
         _startedAttacking = 0;
         _stillNotAttackingAfterWindow = 0;
+        _reassertAttempts = 0;
+        _reasserted = 0;
+        _reassertFailures = 0;
+        _aborted = 0;
         _episodesLostBeforeThreshold = 0;
     }
 
     public void BeginMap() =>
         Reset();
 
-    public void ClearRuntimeState() =>
+    public void ClearRuntimeState(
+        string reason = "runtime-clear")
+    {
+        AbortPending(
+            reason);
+
         _pairs.Clear();
+    }
 
     public void LogMapSummary(
         string mapName)
@@ -112,7 +128,8 @@ public sealed class ForcedEnemyAcquisitionService
     }
 
     public void RemoveSlot(
-        int slot)
+        int slot,
+        string reason = "slot-removed")
     {
         foreach (PairKey key in
                  _pairs.Keys
@@ -122,9 +139,55 @@ public sealed class ForcedEnemyAcquisitionService
                              slot)
                      .ToArray())
         {
+            if (_pairs.TryGetValue(
+                    key,
+                    out PairState? pair))
+            {
+                AbortPair(
+                    key,
+                    pair,
+                    reason);
+            }
+
             _pairs.Remove(
                 key);
         }
+    }
+
+    public void AbortPending(
+        string reason)
+    {
+        foreach ((PairKey key, PairState pair) in
+                 _pairs.ToArray())
+        {
+            AbortPair(
+                key,
+                pair,
+                reason);
+        }
+    }
+
+    private void AbortPair(
+        PairKey key,
+        PairState pair,
+        string reason)
+    {
+        if (!pair.ForcedThisEpisode ||
+            pair.AttackOutcomeLogged)
+        {
+            return;
+        }
+
+        pair.AttackOutcomeLogged =
+            true;
+        _aborted++;
+
+        _info(
+            $"FORCED-ACQUIRE-ABORTED map={SafeMap(pair.MapName)}; " +
+            $"bot={SafeName(pair.BotName)}; slot={key.BotSlot}; " +
+            $"enemy={pair.EnemyName}#{key.EnemyEntityIndex}; " +
+            $"reason={reason}; reasserts={pair.ReassertCount}; " +
+            $"held={pair.EverHeldAfterForce}");
     }
 
     public void Observe(

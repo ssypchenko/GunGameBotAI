@@ -281,6 +281,8 @@ FORCED-ACQUIRE-STILL-NOT-ATTACKING
 
 Interpretation:
 
+- VisionMonitor logs the corresponding target transition as `ACQUIRED_FORCED`
+  and excludes it from natural `acquired/avgAcquireMs` statistics.
 - `HELD` means Valve kept the supplied `m_enemy` on a later DecisionLoop.
 - `DROPPED` means Valve immediately rejected/cleared it.
 - `ATTACKING` means Valve naturally progressed into its own attack state.

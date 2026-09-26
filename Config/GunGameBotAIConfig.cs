@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 33;
+    public override int Version { get; set; } = 34;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -272,6 +272,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float HumanLookScanMaxIntervalSeconds { get; set; } = 4.50f;
     public float HumanLookScanHoldSeconds { get; set; } = 0.30f;
     public float HumanLookScanYawToleranceDegrees { get; set; } = 7.5f;
+
+    // Direction policy: first use a physically visible but Valve-unacquired
+    // enemy as a yaw hint; otherwise choose the most open world-geometry ray.
+    // Random selection remains the final fallback if neither source succeeds.
+    public bool HumanLookScanVisibleEnemyHintEnabled { get; set; } = true;
+    public float HumanLookScanVisibleEnemyHintDistance { get; set; } = 800.0f;
+    public bool HumanLookScanGeometryFallbackEnabled { get; set; } = true;
+    public float HumanLookScanGeometryTraceDistance { get; set; } = 1200.0f;
+    public float HumanLookScanGeometryMinimumClearDistance { get; set; } = 160.0f;
+
     public float HumanLookScanMinimumSpeed { get; set; } = 30.0f;
     public float HumanLookScanRecentFireGraceSeconds { get; set; } = 0.75f;
 
@@ -328,6 +338,27 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             30.0f,
             7.5f,
             nameof(HumanLookScanYawToleranceDegrees),
+            warn);
+        HumanLookScanVisibleEnemyHintDistance = Clamp(
+            HumanLookScanVisibleEnemyHintDistance,
+            100.0f,
+            2000.0f,
+            800.0f,
+            nameof(HumanLookScanVisibleEnemyHintDistance),
+            warn);
+        HumanLookScanGeometryTraceDistance = Clamp(
+            HumanLookScanGeometryTraceDistance,
+            256.0f,
+            4096.0f,
+            1200.0f,
+            nameof(HumanLookScanGeometryTraceDistance),
+            warn);
+        HumanLookScanGeometryMinimumClearDistance = Clamp(
+            HumanLookScanGeometryMinimumClearDistance,
+            32.0f,
+            1024.0f,
+            160.0f,
+            nameof(HumanLookScanGeometryMinimumClearDistance),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -854,6 +885,20 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             HumanLookScanEnabled = false;
             HumanLookScanYawToleranceDegrees = 7.5f;
             Version = 33;
+        }
+
+        if (Version < 34)
+        {
+            // v34 changes only direction choice: visible-unacquired enemy hint,
+            // then world-geometry openness, then random fallback. Keep the
+            // behavioural experiment opt-in after upgrade.
+            HumanLookScanEnabled = false;
+            HumanLookScanVisibleEnemyHintEnabled = true;
+            HumanLookScanVisibleEnemyHintDistance = 800.0f;
+            HumanLookScanGeometryFallbackEnabled = true;
+            HumanLookScanGeometryTraceDistance = 1200.0f;
+            HumanLookScanGeometryMinimumClearDistance = 160.0f;
+            Version = 34;
         }
     }
 

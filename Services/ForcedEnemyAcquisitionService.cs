@@ -27,6 +27,7 @@ public sealed class ForcedEnemyAcquisitionService
     private readonly VisibilityTraceService _visibility;
     private readonly Func<CCSPlayerController, float, bool> _isBotInSpawnGrace;
     private readonly Action<int, int, float> _onForcedAcquisition;
+    private readonly Action<int, int> _onForcedAcquisitionEnded;
     private readonly Action<string> _info;
     private readonly Dictionary<PairKey, PairState> _pairs =
         new();
@@ -51,6 +52,7 @@ public sealed class ForcedEnemyAcquisitionService
         VisibilityTraceService visibility,
         Func<CCSPlayerController, float, bool> isBotInSpawnGrace,
         Action<int, int, float> onForcedAcquisition,
+        Action<int, int> onForcedAcquisitionEnded,
         Action<string> info)
     {
         _visibility =
@@ -59,6 +61,8 @@ public sealed class ForcedEnemyAcquisitionService
             isBotInSpawnGrace;
         _onForcedAcquisition =
             onForcedAcquisition;
+        _onForcedAcquisitionEnded =
+            onForcedAcquisitionEnded;
         _info =
             info;
     }
@@ -181,6 +185,9 @@ public sealed class ForcedEnemyAcquisitionService
 
         pair.AttackOutcomeLogged =
             true;
+        _onForcedAcquisitionEnded(
+            key.BotSlot,
+            key.EnemyEntityIndex);
         _aborted++;
 
         _info(
@@ -664,6 +671,9 @@ public sealed class ForcedEnemyAcquisitionService
                 _startedAttacking++;
                 pair.AttackOutcomeLogged =
                     true;
+                _onForcedAcquisitionEnded(
+                    controller.Slot,
+                    enemyEntityIndex);
 
                 _info(
                     $"FORCED-ACQUIRE-ATTACKING map={SafeMap(mapName)}; " +
@@ -685,6 +695,9 @@ public sealed class ForcedEnemyAcquisitionService
             _stillNotAttackingAfterWindow++;
             pair.AttackOutcomeLogged =
                 true;
+            _onForcedAcquisitionEnded(
+                controller.Slot,
+                enemyEntityIndex);
 
             PostForceVisibilitySnapshot finalVisibility =
                 ReadPostForceVisibility(
@@ -896,6 +909,9 @@ public sealed class ForcedEnemyAcquisitionService
 
         pair.AttackOutcomeLogged =
             true;
+        _onForcedAcquisitionEnded(
+            controller.Slot,
+            enemyEntityIndex);
     }
 
     private PostForceVisibilitySnapshot ReadPostForceVisibility(

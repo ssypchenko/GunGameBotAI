@@ -194,11 +194,17 @@ read-back correction, mirroring Knife Rush weapon holding. Pitch and roll are
 preserved. It still does not write movement commands, velocity, nav paths/goals
 or enemy state, and it does not call `Teleport`.
 
-0.7.48 changes direction choice without changing the yaw-control mechanism.
-The policy is `VisibleEnemyHint -> Geometry -> Random`. The hint uses a real
-physical LOS trace only while Valve has no current enemy. Geometry fallback
-uses world-only horizontal rays (`Masks.SolidBrushOnly`), so it does not
-peek through walls or use hidden enemies.
+0.7.48 changed direction choice without changing the yaw-control mechanism.
+0.7.49 makes `VisibleEnemyHint` an immediate trigger rather than waiting for
+the normal scan timer. It is checked every DecisionLoop after the existing
+safety/recent-fire/minimum-speed gates, then held back by a 0.75 s per-bot
+cooldown. A continuing physically visible missed enemy suppresses geometry and
+random fallback while that cooldown is active.
+
+The hint still uses a real physical LOS trace only while Valve has no current
+enemy. Geometry fallback remains on the regular scan timer and uses world-only
+horizontal rays (`Masks.SolidBrushOnly`), so it does not peek through walls
+or use hidden enemies.
 
 For a clean comparison, keep the older Stage 6 state experiment disabled:
 
@@ -226,7 +232,11 @@ With `VisionDebug=true`, each finished/interrupted scan emits one compact
 For the v3 mechanical test, verify that `avgObservedDeg` and
 `effectiveTurns` now show the real eye yaw following the requested target.
 `fastCorrections` should show how often Valve drift was corrected, while
-`fastWithinTolerance` shows ticks where no rewrite was needed. If movement is
+`fastWithinTolerance` shows ticks where no rewrite was needed. For direction
+policy validation, `immediateHints` should rise whenever the Vision log shows a
+physically-visible-but-not-acquired opportunity that survives the eligibility
+gates; `hintCooldownSkips` shows repeated LOS samples intentionally suppressed
+during the short cooldown. If movement is
 visibly disrupted, stop before judging vision effectiveness.
 
 If physical turns are real and movement remains healthy, compare front,

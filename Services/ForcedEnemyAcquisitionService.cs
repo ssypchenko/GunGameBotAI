@@ -366,6 +366,10 @@ public sealed class ForcedEnemyAcquisitionService
                     true;
                 pair.ForcedAt =
                     now;
+                pair.ReadbackLogged =
+                    true;
+                pair.AttackOutcomeLogged =
+                    true;
 
                 _info(
                     $"FORCED-ACQUIRE-FAILED map={SafeMap(mapName)}; " +

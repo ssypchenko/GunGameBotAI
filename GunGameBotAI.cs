@@ -124,7 +124,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.48";
+    public override string ModuleVersion => "0.7.49";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1445,6 +1445,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"yawTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
             "direction=visible-enemy-hint>geometry>random; " +
             $"hintDistance={Config.HumanLookScanVisibleEnemyHintDistance:0.#}; " +
+            $"hintCooldown={Config.HumanLookScanVisibleEnemyHintCooldownSeconds:0.###}s; " +
             $"geometryDistance={Config.HumanLookScanGeometryTraceDistance:0.#}; " +
             $"fastTicks={Config.FastActuatorEveryTicks}; " +
             $"minimumSpeed={Config.HumanLookScanMinimumSpeed:0.#}.");
@@ -1832,8 +1833,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}..{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"lookScanHold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"lookScanTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
-            $"lookScanDirection={(Config.HumanLookScanVisibleEnemyHintEnabled ? "hint>" : "")}" +
+            $"lookScanDirection={(Config.HumanLookScanVisibleEnemyHintEnabled ? "immediate-hint>" : "")}" +
             $"{(Config.HumanLookScanGeometryFallbackEnabled ? "geometry>" : "")}random; " +
+            $"lookScanHintCooldown={Config.HumanLookScanVisibleEnemyHintCooldownSeconds:0.###}s; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

@@ -79,14 +79,24 @@ On later DecisionLoops:
 
 ```text
 FORCED-ACQUIRE-HELD
-FORCED-ACQUIRE-DROPPED
+FORCED-ACQUIRE-DROPPED-BEFORE-HELD
+FORCED-ACQUIRE-DROPPED-AFTER-HELD
 FORCED-ACQUIRE-ATTACKING
 FORCED-ACQUIRE-STILL-NOT-ATTACKING
 ```
 
+The post-force observation window is controlled by
+`ForcedEnemyAcquisitionPostObservationSeconds` (default 1.0 s). A confirmed
+`HELD` no longer ends drop monitoring: if Valve clears/replaces the target
+later in that same window it is logged as `DROPPED-AFTER-HELD`.
+
+At the end of the window, `STILL-NOT-ATTACKING` includes the current physical
+LOS result, target-alive state, distance, view angle, visible point,
+`IsEnemyVisible`, and `IsAimingAtEnemy`.
+
 A forced pair is written only once per uninterrupted LOS episode. Losing LOS
 ends the episode; a later new LOS episode may be tested independently.
 
-Repeated `HELD` followed by `STILL-NOT-ATTACKING` is the key signal that
-enemy acquisition alone is insufficient and the next stage should investigate
-the native `CCSBot::Attack()` transition.
+The strongest signal for a future native `CCSBot::Attack()` experiment is
+`HELD` followed by `STILL-NOT-ATTACKING` at the end of the full observation
+window while `physicalLosNow=true` and the target is still alive.

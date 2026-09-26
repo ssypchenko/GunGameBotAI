@@ -232,6 +232,12 @@ public sealed class ForcedEnemyAcquisitionService
         // another service (for example Knife Rush) to change BotBehaviorMode;
         // that must not hide whether Valve held/dropped the target or entered
         // attack state.
+        bool allowReassert =
+            runtime.Mode ==
+                BotBehaviorMode.NormalGunGame &&
+            botPawn.MoveType !=
+                MoveType_t.MOVETYPE_LADDER;
+
         ObservePendingForcedResultsForSlot(
             controller,
             botPawn,
@@ -241,12 +247,10 @@ public sealed class ForcedEnemyAcquisitionService
             valveEnemyVisible,
             valveAttacking,
             valveAimingAtEnemy,
+            allowReassert,
             now);
 
-        if (runtime.Mode !=
-                BotBehaviorMode.NormalGunGame ||
-            botPawn.MoveType ==
-                MoveType_t.MOVETYPE_LADDER)
+        if (!allowReassert)
         {
             RemoveNonPendingPairs(
                 slot);
@@ -343,9 +347,15 @@ public sealed class ForcedEnemyAcquisitionService
                     new PairState
                     {
                         StartedAt = now,
+                        BotName =
+                            SafeName(
+                                controller.PlayerName),
                         EnemyName =
                             SafeName(
-                                candidateController.PlayerName)
+                                candidateController.PlayerName),
+                        MapName =
+                            SafeMap(
+                                mapName)
                     };
 
                 _pairs.Add(
@@ -436,6 +446,7 @@ public sealed class ForcedEnemyAcquisitionService
                     enemyPawn,
                     enemyOrigin,
                     pair,
+                    now,
                     now))
             {
                 _forceFailures++;
@@ -545,6 +556,7 @@ public sealed class ForcedEnemyAcquisitionService
         bool valveEnemyVisible,
         bool valveAttacking,
         bool valveAimingAtEnemy,
+        bool allowReassert,
         float now)
     {
         foreach ((PairKey key, PairState pair) in
@@ -568,6 +580,7 @@ public sealed class ForcedEnemyAcquisitionService
                 valveEnemyVisible,
                 valveAttacking,
                 valveAimingAtEnemy,
+                allowReassert,
                 now);
         }
     }
@@ -608,6 +621,7 @@ public sealed class ForcedEnemyAcquisitionService
         bool valveEnemyVisible,
         bool valveAttacking,
         bool valveAimingAtEnemy,
+        bool allowReassert,
         float now)
     {
         float elapsed =

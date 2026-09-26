@@ -113,6 +113,8 @@ VisionMonitor scopes its `ForcedByPlugin` marker to one active vision event:
 the marker is cleared when consumed, when the event is lost, and before a later
 event reuses the same bot/enemy pair. This prevents stale `ACQUIRED_FORCED`
 classification.
+ Reassert writes do not create a new Vision forced marker, so one initial
+`FORCED-ACQUIRE` can produce at most one `ACQUIRED_FORCED`.
 
 The strongest signal for a future native `CCSBot::Attack()` experiment is
 `HELD` followed by `STILL-NOT-ATTACKING` at the end of the full observation

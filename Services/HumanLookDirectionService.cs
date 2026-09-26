@@ -46,7 +46,7 @@ public sealed class HumanLookDirectionService
         _isBotInSpawnGrace = isBotInSpawnGrace;
     }
 
-    public bool TrySelect(
+    public bool TrySelectVisibleEnemyHint(
         CCSPlayerController controller,
         CCSPlayerPawn botPawn,
         float currentYaw,
@@ -56,38 +56,45 @@ public sealed class HumanLookDirectionService
     {
         selection = default;
 
-        if (!float.IsFinite(
+        if (!config.HumanLookScanVisibleEnemyHintEnabled ||
+            !float.IsFinite(
                 currentYaw))
         {
             return false;
         }
 
-        if (config.HumanLookScanVisibleEnemyHintEnabled &&
-            TrySelectVisibleEnemyHint(
-                controller,
-                botPawn,
-                currentYaw,
-                now,
-                config,
-                out selection))
-        {
-            return true;
-        }
-
-        if (config.HumanLookScanGeometryFallbackEnabled &&
-            TrySelectGeometryDirection(
-                botPawn,
-                currentYaw,
-                config,
-                out selection))
-        {
-            return true;
-        }
-
-        return false;
+        return TrySelectVisibleEnemyHintCore(
+            controller,
+            botPawn,
+            currentYaw,
+            now,
+            config,
+            out selection);
     }
 
-    private bool TrySelectVisibleEnemyHint(
+    public bool TrySelectGeometryFallback(
+        CCSPlayerPawn botPawn,
+        float currentYaw,
+        GunGameBotAIConfig config,
+        out HumanLookDirectionSelection selection)
+    {
+        selection = default;
+
+        if (!config.HumanLookScanGeometryFallbackEnabled ||
+            !float.IsFinite(
+                currentYaw))
+        {
+            return false;
+        }
+
+        return TrySelectGeometryDirection(
+            botPawn,
+            currentYaw,
+            config,
+            out selection);
+    }
+
+    private bool TrySelectVisibleEnemyHintCore(
         CCSPlayerController controller,
         CCSPlayerPawn botPawn,
         float currentYaw,

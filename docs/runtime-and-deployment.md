@@ -300,15 +300,53 @@ Interpretation:
 - `STILL-NOT-ATTACKING` is emitted only after the full configured observation
   window (default 1.0 s) and records current physical LOS, target-alive state,
   distance, angle, visible point, `IsEnemyVisible`, and `IsAimingAtEnemy`.
-- `VISIBLE-NOT-ATTACKING state=acquired-not-attacking` means Valve already
-  selected the physically visible target itself but still has not entered its
-  attack state.
+The old `VISIBLE-NOT-ATTACKING state=acquired-not-attacking` message was
+retired in 0.7.53 because its duration came from physical LOS rather than from
+Valve enemy acquisition.
 
 Use `css_ggbotai_status` and retain `forcedAcquireStats` plus the
 `[ForcedAcquire] MAP-SUMMARY`. For the reassert test, verify
 `forcedAcquireReassert=0.6s` and compare `reasserted`,
 `startedAttacking`, `droppedAfterHeld`,
 `stillNotAttackingAfterWindow`, and `aborted`.
+
+### Stage 6.6c attack-transition diagnostic
+
+0.7.53 adds a separate observation-only measurement of the transition from a
+stable Valve current enemy to `IsAttacking=true`. It is active while either
+Vision Monitor or Forced Enemy Acquisition is enabled, but its detailed event
+logs still require `VisionDebug=true`.
+
+Check status for:
+
+```text
+attackTransitionStall=1s
+attackTransitionStats
+```
+
+Relevant events:
+
+```text
+ENEMY-ACQUIRED-NOT-ATTACKING
+ATTACK-TRANSITION-STALLED
+ATTACK-TRANSITION-STARTED
+ATTACK-TRANSITION-RECOVERED
+ATTACK-TRANSITION-ENDED
+ATTACK-TRANSITION-ABORTED
+```
+
+The timing source is `CCSBot.CurrentEnemyAcquireTimestamp` when valid.
+`ATTACK-TRANSITION-STALLED` is emitted only in `NormalGunGame` after the
+same current enemy has been held for at least
+`EnemyAttackTransitionStallSeconds` (default 1.0 s), while
+`IsEnemyVisible=true` and a fresh physical LOS trace succeeds. The log
+records `enemyHeldFor`, continuous `enemyVisibleFor` and
+`physicalLosFor`. A `strongEvidence=true` stall is the cleanest trigger for
+investigating native `CCSBot::Attack()`.
+
+Special modes such as Knife Rush and ladder traversal are intentionally
+excluded from stall classification so their own control policies cannot be
+mistaken for a Valve attack-state delay.
 
 ## CounterStrikeSharp 1.0.375 / KHook
 

@@ -283,15 +283,17 @@ public sealed class EnemyAttackTransitionMonitorService
             _traceFailures++;
         }
 
-        UpdateContinuousSince(
-            valveVisible,
-            now,
-            ref state.VisibleSince);
+        state.VisibleSince =
+            UpdateContinuousSince(
+                valveVisible,
+                now,
+                state.VisibleSince);
 
-        UpdateContinuousSince(
-            physicalLos,
-            now,
-            ref state.PhysicalLosSince);
+        state.PhysicalLosSince =
+            UpdateContinuousSince(
+                physicalLos,
+                now,
+                state.PhysicalLosSince);
 
         float enemyHeldFor =
             MathF.Max(
@@ -594,25 +596,19 @@ public sealed class EnemyAttackTransitionMonitorService
             timestamp <
             60.0f;
 
-    private static void UpdateContinuousSince(
+    private static float UpdateContinuousSince(
         bool active,
         float now,
-        ref float since)
+        float since)
     {
-        if (active)
-        {
-            if (since <
-                0.0f)
-            {
-                since =
-                    now;
-            }
+        if (!active)
+            return -1.0f;
 
-            return;
-        }
-
-        since =
-            -1.0f;
+        return
+            since >=
+                0.0f
+                ? since
+                : now;
     }
 
     private static float ContinuousDuration(

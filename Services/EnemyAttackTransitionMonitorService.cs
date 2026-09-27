@@ -226,10 +226,20 @@ public sealed class EnemyAttackTransitionMonitorService
                 slot,
                 out TransitionState? state))
         {
-            float acquiredAt =
+            float maximumTrustedBackdate =
+                MathF.Max(
+                    0.35f,
+                    Config.DecisionIntervalSeconds *
+                    3.0f);
+
+            bool useValveAcquireTimestamp =
                 IsUsableTimestamp(
                     valveAcquireTimestamp,
-                    now)
+                    now,
+                    maximumTrustedBackdate);
+
+            float acquiredAt =
+                useValveAcquireTimestamp
                     ? valveAcquireTimestamp
                     : now;
 
@@ -247,8 +257,7 @@ public sealed class EnemyAttackTransitionMonitorService
                     AcquiredAt =
                         acquiredAt,
                     AcquireTimestampSource =
-                        acquiredAt ==
-                            valveAcquireTimestamp
+                        useValveAcquireTimestamp
                             ? "valve"
                             : "observed",
                     NextDiagnosticAt =
@@ -584,7 +593,8 @@ public sealed class EnemyAttackTransitionMonitorService
 
     private static bool IsUsableTimestamp(
         float timestamp,
-        float now) =>
+        float now,
+        float maximumBackdateSeconds) =>
         float.IsFinite(
             timestamp) &&
         timestamp >
@@ -593,8 +603,8 @@ public sealed class EnemyAttackTransitionMonitorService
             now +
             0.25f &&
         now -
-            timestamp <
-            60.0f;
+            timestamp <=
+            maximumBackdateSeconds;
 
     private static float UpdateContinuousSince(
         bool active,

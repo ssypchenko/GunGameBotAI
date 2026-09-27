@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 39;
+    public override int Version { get; set; } = 40;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -310,6 +310,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // IsEnemyVisible=true and a real physical LOS trace still succeeds.
     public float EnemyAttackTransitionStallSeconds { get; set; } = 1.00f;
 
+    // Stage 6.7 native Valve attack-state transition. Explicit opt-in only.
+    // The trigger remains the strong attack-stall condition; this delay is
+    // combined with EnemyAttackTransitionStallSeconds using the stricter value.
+    public bool NativeAttackAssistEnabled { get; set; } = false;
+    public float NativeAttackAssistDelaySeconds { get; set; } = 1.00f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -426,6 +432,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             3.00f,
             1.00f,
             nameof(EnemyAttackTransitionStallSeconds),
+            warn);
+        NativeAttackAssistDelaySeconds = Clamp(
+            NativeAttackAssistDelaySeconds,
+            1.00f,
+            5.00f,
+            1.00f,
+            nameof(NativeAttackAssistDelaySeconds),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -1015,6 +1028,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // current enemy to IsAttacking separately from physical LOS age.
             EnemyAttackTransitionStallSeconds = 1.00f;
             Version = 39;
+        }
+
+        if (Version < 40)
+        {
+            // v40 adds the first behaviour-changing native CCSBot::Attack
+            // experiment. Require an explicit operator opt-in after migration.
+            NativeAttackAssistEnabled = false;
+            NativeAttackAssistDelaySeconds = 1.00f;
+            Version = 40;
         }
     }
 

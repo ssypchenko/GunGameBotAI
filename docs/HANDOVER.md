@@ -390,6 +390,195 @@ avgAttackMs
 maxAttackMs
 ```
 
+## Live test result for 0.7.53 attack-transition diagnostics
+
+Source log:
+
+```text
+Pasted text(20260927-092751).txt
+map=gg_supaderp_go
+```
+
+This test validates the Stage 6.6c diagnostic and changes the decision status
+for native `CCSBot::Attack()`.
+
+Final map summaries:
+
+```text
+Vision:
+  scans=7458
+  events=153
+  acquired=74
+  forcedAcquired=35
+  lost=30
+  avgAcquireMs=374.8
+  maxAcquireMs=1687.5
+
+LookScan:
+  started=389
+  finished=383
+  completed=287
+  enemyInterrupts=90
+  pathfinderInterrupts=6
+  effectiveTurns=338
+  directionHint=197
+  directionGeometry=192
+  directionRandom=0
+  failures=0
+
+ForcedAcquire:
+  forced=35
+  forceFailures=0
+  held=35
+  droppedBeforeHeld=0
+  droppedAfterHeld=0
+  startedAttacking=27
+  stillNotAttackingAfterWindow=5
+  reassertAttempts=4
+  reasserted=4
+  reassertFailures=0
+  aborted=3
+  pendingOutcomes=0
+
+AttackTransition:
+  checks=19968
+  episodes=5009
+  immediateAttacks=4480
+  attacksObserved=4942
+  delayedLogs=513
+  stalled=60
+  strongStalls=4
+  stalledThenAttacked=51
+  clearedBeforeAttack=27
+  replacedBeforeAttack=0
+  aborted=28
+  traceFailures=0
+  avgAttackMs=63.4
+  maxAttackMs=7468.8
+```
+
+### Forced Acquisition result
+
+Forced Acquisition + bounded reassert remains mechanically successful.
+
+Important integrity checks:
+
+```text
+forcedAcquired=35 == forced=35
+droppedBeforeHeld=0
+droppedAfterHeld=0
+reassertFailures=0
+pendingOutcomes=0
+```
+
+The previous stale `ACQUIRED_FORCED` problem remains fixed.
+
+Five forced episodes reached the 1.0 s post-observation boundary without attack.
+Only two of those were simultaneous strong attack-transition stalls. The other
+cases had lost Valve-visible and/or physical-visibility conditions and are not,
+by themselves, evidence for forcing Attack.
+
+### Attack-transition diagnostic result
+
+The diagnostic separated ordinary transient delays from the genuinely
+interesting tail:
+
+```text
+60 total ATTACK-TRANSITION-STALLED events
+4 strongEvidence=true
+51 stalled episodes later entered attack
+5 stalled episodes were aborted by lifecycle/special-mode ownership
+4 stalled episodes ended without attack
+```
+
+Only the four `strongEvidence=true` events should drive the native Attack
+decision.
+
+Observed strong stalls:
+
+1. Malinka_klubnika:
+   `enemyHeldFor=1.063s`, `enemyVisibleFor=1.000s`,
+   `physicalLosFor=1.000s`, angle 2.1 degrees,
+   `isAimingAtEnemy=false`.
+   The episode then remained non-attacking for several more seconds and was
+   eventually aborted when `OpportunisticKnifeRush` took ownership.
+
+2. KoshkaMatreshka:
+   `enemyHeldFor=1.000s`, `enemyVisibleFor=1.000s`,
+   `physicalLosFor=1.000s`, angle 1.3 degrees,
+   `isAimingAtEnemy=false`.
+   Valve did not enter attack until
+   `enemyHeldFor=7.172s`, giving a measured stall duration of about
+   **6.172 seconds** after the 1.0 s threshold. This is the strongest evidence
+   in the test that target acquisition alone does not always promptly trigger
+   Valve's attack transition.
+
+3. Malinka_klubnika:
+   `enemyHeldFor=1.000s`, `enemyVisibleFor=1.000s`,
+   `physicalLosFor=1.000s`, angle 2.6 degrees,
+   `isAimingAtEnemy=true`.
+   Valve recovered naturally at `enemyHeldFor=1.594s`, i.e. about
+   **0.594 s** after the stall threshold.
+
+4. Malinka_klubnika:
+   `enemyHeldFor=1.000s`, `enemyVisibleFor=1.000s`,
+   `physicalLosFor=1.000s`, `isAimingAtEnemy=true`.
+   The target was almost directly behind the bot (angle about 173.2 degrees).
+   The episode was aborted almost immediately because ladder traversal took
+   ownership, so it is valid evidence of a delayed Valve transition at the
+   threshold but not evidence of how long the stall would otherwise have
+   persisted.
+
+The first two strong stalls occurred with a current enemy and continuous Valve
+visibility/physical LOS for at least one second. One of them remained stalled
+for more than six additional seconds before Valve finally entered attack.
+
+This means the Stage 6.6c evidence gate defined below has now been met.
+
+### Interpretation of non-strong stalls
+
+Most of the other 56 stalls had long `enemyHeldFor` values but only
+`enemyVisibleFor=0..0.3s` when the stall line was emitted. Many recovered
+within the next DecisionLoop or few DecisionLoops.
+
+That behaviour confirms why `strongEvidence` is necessary: a stale/long-held
+current enemy is not equivalent to a continuously visible attack opportunity.
+
+Do not use the raw `stalled=60` count as the justification for native Attack.
+Use `strongStalls=4` and the individual strong-stall timelines.
+
+### Decision status after this test
+
+The evidence gate for a guarded native `CCSBot::Attack()` experiment is now
+**met**.
+
+This is not a recommendation to set `IsAttacking=true` directly. The next
+development stage should locate and validate the current CS2 native Valve
+attack-state transition, then expose it behind an opt-in experimental guard.
+
+Recommended Stage 6.7 trigger should remain stricter than ordinary acquisition:
+
+```text
+mode == NormalGunGame
+same valid current enemy
+target alive
+IsEnemyVisible == true
+fresh physical LOS == true
+enemyHeldFor >= configured attack-stall threshold
+prefer continuous enemyVisibleFor >= threshold
+prefer continuous physicalLosFor >= threshold
+Valve IsAttacking == false
+no ladder / takeover / special-mode ownership
+```
+
+The first implementation should trigger only on the equivalent of the existing
+`strongEvidence=true` condition, not on every non-strong
+`ATTACK-TRANSITION-STALLED`.
+
+The native call must remain fail-closed. If the native signature/state
+transition cannot be positively validated for the current CS2 build, do not
+fall back to blindly writing `IsAttacking=true`.
+
 ## Next live test
 
 Recommended focused settings:
@@ -468,9 +657,16 @@ If multiple maps show zero strong stalls while Forced Acquisition + reassert
 continues to end naturally in attack, native `CCSBot::Attack()` should not be
 added.
 
-If strong stalls repeat, the next stage is to locate the current CS2 native
-equivalent of `CCSBot::Attack(enemy)` in `libserver.so` and invoke the
-normal Valve state transition rather than manually setting `IsAttacking`.
+Strong stalls have now repeated in the 0.7.53 live test
+(`strongStalls=4`), including one episode that remained stalled for about
+6.172 additional seconds before Valve recovered. Therefore this evidence gate
+is now met.
+
+The next stage is to locate the current CS2 native equivalent of
+`CCSBot::Attack(enemy)` in `libserver.so`, validate its calling convention
+and state effects, and test a guarded opt-in invocation only for strong stalls.
+Use the normal Valve state transition rather than manually setting
+`IsAttacking`.
 
 Do not implement a blind `IsAttacking=true` fallback: older Valve/ReGameDLL
 architecture indicates that the proper Attack transition performs more state
@@ -512,11 +708,28 @@ docs/STABLE_BEHAVIOUR_BASELINE.md
 
 ## Current development status
 
-0.7.52 behaviour (Forced Acquisition + reassert) is accepted for continued
-testing based on the latest live log.
+0.7.52 behaviour (Forced Acquisition + bounded reassert) remains accepted.
+The 0.7.53 live test on `gg_supaderp_go` confirmed:
 
-0.7.53 changes only diagnostics around the current-enemy -> attack transition.
-It does not add native Attack and does not widen the existing behaviour-changing
-write surface.
+```text
+forced=35
+held=35
+forcedAcquired=35
+droppedBeforeHeld=0
+droppedAfterHeld=0
+reasserted=4
+reassertFailures=0
+```
 
-The next required action is a local compile followed by a live multi-map test.
+Stage 6.6c also produced four `strongEvidence=true` attack stalls. Two were
+interrupted by special-mode ownership, while two recovered naturally; one of
+the natural recoveries took about 6.172 seconds beyond the stall threshold.
+
+Therefore the diagnostic objective of 0.7.53 is complete: there is now direct
+evidence that Valve can hold and see a valid enemy for at least one second yet
+still delay entering attack state materially.
+
+No native Attack behaviour has been added yet. The next development stage is
+Stage 6.7: research and implement an opt-in, fail-closed native
+`CCSBot::Attack()`-equivalent experiment gated only by the strong-stall
+conditions documented above.

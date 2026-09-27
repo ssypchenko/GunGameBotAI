@@ -507,11 +507,15 @@ Observed strong stalls:
    `enemyHeldFor=1.000s`, `enemyVisibleFor=1.000s`,
    `physicalLosFor=1.000s`, angle 1.3 degrees,
    `isAimingAtEnemy=false`.
-   Valve did not enter attack until
-   `enemyHeldFor=7.172s`, giving a measured stall duration of about
-   **6.172 seconds** after the 1.0 s threshold. This is the strongest evidence
-   in the test that target acquisition alone does not always promptly trigger
-   Valve's attack transition.
+   Valve did not enter attack until `enemyHeldFor=7.172s`, giving a measured
+   stall duration of about **6.172 seconds** after the 1.0 s threshold.
+   Important nuance: the episode was `strongEvidence=true` at the threshold
+   and remained Valve-visible through roughly `enemyHeldFor=2.094s`; after
+   that, `IsEnemyVisible` dropped false while the same CurrentEnemy and
+   physical LOS continued. Therefore the full 6.172 s must **not** be described
+   as 6.172 s of continuous strong-evidence conditions. It is evidence of a
+   long-lived current-enemy/no-attack episode whose first ~2 seconds satisfied
+   the strict visibility conditions.
 
 3. Malinka_klubnika:
    `enemyHeldFor=1.000s`, `enemyVisibleFor=1.000s`,
@@ -530,8 +534,11 @@ Observed strong stalls:
    persisted.
 
 The first two strong stalls occurred with a current enemy and continuous Valve
-visibility/physical LOS for at least one second. One of them remained stalled
-for more than six additional seconds before Valve finally entered attack.
+visibility/physical LOS for at least one second. One of them remained without
+`IsAttacking` for more than six additional seconds, but its Valve-visible
+condition did not remain continuously true for that entire tail. The evidence
+gate is therefore based on the repeated strict threshold crossings themselves,
+not on treating the whole 6.172 s tail as continuously strong.
 
 This means the Stage 6.6c evidence gate defined below has now been met.
 
@@ -659,9 +666,12 @@ continues to end naturally in attack, native `CCSBot::Attack()` should not be
 added.
 
 Strong stalls have now repeated in the 0.7.53 live test
-(`strongStalls=4`), including one episode that remained stalled for about
-6.172 additional seconds before Valve recovered. Therefore this evidence gate
-is now met.
+(`strongStalls=4`). One episode stayed without `IsAttacking` for about
+6.172 additional seconds before Valve recovered, although its
+`IsEnemyVisible` condition later dropped false while CurrentEnemy and
+physical LOS remained. Therefore this evidence gate is met by the repeated
+strict 1.0 s strong-stall threshold crossings, not by assuming the entire long
+tail remained continuously strong.
 
 The next stage is to locate the current CS2 native equivalent of
 `CCSBot::Attack(enemy)` in `libserver.so`, validate its calling convention
@@ -725,12 +735,14 @@ reassertFailures=0
 ```
 
 Stage 6.6c also produced four `strongEvidence=true` attack stalls. Two were
-interrupted by special-mode ownership, while two recovered naturally; one of
-the natural recoveries took about 6.172 seconds beyond the stall threshold.
+interrupted by special-mode ownership, while two recovered naturally. One
+natural-recovery episode remained without `IsAttacking` for about 6.172
+seconds beyond the stall threshold, but `IsEnemyVisible` later dropped false,
+so only its earlier portion satisfies the strict strong-evidence condition.
 
-Therefore the diagnostic objective of 0.7.53 is complete: there is now direct
-evidence that Valve can hold and see a valid enemy for at least one second yet
-still delay entering attack state materially.
+Therefore the diagnostic objective of 0.7.53 is complete: there is direct
+evidence that Valve can hold and continuously see a valid enemy for at least
+one second yet still fail to enter attack state by that threshold.
 
 No native Attack behaviour has been added yet. The next development stage is
 Stage 6.7: research and implement an opt-in, fail-closed native

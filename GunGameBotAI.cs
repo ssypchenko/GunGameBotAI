@@ -164,6 +164,19 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         Config = config;
         ApplyConfigToServices();
 
+        if (_loaded &&
+            Config.NativeAttackAssistEnabled &&
+            !_nativeAttack.Available)
+        {
+            Config.NativeAttackAssistEnabled =
+                false;
+            _attackTransitionMonitor.Config =
+                Config;
+
+            Logger.LogWarning(
+                "[GunGameBotAI][NativeAttack] Configuration requested Native Attack Assist, but the exact CCSBot::Attack signature is unavailable; runtime assist forced disabled.");
+        }
+
         if (!_loaded)
         {
             _enabled = Config.EnabledOnLoad;
@@ -1616,7 +1629,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 "operator-disabled");
 
         if (!Config.VisionMonitorEnabled &&
-            !Config.ForcedEnemyAcquisitionEnabled)
+            !Config.ForcedEnemyAcquisitionEnabled &&
+            !Config.NativeAttackAssistEnabled)
         {
             _attackTransitionMonitor.ClearRuntimeState(
                 "diagnostic-disabled");
@@ -1633,6 +1647,67 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"reassert={Config.ForcedEnemyAcquisitionReassertSeconds:0.###}s; " +
             "viewAngleGate=none; writes=enemy/perception-only; " +
             "IsAttackingWrite=false; FireWrite=false.");
+    }
+
+    [ConsoleCommand("css_ggbotai_native_attack", "Enable or disable Stage 6.7 guarded native CCSBot::Attack assist.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnNativeAttackAssistCommand(
+        CCSPlayerController? player,
+        CommandInfo command)
+    {
+        if (!TryParseBinary(
+                command.GetArg(1),
+                out bool enabled))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_native_attack 0|1");
+            return;
+        }
+
+        if (enabled &&
+            !_nativeAttack.Available)
+        {
+            Config.NativeAttackAssistEnabled =
+                false;
+            _attackTransitionMonitor.Config =
+                Config;
+
+            command.ReplyToCommand(
+                $"[GunGameBotAI] native Attack assist cannot be enabled: {_nativeAttack.Status}.");
+
+            PersistConfig(
+                command);
+
+            return;
+        }
+
+        Config.NativeAttackAssistEnabled =
+            enabled;
+        _attackTransitionMonitor.Config =
+            Config;
+
+        // Start/stop from a fresh transition episode so enabling the feature
+        // cannot immediately act on an enemy that was already stale before the
+        // operator changed the setting.
+        _attackTransitionMonitor.ClearRuntimeState(
+            enabled
+                ? "native-attack-enabled"
+                : "native-attack-disabled");
+
+        PersistConfig(
+            command);
+
+        float effectiveDelay =
+            MathF.Max(
+                Config.EnemyAttackTransitionStallSeconds,
+                Config.NativeAttackAssistDelaySeconds);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] nativeAttackAssist={(enabled ? "enabled" : "disabled")}; " +
+            $"available={_nativeAttack.Available}; " +
+            $"configuredDelay={Config.NativeAttackAssistDelaySeconds:0.###}s; " +
+            $"effectiveStrongDelay={effectiveDelay:0.###}s; " +
+            "policy=one-call-per-strong-stall; IsAttackingRawWrite=false.");
     }
 
     [ConsoleCommand("css_ggbotai_aim_debug", "Enable or disable point-specific aim visibility diagnostics.")]
@@ -1987,7 +2062,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 "config-disabled");
 
         if (!Config.VisionMonitorEnabled &&
-            !Config.ForcedEnemyAcquisitionEnabled)
+            !Config.ForcedEnemyAcquisitionEnabled &&
+            !Config.NativeAttackAssistEnabled)
         {
             _attackTransitionMonitor.ClearRuntimeState(
                 "diagnostic-disabled");

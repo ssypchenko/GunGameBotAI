@@ -121,6 +121,48 @@ No CounterStrikeSharp gamedata entry is required. If the signature probe stops
 resolving, or the platform vtable contract is intentionally changed in source,
 the backend fails closed until reviewed.
 
+### 4. CCSBot::Attack
+
+Source:
+
+```text
+Services/NativeAttackService.cs
+LinuxAttackSignatures
+```
+
+Purpose:
+
+```text
+Stage 6.7 guarded native attack-state transition for strong stalls
+```
+
+Current Linux ABI recovered from the supplied production binary:
+
+```text
+void CCSBot::Attack(CCSPlayerPawn* victim)
+
+RDI = CCSBot* this
+RSI = CCSPlayerPawn* victim
+return = void
+```
+
+Production policy:
+
+- exact known signatures only;
+- Linux-only for the first experiment;
+- missing signature disables Native Attack Assist;
+- do not substitute a broad discovery mask into production;
+- do not fall back to a raw `IsAttacking=true` write.
+
+Current production signature was recovered from the 27 September 2026
+`libserver.so` with BuildID
+`0f28e3d6ef09e99cade6a972a5e3efbff3131370` and resolves to RVA
+`0x00C24060` in that binary.
+
+After a CS2 update, the scanner checks the exact production signature and, when
+missing, uses the registered `CCSBot::Attack` discovery mask to emit an exact
+ready-to-review candidate.
+
 ## What does not currently use native signatures
 
 The following current systems do not maintain their own libserver byte
@@ -348,6 +390,15 @@ After every CS2 server update:
 8. Start the server with behavioural native features disabled where possible.
 9. Verify startup resolution.
 10. Enable the feature and perform its live acceptance check.
+
+For Native Attack:
+
+```text
+[NativeAttack] CCSBot::Attack signature OK
+css_ggbotai_status
+```
+
+Confirm `nativeAttackAvailable=True` before enabling Stage 6.7.
 
 For Aim:
 

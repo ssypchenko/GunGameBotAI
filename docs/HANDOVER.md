@@ -1,6 +1,6 @@
 # GunGameBotAI development handover
 
-Last updated: 2026-09-27
+Last updated: 2026-09-28
 
 This file is the working handover for continuing GunGameBotAI development in a
 new chat/session without reconstructing the vision/attack investigation from
@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.7.53
-ConfigVersion 39
+GunGameBotAI 0.7.55
+ConfigVersion 40
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```
@@ -50,8 +50,9 @@ more state than necessary.
 
 Do not broaden an experiment merely because a schema field is writable.
 
-In particular, the current vision/target work deliberately does **not** call
-native `CCSBot::Attack()` yet.
+Stage 6.7 may call native `CCSBot::Attack(CCSPlayerPawn*)`, but only when the
+explicit opt-in is enabled and the strong-stall safety gate remains satisfied.
+There is still no raw `IsAttacking=true` fallback.
 
 ## Stable/accepted systems
 
@@ -248,7 +249,7 @@ failures=0
 
 Physical yaw control is therefore considered mechanically successful.
 
-## Why CCSBot::Attack() is not implemented yet
+## Historical rationale before CCSBot::Attack() implementation
 
 The 0.7.52 log still contained cases where a bot already had a Valve current
 enemy and was not yet attacking.
@@ -843,14 +844,30 @@ This pointer contract is supported by:
 - the existing AimNativeService already proving that `bot.Handle` is the
   native CCSBot pointer expected by bot member functions.
 
-### Current exact Linux signature
+### Current exact Linux signatures
 
-The following exact entry signature matches **once** in the supplied
-`libserver.so` and resolves to RVA `0x00C24060`:
+The 28 September 2026 CS2 update changed only the RIP-relative displacement in
+the known entry pattern. The scanner found one unique discovery candidate at
+RVA `0x00C233A0` in the new binary:
 
 ```text
+SHA256 d81faffb3e3a5f2001932b3b55a96c4ac05c2ed4b99702b06fc416b6e9bb5300
+RVA    0x00C233A0
+
+48 85 F6 74 0D 48 8B 05 AC AB C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18
+```
+
+The previous exact signature is retained for the 27 September build:
+
+```text
+SHA256 23373cfdb96dee1f2da858274c03346c952faff2942b5e7923525e187366e87f
+RVA    0x00C24060
+
 48 85 F6 74 0D 48 8B 05 EC 92 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18
 ```
+
+`LinuxAttackSignatures` stores newest known exact signatures first and keeps
+older accepted signatures for backward compatibility.
 
 For future binary discovery/review only, the following wildcarded shape also
 matches exactly once in this build:
@@ -971,7 +988,8 @@ Therefore the diagnostic objective of 0.7.53 is complete: there is direct
 evidence that Valve can hold and continuously see a valid enemy for at least
 one second yet still fail to enter attack state by that threshold.
 
-Stage 6.7 is now implemented in version 0.7.54 as an opt-in,
+Stage 6.7 is implemented in version 0.7.54 and the 28 September native
+signature refresh is version 0.7.55. It remains an opt-in,
 fail-closed native `CCSBot::Attack(CCSPlayerPawn*)` experiment.
 
 New runtime pieces:
@@ -1011,3 +1029,17 @@ The runtime still contains no raw `IsAttacking=true` fallback.
 The native-signature maintenance script now treats `CCSBot::Attack` as a
 runtime-required target and includes both the exact production signature and a
 review-only discovery mask for future CS2 updates.
+
+28 September 2026 update result:
+
+```text
+PickNewAimSpot: production signature still OK
+CCSBot::Attack: old exact missing; unique reviewed candidate accepted at 0xC233A0
+LadderFSM::SetLadderState: production signature still OK
+SelectItem: production signature still OK
+Ladder hidden layout: STATIC_OK
+```
+
+Only `Services/NativeAttackService.cs` required a new runtime signature.
+No CCSBot ABI, config schema, ladder layout, Aim signature, or SelectItem
+contract change was indicated by the scanner report.

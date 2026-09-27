@@ -335,8 +335,11 @@ ATTACK-TRANSITION-ENDED
 ATTACK-TRANSITION-ABORTED
 ```
 
-The timing source is `CCSBot.CurrentEnemyAcquireTimestamp` when valid.
-`ATTACK-TRANSITION-STALLED` is emitted only in `NormalGunGame` after the
+The timing source is `CCSBot.CurrentEnemyAcquireTimestamp` only when it is
+recent enough to belong to the current NormalGunGame observation; older
+timestamps are treated as stale and the monitor falls back to first
+observation. `ATTACK-TRANSITION-STALLED` is emitted only in `NormalGunGame`
+after the
 same current enemy has been held for at least
 `EnemyAttackTransitionStallSeconds` (default 1.0 s), while
 `IsEnemyVisible=true` and a fresh physical LOS trace succeeds. The log

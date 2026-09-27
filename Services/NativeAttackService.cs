@@ -13,8 +13,13 @@ namespace GunGameBotAI.Services;
 /// </summary>
 public sealed class NativeAttackService
 {
-    // Exact signature from the production libserver.so supplied on 2026-09-27:
+    // Exact production signatures, newest first.
     //
+    // 2026-09-28 CS2 update:
+    // SHA256  d81faffb3e3a5f2001932b3b55a96c4ac05c2ed4b99702b06fc416b6e9bb5300
+    // RVA     0x00C233A0
+    //
+    // 2026-09-27 previous production build:
     // BuildID 0f28e3d6ef09e99cade6a972a5e3efbff3131370
     // SHA256  23373cfdb96dee1f2da858274c03346c952faff2942b5e7923525e187366e87f
     // RVA     0x00C24060
@@ -23,6 +28,7 @@ public sealed class NativeAttackService
     // broader discovery mask used after a CS2 update.
     private static readonly string[] LinuxAttackSignatures =
     [
+        "48 85 F6 74 0D 48 8B 05 AC AB C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
         "48 85 F6 74 0D 48 8B 05 EC 92 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18"
     ];
 

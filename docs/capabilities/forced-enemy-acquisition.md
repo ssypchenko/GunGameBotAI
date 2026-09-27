@@ -127,9 +127,12 @@ Version 0.7.53 adds a separate observation-only
 and measures from the stable current enemy to `IsAttacking=true`.
 
 Preferred start time is Valve's own
-`CCSBot.CurrentEnemyAcquireTimestamp`; first observation is used only when
-that value is invalid. This keeps enemy-acquisition delay separate from physical
-LOS age.
+`CCSBot.CurrentEnemyAcquireTimestamp`, but only when it is recent enough to
+belong to the current NormalGunGame observation (roughly within a few
+DecisionLoops). An older timestamp can survive a special mode and is therefore
+treated as stale; in that case first observation is used. This keeps
+enemy-acquisition delay separate from physical LOS age without counting time
+spent under Knife Rush or other excluded ownership.
 
 Relevant log lines:
 

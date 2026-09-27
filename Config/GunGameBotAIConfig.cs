@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 38;
+    public override int Version { get; set; } = 39;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -305,6 +305,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // presses Fire. The original acquisition timestamp is preserved.
     public float ForcedEnemyAcquisitionReassertSeconds { get; set; } = 0.60f;
 
+    // Observation-only Stage 6.6c diagnostic. A stall is counted only after
+    // Valve has held the same current enemy for this long and, at that moment,
+    // IsEnemyVisible=true and a real physical LOS trace still succeeds.
+    public float EnemyAttackTransitionStallSeconds { get; set; } = 1.00f;
+
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
 
@@ -414,6 +419,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             1.50f,
             0.60f,
             nameof(ForcedEnemyAcquisitionReassertSeconds),
+            warn);
+        EnemyAttackTransitionStallSeconds = Clamp(
+            EnemyAttackTransitionStallSeconds,
+            0.50f,
+            3.00f,
+            1.00f,
+            nameof(EnemyAttackTransitionStallSeconds),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -995,6 +1007,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // the already-enabled Stage 6.6 experiment.
             ForcedEnemyAcquisitionReassertSeconds = 0.60f;
             Version = 38;
+        }
+
+        if (Version < 39)
+        {
+            // v39 is diagnostic-only. Measure the delay from a stable Valve
+            // current enemy to IsAttacking separately from physical LOS age.
+            EnemyAttackTransitionStallSeconds = 1.00f;
+            Version = 39;
         }
     }
 

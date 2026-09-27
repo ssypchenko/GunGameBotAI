@@ -351,6 +351,70 @@ Special modes such as Knife Rush and ladder traversal are intentionally
 excluded from stall classification so their own control policies cannot be
 mistaken for a Valve attack-state delay.
 
+## Stage 6.7 native Attack assist
+
+Version 0.7.54 adds an opt-in Linux-only native wrapper around the recovered
+Valve `CCSBot::Attack(CCSPlayerPawn*)` transition.
+
+The feature is OFF after migration:
+
+```text
+NativeAttackAssistEnabled=false
+```
+
+Before enabling, verify status reports:
+
+```text
+nativeAttackAvailable=True
+nativeAttackStats ... status=exact-signature-resolved
+```
+
+Enable explicitly from the server console:
+
+```text
+css_ggbotai_native_attack 1
+```
+
+The command resets current attack-transition tracking so an already-stale enemy
+cannot trigger an immediate native call.
+
+The call occurs at most once per attack-transition episode and only when the
+strong condition remains true for the effective delay:
+
+```text
+NormalGunGame
+same live current enemy
+enemyHeldFor >= effective delay
+enemyVisibleFor >= effective delay
+physicalLosFor >= effective delay
+IsEnemyVisible == true
+fresh physical LOS == true
+IsAttacking == false
+no ladder / takeover / special mode
+```
+
+The effective delay is:
+
+```text
+max(EnemyAttackTransitionStallSeconds, NativeAttackAssistDelaySeconds)
+```
+
+Relevant logs:
+
+```text
+NATIVE-ATTACK-CALL
+NATIVE-ATTACK-ACCEPTED
+NATIVE-ATTACK-NOOP
+NATIVE-ATTACK-UNAVAILABLE
+NATIVE-ATTACK-REJECTED
+```
+
+`ACCEPTED` means the immediate postcondition is `IsAttacking=true`.
+A void native return by itself is not treated as success.
+
+The first experiment never retries the native call within the same episode and
+never writes `IsAttacking=true` directly.
+
 ## CounterStrikeSharp 1.0.375 / KHook
 
 GunGameBotAI targets CounterStrikeSharp API 1.0.375.

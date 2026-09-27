@@ -120,7 +120,8 @@ public sealed class EnemyAttackTransitionMonitorService
     {
         if (!_states.TryGetValue(
                 slot,
-                out TransitionState? state))
+                out TransitionState? state) ||
+            state == null)
         {
             return;
         }
@@ -207,6 +208,7 @@ public sealed class EnemyAttackTransitionMonitorService
         if (_states.TryGetValue(
                 slot,
                 out TransitionState? existing) &&
+            existing != null &&
             existing.EnemyEntityIndex !=
                 enemyEntityIndex)
         {
@@ -224,7 +226,8 @@ public sealed class EnemyAttackTransitionMonitorService
 
         if (!_states.TryGetValue(
                 slot,
-                out TransitionState? state))
+                out TransitionState? state) ||
+            state == null)
         {
             float maximumTrustedBackdate =
                 MathF.Max(
@@ -464,7 +467,8 @@ public sealed class EnemyAttackTransitionMonitorService
     {
         if (!_states.TryGetValue(
                 slot,
-                out TransitionState? state))
+                out TransitionState? state) ||
+            state == null)
         {
             return;
         }

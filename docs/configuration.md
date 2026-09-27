@@ -179,9 +179,10 @@ Reassertion preserves the original `CurrentEnemyAcquireTimestamp`, never sets
 existing Stage 6.6 opt-in state.
 
 `EnemyAttackTransitionStallSeconds` (default 1.0 s) is observation-only. It
-measures from Valve's stable `CCSBot.CurrentEnemyAcquireTimestamp` (falling
-back to first observation only if the timestamp is unusable), not from the
-start of physical LOS. A stall is counted only when the same current enemy has
+measures from Valve's stable `CCSBot.CurrentEnemyAcquireTimestamp` when that
+timestamp is recent enough to belong to the current NormalGunGame observation;
+otherwise it conservatively falls back to first observation. It never measures
+from the start of physical LOS. A stall is counted only when the same current enemy has
 been held for at least the threshold and, at that moment,
 `IsEnemyVisible=true` and a fresh physical LOS trace succeeds. The monitor
 also reports continuous `enemyVisibleFor` and `physicalLosFor` durations so

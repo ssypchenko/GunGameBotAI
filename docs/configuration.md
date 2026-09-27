@@ -92,13 +92,14 @@ The default profile is conservative:
   "ForcedEnemyAcquisitionDistance": 800.0,
   "ForcedEnemyAcquisitionPostObservationSeconds": 1.00,
   "ForcedEnemyAcquisitionReassertSeconds": 0.60,
+  "EnemyAttackTransitionStallSeconds": 1.00,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 38
+  "ConfigVersion": 39
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.6 bounded reassert testing uses version `38`.
+`ConfigVersion` is migrated by the plugin; Stage 6.6c attack-transition diagnostics use version `39`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -176,6 +177,17 @@ trace-visible. A different Valve-selected enemy is never overwritten.
 Reassertion preserves the original `CurrentEnemyAcquireTimestamp`, never sets
 `IsAttacking`, and never presses Fire. Config version 38 preserves the
 existing Stage 6.6 opt-in state.
+
+`EnemyAttackTransitionStallSeconds` (default 1.0 s) is observation-only. It
+measures from Valve's stable `CCSBot.CurrentEnemyAcquireTimestamp` (falling
+back to first observation only if the timestamp is unusable), not from the
+start of physical LOS. A stall is counted only when the same current enemy has
+been held for at least the threshold and, at that moment,
+`IsEnemyVisible=true` and a fresh physical LOS trace succeeds. The monitor
+also reports continuous `enemyVisibleFor` and `physicalLosFor` durations so
+the test can distinguish a long-held target from a target that only just became
+visible. Config version 39 is diagnostic-only and preserves the existing
+Forced Enemy Acquisition opt-in.
 
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It

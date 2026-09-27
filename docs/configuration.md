@@ -93,13 +93,15 @@ The default profile is conservative:
   "ForcedEnemyAcquisitionPostObservationSeconds": 1.00,
   "ForcedEnemyAcquisitionReassertSeconds": 0.60,
   "EnemyAttackTransitionStallSeconds": 1.00,
+  "NativeAttackAssistEnabled": false,
+  "NativeAttackAssistDelaySeconds": 1.00,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 39
+  "ConfigVersion": 40
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; Stage 6.6c attack-transition diagnostics use version `39`.
+`ConfigVersion` is migrated by the plugin; Stage 6.7 native Attack assist uses version `40`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -182,7 +184,20 @@ existing Stage 6.6 opt-in state.
 measures from Valve's stable `CCSBot.CurrentEnemyAcquireTimestamp` when that
 timestamp is recent enough to belong to the current NormalGunGame observation;
 otherwise it conservatively falls back to first observation. It never measures
-from the start of physical LOS. A stall is counted only when the same current enemy has
+from the start of physical LOS.
+
+`NativeAttackAssistEnabled` controls Stage 6.7 and defaults to `false`.
+When enabled, the plugin may call the recovered native
+`CCSBot::Attack(CCSPlayerPawn*)` transition once per qualifying strong-stall
+episode. The call is Linux-only in the first implementation and is available
+only when the exact known production signature resolves.
+
+`NativeAttackAssistDelaySeconds` defaults to 1.0 s. The effective trigger uses
+the stricter of this value and `EnemyAttackTransitionStallSeconds`, and
+requires the same current enemy, continuous Valve visibility and continuous
+physical LOS for the full effective delay. Config version 40 explicitly resets
+`NativeAttackAssistEnabled=false` so the first native behaviour test always
+requires operator opt-in. A stall is counted only when the same current enemy has
 been held for at least the threshold and, at that moment,
 `IsEnemyVisible=true` and a fresh physical LOS trace succeeds. The monitor
 also reports continuous `enemyVisibleFor` and `physicalLosFor` durations so

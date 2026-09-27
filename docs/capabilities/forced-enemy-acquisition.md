@@ -53,12 +53,16 @@ combat by itself.
 
 ## Diagnostics
 
-After 0.5 s of continuous physical LOS, a missed or non-attacking target can
-emit:
+After 0.5 s of continuous physical LOS while Valve still has no
+current enemy, the pre-acquisition diagnostic can emit:
 
 ```text
 VISIBLE-NOT-ATTACKING
 ```
+
+The older `state=acquired-not-attacking` use of this message was removed in
+0.7.53 because it incorrectly measured from LOS start rather than from Valve's
+actual enemy-acquisition time.
 
 At the configured force threshold:
 
@@ -116,6 +120,46 @@ classification.
  Reassert writes do not create a new Vision forced marker, so one initial
 `FORCED-ACQUIRE` can produce at most one `ACQUIRED_FORCED`.
 
-The strongest signal for a future native `CCSBot::Attack()` experiment is
-`HELD` followed by `STILL-NOT-ATTACKING` at the end of the full observation
-window while `physicalLosNow=true` and the target is still alive.
+## Stage 6.6c enemy-to-attack transition diagnostics
+
+Version 0.7.53 adds a separate observation-only
+`EnemyAttackTransitionMonitorService`. It runs after Forced Enemy Acquisition
+and measures from the stable current enemy to `IsAttacking=true`.
+
+Preferred start time is Valve's own
+`CCSBot.CurrentEnemyAcquireTimestamp`; first observation is used only when
+that value is invalid. This keeps enemy-acquisition delay separate from physical
+LOS age.
+
+Relevant log lines:
+
+```text
+ENEMY-ACQUIRED-NOT-ATTACKING
+ATTACK-TRANSITION-STALLED
+ATTACK-TRANSITION-STARTED
+ATTACK-TRANSITION-RECOVERED
+ATTACK-TRANSITION-ENDED
+ATTACK-TRANSITION-ABORTED
+```
+
+`ATTACK-TRANSITION-STALLED` requires all of the following at the moment it is
+emitted:
+
+```text
+same current enemy held >= EnemyAttackTransitionStallSeconds
+IsEnemyVisible == true
+fresh physical LOS trace == true
+IsAttacking == false
+target alive
+mode == NormalGunGame
+```
+
+The line includes `enemyHeldFor`, continuous `enemyVisibleFor`,
+continuous `physicalLosFor`, distance, angle, aim state and visible point.
+`strongEvidence=true` means both the continuous Valve-visible time and the
+continuous physical-LOS time have also lasted at least the stall threshold.
+
+This diagnostic never writes bot state. The strongest evidence for a future
+native `CCSBot::Attack()` experiment is repeated
+`ATTACK-TRANSITION-STALLED ... strongEvidence=true` under normal GunGame
+combat.

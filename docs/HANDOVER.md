@@ -289,10 +289,15 @@ Preferred acquisition clock:
 CCSBot.CurrentEnemyAcquireTimestamp
 ```
 
-Fallback only if the Valve timestamp is unusable:
+The Valve timestamp is trusted only when it is recent enough to correspond to
+the current NormalGunGame observation (roughly a few DecisionLoops). This is
+important because an enemy/timestamp can survive a period owned by Knife Rush
+or another excluded mode. Older timestamps are treated as stale.
+
+Conservative fallback:
 
 ```text
-first DecisionLoop observation of that current enemy
+first DecisionLoop observation of that current enemy in eligible NormalGunGame
 ```
 
 Config:

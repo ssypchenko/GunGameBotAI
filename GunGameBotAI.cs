@@ -1453,9 +1453,18 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             enabled;
         _visionMonitor.Config =
             Config;
+        _attackTransitionMonitor.Config =
+            Config;
 
         if (!enabled)
             _visionMonitor.ClearRuntimeState();
+
+        if (!Config.VisionMonitorEnabled &&
+            !Config.ForcedEnemyAcquisitionEnabled)
+        {
+            _attackTransitionMonitor.ClearRuntimeState(
+                "diagnostic-disabled");
+        }
 
         PersistConfig(command);
 
@@ -1483,6 +1492,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.Config =
             Config;
         _humanLookScan.Config =
+            Config;
+        _attackTransitionMonitor.Config =
             Config;
 
         PersistConfig(command);
@@ -1580,6 +1591,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (!enabled)
             _forcedEnemyAcquisition.ClearRuntimeState(
                 "operator-disabled");
+
+        if (!Config.VisionMonitorEnabled &&
+            !Config.ForcedEnemyAcquisitionEnabled)
+        {
+            _attackTransitionMonitor.ClearRuntimeState(
+                "diagnostic-disabled");
+        }
 
         PersistConfig(
             command);

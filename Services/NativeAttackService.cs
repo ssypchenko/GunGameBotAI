@@ -91,6 +91,14 @@ public sealed class NativeAttackService
     public void Initialize() =>
         EnsureInitialised();
 
+    public void LogMapSummary(
+        string mapName)
+    {
+        _info(
+            $"[NativeAttack] MAP-SUMMARY map={SafeMap(mapName)}; " +
+            $"{StatisticsSummary}; available={Available}; status={Status}");
+    }
+
     public void ResetStatistics()
     {
         _attempts = 0;
@@ -393,6 +401,15 @@ public sealed class NativeAttackService
             return false;
         }
     }
+
+    private static string SafeMap(
+        string? mapName) =>
+        string.IsNullOrWhiteSpace(
+            mapName)
+            ? "unknown"
+            : mapName.Replace(
+                ';',
+                '_');
 }
 
 public readonly record struct NativeAttackInvocationResult(

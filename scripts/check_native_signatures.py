@@ -15,7 +15,7 @@ Optional:
     python3 scripts/check_native_signatures.py --self-test
 
 The script reads production signatures directly from the repository source:
-- known Aim, Ladder and SelectItem signature variables;
+- known Aim, native Attack, Ladder and SelectItem signature variables;
 - any additional C# variables named Linux*Signature / Linux*Signatures;
 - every signatures.linux entry in gamedata/*.json.
 

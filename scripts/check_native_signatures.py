@@ -39,6 +39,7 @@ from typing import Iterable, Optional
 ROOT = Path(__file__).resolve().parents[1]
 
 AIM_SOURCE = ROOT / "Services" / "AimNativeService.cs"
+ATTACK_SOURCE = ROOT / "Services" / "NativeAttackService.cs"
 LADDER_SOURCE = ROOT / "Services" / "LadderMapService.cs"
 WEAPON_SOURCE = ROOT / "Services" / "WeaponSwitchNative.cs"
 GAMEDATA_DIR = ROOT / "gamedata"
@@ -60,6 +61,11 @@ DISCOVERY_PATTERNS = {
     "CCSPlayer_WeaponServices::SelectItem": (
         "55 48 89 E5 41 57 41 56 41 55 ?? ?? ?? "
         "41 54 53 48 89 FB 48 81 EC ?? ?? ?? ?? 48 8B 7F"
+    ),
+    "CCSBot::Attack": (
+        "48 85 F6 74 ?? 48 8B 05 ?? ?? ?? ?? 80 78 58 00 74 ?? "
+        "C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB "
+        "48 83 EC 10 48 8B 47 18"
     ),
 }
 
@@ -242,17 +248,20 @@ def extract_csharp_const_string(
 
 def load_production_patterns() -> dict[str, list[Pattern]]:
     aim_text = AIM_SOURCE.read_text(encoding="utf-8")
+    attack_text = ATTACK_SOURCE.read_text(encoding="utf-8")
     ladder_text = LADDER_SOURCE.read_text(encoding="utf-8")
     weapon_text = WEAPON_SOURCE.read_text(encoding="utf-8")
 
     result: dict[str, list[Pattern]] = {
         "CCSBot::PickNewAimSpot": [],
+        "CCSBot::Attack": [],
         "LadderFSM::SetLadderState": [],
         "CCSPlayer_WeaponServices::SelectItem": [],
     }
 
     registered_csharp_variables = {
         ("Services/AimNativeService.cs", "LinuxPickNewAimSpotSignatures"),
+        ("Services/NativeAttackService.cs", "LinuxAttackSignatures"),
         ("Services/LadderMapService.cs", "LinuxSetLadderStateSignature"),
         ("Services/WeaponSwitchNative.cs", "LinuxSelectItemSignatures"),
     }
@@ -267,6 +276,22 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
                 source="Services/AimNativeService.cs:LinuxPickNewAimSpotSignatures",
                 value=value,
                 runtime_role="Stage 4 AimService PostHook; runtime-critical when AimService is enabled",
+            )
+        )
+
+    for value in extract_csharp_string_array(
+        attack_text,
+        "LinuxAttackSignatures",
+    ):
+        result["CCSBot::Attack"].append(
+            Pattern(
+                name="CCSBot::Attack",
+                source="Services/NativeAttackService.cs:LinuxAttackSignatures",
+                value=value,
+                runtime_role=(
+                    "Stage 6.7 guarded native attack-state transition; "
+                    "runtime-critical only when NativeAttackAssistEnabled=true"
+                ),
             )
         )
 
@@ -870,16 +895,21 @@ def build_report(
             if len(discovery_matches) == 1:
                 offset = discovery_matches[0]
 
-                if name == "CCSBot::PickNewAimSpot":
-                    # Aim production signatures are intentionally exact.
+                if name in {"CCSBot::PickNewAimSpot", "CCSBot::Attack"}:
+                    # Aim and native Attack production signatures are intentionally exact.
                     discovery_len = len(parse_pattern(discovery_pattern))
                     suggested = exact_candidate(
                         data,
                         offset,
                         discovery_len,
                     )
+                    service_name = (
+                        "AimNativeService"
+                        if name == "CCSBot::PickNewAimSpot"
+                        else "NativeAttackService"
+                    )
                     note = (
-                        "Unique discovery candidate. For AimNativeService, review "
+                        f"Unique discovery candidate. For {service_name}, review "
                         "the surrounding bytes and add this as another exact Linux "
                         "signature; do not replace the array with the discovery mask."
                     )
@@ -1002,6 +1032,9 @@ def print_report(
             if report.name == "CCSBot::PickNewAimSpot":
                 print("SOURCE SNIPPET (append to LinuxPickNewAimSpotSignatures):")
                 print(f'    "{report.suggested_pattern}",')
+            elif report.name == "CCSBot::Attack":
+                print("SOURCE SNIPPET (append to LinuxAttackSignatures):")
+                print(f'    "{report.suggested_pattern}",')
             elif report.name == "LadderFSM::SetLadderState":
                 print("SOURCE SNIPPET (replace LinuxSetLadderStateSignature):")
                 print(
@@ -1034,6 +1067,7 @@ def exit_code(
     """
     required = {
         "CCSBot::PickNewAimSpot",
+        "CCSBot::Attack",
         "LadderFSM::SetLadderState",
         "CCSPlayer_WeaponServices::SelectItem",
     }
@@ -1060,6 +1094,10 @@ def run_self_test() -> int:
 
     if len(production.get("CCSBot::PickNewAimSpot", [])) < 1:
         print("SELF-TEST FAILED: no Aim production signatures extracted")
+        return 1
+
+    if len(production.get("CCSBot::Attack", [])) < 1:
+        print("SELF-TEST FAILED: no native Attack production signatures extracted")
         return 1
 
     if len(production.get("LadderFSM::SetLadderState", [])) != 1:

@@ -20,6 +20,7 @@ public sealed class EnemyAttackTransitionMonitorService
     private const float DiagnosticRepeatSeconds = 0.75f;
 
     private readonly VisibilityTraceService _visibility;
+    private readonly NativeAttackService _nativeAttack;
     private readonly Action<string> _info;
     private readonly Dictionary<int, TransitionState> _states =
         new();
@@ -36,15 +37,23 @@ public sealed class EnemyAttackTransitionMonitorService
     private long _replacedBeforeAttack;
     private long _aborted;
     private long _traceFailures;
+    private long _nativeAttackAttempts;
+    private long _nativeAttackAccepted;
+    private long _nativeAttackNoops;
+    private long _nativeAttackUnavailable;
+    private long _nativeAttackRejected;
     private double _totalAttackDelaySeconds;
     private float _maxAttackDelaySeconds;
 
     public EnemyAttackTransitionMonitorService(
         VisibilityTraceService visibility,
+        NativeAttackService nativeAttack,
         Action<string> info)
     {
         _visibility =
             visibility;
+        _nativeAttack =
+            nativeAttack;
         _info =
             info;
     }
@@ -71,7 +80,13 @@ public sealed class EnemyAttackTransitionMonitorService
                 $"stalledThenAttacked={_stalledThenAttacked}; " +
                 $"clearedBeforeAttack={_clearedBeforeAttack}; " +
                 $"replacedBeforeAttack={_replacedBeforeAttack}; aborted={_aborted}; " +
-                $"traceFailures={_traceFailures}; active={_states.Count}; " +
+                $"traceFailures={_traceFailures}; " +
+                $"nativeAttackAttempts={_nativeAttackAttempts}; " +
+                $"nativeAttackAccepted={_nativeAttackAccepted}; " +
+                $"nativeAttackNoops={_nativeAttackNoops}; " +
+                $"nativeAttackUnavailable={_nativeAttackUnavailable}; " +
+                $"nativeAttackRejected={_nativeAttackRejected}; " +
+                $"active={_states.Count}; " +
                 $"avgAttackMs={averageMs:0.0}; maxAttackMs={_maxAttackDelaySeconds * 1000.0f:0.0}";
         }
     }
@@ -95,6 +110,11 @@ public sealed class EnemyAttackTransitionMonitorService
         _replacedBeforeAttack = 0;
         _aborted = 0;
         _traceFailures = 0;
+        _nativeAttackAttempts = 0;
+        _nativeAttackAccepted = 0;
+        _nativeAttackNoops = 0;
+        _nativeAttackUnavailable = 0;
+        _nativeAttackRejected = 0;
         _totalAttackDelaySeconds = 0.0;
         _maxAttackDelaySeconds = 0.0f;
     }
@@ -455,11 +475,103 @@ public sealed class EnemyAttackTransitionMonitorService
                     $"threshold={Config.EnemyAttackTransitionStallSeconds:0.000}s");
             }
         }
+
+        float nativeAttackThreshold =
+            MathF.Max(
+                Config.EnemyAttackTransitionStallSeconds,
+                Config.NativeAttackAssistDelaySeconds);
+
+        bool nativeStrongEvidence =
+            enemyHeldFor >=
+                nativeAttackThreshold &&
+            enemyVisibleFor >=
+                nativeAttackThreshold &&
+            physicalLosFor >=
+                nativeAttackThreshold &&
+            valveVisible &&
+            physicalLos;
+
+        if (Config.NativeAttackAssistEnabled &&
+            !state.NativeAttackAttempted &&
+            nativeStrongEvidence)
+        {
+            state.NativeAttackAttempted =
+                true;
+            _nativeAttackAttempts++;
+
+            _info(
+                $"NATIVE-ATTACK-CALL map={state.MapName}; " +
+                $"bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                $"enemy={state.EnemyName}#{enemyEntityIndex}; " +
+                $"enemyHeldFor={enemyHeldFor:0.000}s; " +
+                $"enemyVisibleFor={enemyVisibleFor:0.000}s; " +
+                $"physicalLosFor={physicalLosFor:0.000}s; " +
+                $"isAimingAtEnemy={aimingAtEnemy}; " +
+                $"distance={FormatOptional(distance)}; angleFromView={FormatOptional(angleFromView)}; " +
+                $"visiblePoint={FormatOptional(visiblePoint)}; " +
+                $"threshold={nativeAttackThreshold:0.000}s; " +
+                $"nativeAvailable={_nativeAttack.Available}; " +
+                $"nativeAddress=0x{_nativeAttack.FunctionAddress.ToInt64():X16}");
+
+            NativeAttackInvocationResult result =
+                _nativeAttack.TryAttack(
+                    bot,
+                    enemyPawn);
+
+            if (result.Accepted)
+            {
+                _nativeAttackAccepted++;
+
+                _info(
+                    $"NATIVE-ATTACK-ACCEPTED map={state.MapName}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                    $"enemy={state.EnemyName}#{enemyEntityIndex}; " +
+                    $"sameEnemyAfterCall={result.SameEnemyAfterCall}; " +
+                    $"isEnemyVisibleAfterCall={result.EnemyVisibleAfterCall}; " +
+                    $"isAimingAtEnemyAfterCall={result.AimingAtEnemyAfterCall}; " +
+                    $"isAttackingAfterCall={result.AttackingAfterCall}");
+            }
+            else if (result.Invoked)
+            {
+                _nativeAttackNoops++;
+
+                _info(
+                    $"NATIVE-ATTACK-NOOP map={state.MapName}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                    $"enemy={state.EnemyName}#{enemyEntityIndex}; " +
+                    $"reason={result.Reason}; " +
+                    $"sameEnemyAfterCall={result.SameEnemyAfterCall}; " +
+                    $"isEnemyVisibleAfterCall={result.EnemyVisibleAfterCall}; " +
+                    $"isAimingAtEnemyAfterCall={result.AimingAtEnemyAfterCall}; " +
+                    $"isAttackingAfterCall={result.AttackingAfterCall}");
+            }
+            else if (!_nativeAttack.Available)
+            {
+                _nativeAttackUnavailable++;
+
+                _info(
+                    $"NATIVE-ATTACK-UNAVAILABLE map={state.MapName}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                    $"enemy={state.EnemyName}#{enemyEntityIndex}; " +
+                    $"reason={result.Reason}; status={_nativeAttack.Status}");
+            }
+            else
+            {
+                _nativeAttackRejected++;
+
+                _info(
+                    $"NATIVE-ATTACK-REJECTED map={state.MapName}; " +
+                    $"bot={SafeName(controller.PlayerName)}; slot={slot}; " +
+                    $"enemy={state.EnemyName}#{enemyEntityIndex}; " +
+                    $"reason={result.Reason}");
+            }
+        }
     }
 
     private bool IsEnabled() =>
         Config.VisionMonitorEnabled ||
-        Config.ForcedEnemyAcquisitionEnabled;
+        Config.ForcedEnemyAcquisitionEnabled ||
+        Config.NativeAttackAssistEnabled;
 
     private void EndWithoutCurrentEnemy(
         int slot,
@@ -804,5 +916,7 @@ public sealed class EnemyAttackTransitionMonitorService
         public bool StallLogged { get; set; }
 
         public float StalledAt { get; set; }
+
+        public bool NativeAttackAttempted { get; set; }
     }
 }

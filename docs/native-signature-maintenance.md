@@ -154,10 +154,23 @@ Production policy:
 - do not substitute a broad discovery mask into production;
 - do not fall back to a raw `IsAttacking=true` write.
 
-Current production signature was recovered from the 27 September 2026
-`libserver.so` with BuildID
-`0f28e3d6ef09e99cade6a972a5e3efbff3131370` and resolves to RVA
-`0x00C24060` in that binary.
+Known exact production variants:
+
+```text
+2026-09-28
+SHA256 d81faffb3e3a5f2001932b3b55a96c4ac05c2ed4b99702b06fc416b6e9bb5300
+RVA    0x00C233A0
+
+2026-09-27
+BuildID 0f28e3d6ef09e99cade6a972a5e3efbff3131370
+SHA256 23373cfdb96dee1f2da858274c03346c952faff2942b5e7923525e187366e87f
+RVA    0x00C24060
+```
+
+The 28 September update preserved the discovery shape and changed only bytes
+inside the RIP-relative displacement in the exact entry signature. The unique
+discovery candidate was therefore accepted as a new exact production variant,
+with the older exact signature retained.
 
 After a CS2 update, the scanner checks the exact production signature and, when
 missing, uses the registered `CCSBot::Attack` discovery mask to emit an exact

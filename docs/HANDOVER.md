@@ -579,9 +579,9 @@ The native call must remain fail-closed. If the native signature/state
 transition cannot be positively validated for the current CS2 build, do not
 fall back to blindly writing `IsAttacking=true`.
 
-## Next live test
+## 0.7.53 live test configuration used
 
-Recommended focused settings:
+The completed 0.7.53 test used the following focused settings:
 
 ```text
 css_ggbotai_debug 0
@@ -603,9 +603,10 @@ forcedAcquireReassert=0.6s
 attackTransitionStall=1s
 ```
 
-After the test, retain both the full log and `css_ggbotai_status`.
+For future regression tests, retain both the full log and
+`css_ggbotai_status`.
 
-Primary values to inspect:
+Primary values to compare:
 
 ```text
 forcedAcquireStats:
@@ -686,7 +687,9 @@ Keep these invariants unless new evidence explicitly justifies changing them:
    lost LOS, unavailable target or other Valve target.
 8. Human Look Scan changes yaw only; it does not write movement/nav/enemy state.
 9. Attack-transition monitoring is observation-only.
-10. Do not add `CCSBot::Attack()` until the Stage 6.6c evidence gate is met.
+10. The Stage 6.6c evidence gate is now met. Any Stage 6.7 native Attack
+    experiment must remain opt-in, fail-closed, and gated by the strong-stall
+    conditions; never replace it with a blind `IsAttacking=true` write.
 
 ## Useful related documentation
 

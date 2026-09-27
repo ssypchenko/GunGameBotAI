@@ -719,6 +719,231 @@ docs/capabilities/knife-rush.md
 docs/STABLE_BEHAVIOUR_BASELINE.md
 ```
 
+## Stage 6.7 native CCSBot::Attack research
+
+A current production `libserver.so` was supplied and statically analysed.
+
+Binary identity:
+
+```text
+ELF: 64-bit x86-64 shared object, stripped
+BuildID: 0f28e3d6ef09e99cade6a972a5e3efbff3131370
+SHA256: 23373cfdb96dee1f2da858274c03346c952faff2942b5e7923525e187366e87f
+size: ~40 MiB
+```
+
+The binary retains enough RTTI/string evidence to recover the bot attack state
+despite stripped ordinary C++ symbols.
+
+### AttackState recovery
+
+RTTI name:
+
+```text
+11AttackState
+```
+
+Recovered AttackState vtable methods:
+
+```text
+OnEnter  RVA 0x00C98C50
+OnUpdate RVA 0x00C99720
+OnExit   RVA 0x00C8EEE0
+GetName  RVA 0x00C8B330
+```
+
+`OnExit` is independently confirmed by its direct reference to the retained
+string:
+
+```text
+AttackState:OnExit()
+```
+
+The AttackState vtable references `OnEnter` at its first virtual slot, matching
+the historical Valve/ReGameDLL `BotState` interface order:
+
+```text
+OnEnter
+OnUpdate
+OnExit
+GetName
+```
+
+### CCSBot::Attack recovery
+
+There is exactly one direct caller of `AttackState::OnEnter` in the relevant
+CCSBot attack-transition path. The containing function begins at:
+
+```text
+RVA 0x00C24060
+```
+
+This function has four internal call sites from current bot logic.
+
+The recovered function semantics match historical
+`CCSBot::Attack(CBasePlayer *victim)` very closely:
+
+1. Reject null victim.
+2. Check a global bot condition before entering the body.
+3. Check active-weapon/reload state.
+4. Call the current internal `SetEnemy` equivalent.
+5. Check `m_isAttacking`; return if already attacking.
+6. Configure the embedded `AttackState` crouch/hold behaviour.
+7. Write `m_isAttacking = true`.
+8. Call `AttackState::OnEnter(this)` at RVA `0x00C98C50`.
+9. Copy victim position into the bot's last-enemy position fields.
+10. Update last-seen / aim-related timestamps.
+11. Continue the normal Valve initial aim-offset setup.
+
+Relevant current offsets visible in this exact build include:
+
+```text
+m_isAttacking write: CCSBot + 0x5C4
+embedded AttackState: CCSBot + 0x228
+AttackState crouch/hold byte: CCSBot + 0x268
+current enemy handle used by SetEnemy path: CCSBot + 0x59D8
+last-enemy position area written after OnEnter: CCSBot + 0x59E0
+```
+
+These offsets are reverse-engineering evidence only. Stage 6.7 should continue
+using CounterStrikeSharp schema fields wherever possible and must not introduce
+new raw CCSBot field writes.
+
+### ABI / CounterStrikeSharp invocation contract
+
+On Linux x86-64 SysV, the recovered function uses:
+
+```text
+RDI = CCSBot*       (this)
+RSI = CCSPlayerPawn* victim
+return = void
+```
+
+CounterStrikeSharp 1.0.375 exposes the matching wrapper:
+
+```csharp
+MemoryFunctionVoid<IntPtr, IntPtr>
+```
+
+The intended managed invocation is therefore:
+
+```csharp
+_attack.Invoke(
+    bot.Handle,
+    enemyPawn.Handle);
+```
+
+This pointer contract is supported by:
+
+- `CCSBot` being a separate native `CBot` object with its own `Handle`;
+- `CBot.Player` pointing to a `CCSPlayerPawn`;
+- `CCSBot.Enemy` being `CHandle<CCSPlayerPawn>`;
+- current native call sites resolving player handles to the final entity pointer
+  before passing the second argument to RVA `0x00C24060`;
+- the existing AimNativeService already proving that `bot.Handle` is the
+  native CCSBot pointer expected by bot member functions.
+
+### Current exact Linux signature
+
+The following exact entry signature matches **once** in the supplied
+`libserver.so` and resolves to RVA `0x00C24060`:
+
+```text
+48 85 F6 74 0D 48 8B 05 EC 92 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18
+```
+
+For future binary discovery/review only, the following wildcarded shape also
+matches exactly once in this build:
+
+```text
+48 85 F6 74 ?? 48 8B 05 ?? ?? ?? ?? 80 78 58 00 74 ?? C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18
+```
+
+A second semantic anchor inside the same function, covering the
+`SetEnemy -> IsAttacking -> hiding/AttackState` region, is:
+
+```text
+4C 89 E6 48 89 DF E8 ?? ?? ?? ?? 80 BB C4 05 00 00 00 75 ?? 48 89 DF E8 ?? ?? ?? ?? 84 C0
+```
+
+It also matches once in the supplied binary.
+
+Production code should prefer the exact known signature and fail closed after a
+CS2 update. The wildcard patterns are for maintenance/discovery, not automatic
+runtime acceptance.
+
+### Proposed Stage 6.7 runtime design
+
+Do not call native Attack on ordinary `STALLED` events.
+
+Initial experiment should be opt-in and gated by the already validated
+`strongEvidence` condition:
+
+```text
+mode == NormalGunGame
+same valid CurrentEnemy
+target alive
+enemyHeldFor >= 1.0 s
+enemyVisibleFor >= 1.0 s
+physicalLosFor >= 1.0 s
+IsEnemyVisible == true
+fresh physical LOS == true
+IsAttacking == false
+no ladder
+no takeover
+no Knife Rush / special-mode ownership
+```
+
+Recommended first implementation:
+
+```text
+NativeAttackAssistEnabled = false
+NativeAttackAssistDelaySeconds = 1.0
+one native call per strong-stall episode
+```
+
+After calling the native function, immediately record:
+
+```text
+sameEnemyAfterCall
+isEnemyVisibleAfterCall
+isAimingAtEnemyAfterCall
+isAttackingAfterCall
+```
+
+Then continue observation for the existing attack-transition episode.
+
+Do not repeatedly call Attack every tick in the first experiment. The recovered
+native function itself can refuse to enter Attack for legitimate reasons such as
+reload state. A single call per strong episode gives the cleanest evidence of
+whether the native transition is the missing step.
+
+Suggested logs:
+
+```text
+NATIVE-ATTACK-CALL
+NATIVE-ATTACK-ACCEPTED
+NATIVE-ATTACK-NOOP
+NATIVE-ATTACK-UNAVAILABLE
+```
+
+`ACCEPTED` should mean the immediate postcondition
+`bot.IsAttacking == true`, not merely that the void native call returned.
+
+### Fail-closed requirements
+
+1. Linux only for the first experiment.
+2. Exact known signature must resolve uniquely.
+3. If signature resolution fails, disable Native Attack Assist without changing
+   normal bot behaviour.
+4. Validate `bot.Handle` and `enemyPawn.Handle` immediately before invoke.
+5. Re-check the enemy is still the same current enemy and physically visible.
+6. Never replace a different Valve-selected enemy.
+7. Never call from ladder / Knife Rush / takeover / other special ownership.
+8. One call per strong-stall episode for the first test.
+9. Do not add a fallback raw `IsAttacking=true` write.
+10. Re-run binary signature validation after every CS2 server update.
+
 ## Current development status
 
 0.7.52 behaviour (Forced Acquisition + bounded reassert) remains accepted.

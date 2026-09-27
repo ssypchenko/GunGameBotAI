@@ -932,6 +932,8 @@ NATIVE-ATTACK-UNAVAILABLE
 
 ### Fail-closed requirements
 
+Implementation status: these requirements are enforced by 0.7.54.
+
 1. Linux only for the first experiment.
 2. Exact known signature must resolve uniquely.
 3. If signature resolution fails, disable Native Attack Assist without changing
@@ -969,7 +971,43 @@ Therefore the diagnostic objective of 0.7.53 is complete: there is direct
 evidence that Valve can hold and continuously see a valid enemy for at least
 one second yet still fail to enter attack state by that threshold.
 
-No native Attack behaviour has been added yet. The next development stage is
-Stage 6.7: research and implement an opt-in, fail-closed native
-`CCSBot::Attack()`-equivalent experiment gated only by the strong-stall
-conditions documented above.
+Stage 6.7 is now implemented in version 0.7.54 as an opt-in,
+fail-closed native `CCSBot::Attack(CCSPlayerPawn*)` experiment.
+
+New runtime pieces:
+
+```text
+Services/NativeAttackService.cs
+NativeAttackAssistEnabled=false
+NativeAttackAssistDelaySeconds=1.0
+css_ggbotai_native_attack 0|1
+```
+
+The exact Linux production signature is resolved at plugin load. Missing
+signature leaves Stage 6.7 unavailable. The first experiment performs at most
+one native call per eligible attack-transition episode.
+
+The actual trigger is the stricter of
+`EnemyAttackTransitionStallSeconds` and
+`NativeAttackAssistDelaySeconds`, and additionally requires continuous
+Valve-visible and physical-LOS durations for the full delay. This means native
+Attack is not invoked for ordinary non-strong `STALLED` events.
+
+Immediate outcomes are logged as:
+
+```text
+NATIVE-ATTACK-CALL
+NATIVE-ATTACK-ACCEPTED
+NATIVE-ATTACK-NOOP
+NATIVE-ATTACK-UNAVAILABLE
+NATIVE-ATTACK-REJECTED
+```
+
+`ACCEPTED` requires the post-call schema state
+`CCSBot.IsAttacking == true`; a void native return alone is not success.
+
+The runtime still contains no raw `IsAttacking=true` fallback.
+
+The native-signature maintenance script now treats `CCSBot::Attack` as a
+runtime-required target and includes both the exact production signature and a
+review-only discovery mask for future CS2 updates.

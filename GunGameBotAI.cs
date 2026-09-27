@@ -37,6 +37,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly VisionEnhancementService _visionEnhancement;
     private readonly HumanLookScanService _humanLookScan;
     private readonly ForcedEnemyAcquisitionService _forcedEnemyAcquisition;
+    private readonly NativeAttackService _nativeAttack;
     private readonly EnemyAttackTransitionMonitorService _attackTransitionMonitor;
     private readonly AimDiagnosticsService _aimDiagnostics;
     private readonly AimPolicyService _aimPolicy;
@@ -121,8 +122,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     slot,
                     enemyEntityIndex),
             message => Logger.LogInformation("[GunGameBotAI][ForcedAcquire] {Message}", message));
+        _nativeAttack = new NativeAttackService(
+            message => Logger.LogInformation("[GunGameBotAI]{Message}", message),
+            message => Logger.LogWarning("[GunGameBotAI]{Message}", message));
         _attackTransitionMonitor = new EnemyAttackTransitionMonitorService(
             _visibilityTrace,
+            _nativeAttack,
             message => Logger.LogInformation("[GunGameBotAI][AttackTransition] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
@@ -145,7 +150,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.53";
+    public override string ModuleVersion => "0.7.54";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -201,6 +206,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionEnhancement.BeginMap();
             _humanLookScan.BeginMap();
             _forcedEnemyAcquisition.BeginMap();
+            _nativeAttack.ResetStatistics();
             _attackTransitionMonitor.BeginMap();
         }
 
@@ -215,6 +221,20 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventBotTakeover>(OnBotTakeover);
+
+        _nativeAttack.Initialize();
+
+        if (Config.NativeAttackAssistEnabled &&
+            !_nativeAttack.Available)
+        {
+            Config.NativeAttackAssistEnabled =
+                false;
+            _attackTransitionMonitor.Config =
+                Config;
+
+            Logger.LogWarning(
+                "[GunGameBotAI][NativeAttack] NativeAttackAssistEnabled=true but the exact CCSBot::Attack signature is unavailable; runtime assist forced disabled.");
+        }
 
         _aimNative.Initialize();
 
@@ -258,6 +278,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     public override void Unload(bool hotReload)
     {
+        _nativeAttack.Shutdown();
         _aimNative.Shutdown();
         StopSharedTimers();
         _ladderMap?.Shutdown();
@@ -1083,6 +1104,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.BeginMap();
         _humanLookScan.BeginMap();
         _forcedEnemyAcquisition.BeginMap();
+        _nativeAttack.ResetStatistics();
         _attackTransitionMonitor.BeginMap();
         _ladderMap?.OnMapStart(mapName);
 
@@ -1460,7 +1482,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.ClearRuntimeState();
 
         if (!Config.VisionMonitorEnabled &&
-            !Config.ForcedEnemyAcquisitionEnabled)
+            !Config.ForcedEnemyAcquisitionEnabled &&
+            !Config.NativeAttackAssistEnabled)
         {
             _attackTransitionMonitor.ClearRuntimeState(
                 "diagnostic-disabled");
@@ -2020,6 +2043,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"forcedAcquirePostObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
             $"forcedAcquireReassert={Config.ForcedEnemyAcquisitionReassertSeconds:0.###}s; " +
             $"attackTransitionStall={Config.EnemyAttackTransitionStallSeconds:0.###}s; " +
+            $"nativeAttackAssist={(Config.NativeAttackAssistEnabled ? "enabled" : "disabled")}; " +
+            $"nativeAttackDelay={Config.NativeAttackAssistDelaySeconds:0.###}s; " +
+            $"nativeAttackAvailable={_nativeAttack.Available}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +
@@ -2038,6 +2064,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] forcedAcquireStats {_forcedEnemyAcquisition.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] attackTransitionStats {_attackTransitionMonitor.StatisticsSummary}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] nativeAttackStats {_nativeAttack.StatisticsSummary}; status={_nativeAttack.Status}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] ladderMap={(string.IsNullOrWhiteSpace(_ladderMap?.CurrentMap) ? "none" : _ladderMap.CurrentMap)}; " +
             $"physicalLadders={_ladderMap?.LadderCount ?? 0}; candidates={_ladderMap?.CandidateCount ?? 0}; " +

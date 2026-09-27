@@ -343,6 +343,33 @@ to remove them.
 
 Do not copy the broad discovery pattern into this array.
 
+### CCSBot::Attack
+
+The scanner emits an **exact** candidate when the registered discovery mask
+finds one unique reviewed target.
+
+Append the reviewed signature to:
+
+```csharp
+private static readonly string[] LinuxAttackSignatures =
+[
+    "NEW EXACT SIGNATURE",
+    "older exact signature",
+    ...
+];
+```
+
+Prefer newest first. Do not copy the wildcard discovery mask into production.
+
+Before enabling the assist after an update, confirm:
+
+```text
+css_ggbotai_status
+nativeAttackAvailable=True
+```
+
+Then enable explicitly with `css_ggbotai_native_attack 1`.
+
 ### Ladder SetLadderState
 
 If the old production signature fails but the discovery mask resolves exactly

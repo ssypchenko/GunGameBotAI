@@ -396,24 +396,10 @@ public sealed class ForcedEnemyAcquisitionService
 
             if (thisIsValveEnemy)
             {
-                if (!valveAttacking &&
-                    visibleSeconds >=
-                        DiagnosticAfterSeconds)
-                {
-                    MaybeLogVisibleNotAttacking(
-                        controller,
-                        pair,
-                        mapName,
-                        enemyEntityIndex,
-                        visibleSeconds,
-                        "acquired-not-attacking",
-                        valveEnemyEntityIndex,
-                        valveEnemyVisible,
-                        valveAttacking,
-                        valveAimingAtEnemy,
-                        now);
-                }
-
+                // Enemy->attack timing is measured separately by
+                // EnemyAttackTransitionMonitorService from Valve's actual
+                // CurrentEnemyAcquireTimestamp. Do not reuse physical LOS age
+                // here for an "acquired-not-attacking" diagnosis.
                 continue;
             }
 

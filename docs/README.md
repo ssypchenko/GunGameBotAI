@@ -2,6 +2,7 @@
 
 The plugin documentation is intentionally kept beside the project source.
 
+- `HANDOVER.md` — current development status, accepted evidence, test procedure, and next-decision gate.
 - `configuration.md` — supported settings, defaults, and validation.
 - `runtime-and-deployment.md` — lifecycle, deployment, and verification gates.
 - `native-signature-maintenance.md` — native signature/offset inventory and CS2-update recovery procedure.

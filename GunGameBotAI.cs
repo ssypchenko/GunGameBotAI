@@ -1138,6 +1138,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _humanLookScan.LogMapSummary(_currentMapName);
         _forcedEnemyAcquisition.LogMapSummary(_currentMapName);
         _attackTransitionMonitor.LogMapSummary(_currentMapName);
+        _nativeAttack.LogMapSummary(_currentMapName);
         _ladderMap?.OnMapEnd();
         ResetRuntimeState();
     }

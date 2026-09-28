@@ -52,11 +52,13 @@ public sealed class NativeAttackTestService
         CCSPlayerPawn targetPawn,
         string mapName,
         float now,
+        bool invokeNative,
         out string result)
     {
         result = "unknown";
 
-        if (!_nativeAttack.Available)
+        if (invokeNative &&
+            !_nativeAttack.Available)
         {
             result =
                 $"native Attack unavailable: {_nativeAttack.Status}";
@@ -132,6 +134,7 @@ public sealed class NativeAttackTestService
             BotName = SafeName(botController.PlayerName),
             TargetName = SafeName(targetController.PlayerName),
             MapName = SafeMap(mapName),
+            InvokeNative = invokeNative,
             StartedAt = now,
             AcquireTimestamp = now,
             LastNativeCallAt = float.NegativeInfinity,
@@ -161,23 +164,28 @@ public sealed class NativeAttackTestService
             $"TEST-ATTACK-START map={session.MapName}; " +
             $"bot={session.BotName}; slot={session.BotSlot}; " +
             $"target={session.TargetName}; targetSlot={session.TargetSlot}; " +
-            $"targetEntity={session.TargetEntityIndex}; " +
+            $"targetEntity={session.TargetEntityIndex}; mode={FormatMode(session)}; " +
             $"physicalLos=True; visiblePoint={FormatVisiblePoint(session.LastVisiblePoint)}; " +
             $"weapon={weapon.Name}; inReload={FormatKnownBool(weapon.InReload)}; " +
             $"window={TestWindowSeconds:0.00}s; retry={NativeRetrySeconds:0.00}s; " +
             "IsAttackingWrite=false; FireWrite=false");
 
-        // Invoke once synchronously with the command so the first observation
-        // cannot be confused with a later normal DecisionLoop transition.
-        InvokeNative(
-            botPawn,
-            bot,
-            targetPawn,
-            session,
-            now);
+        // Native mode invokes once synchronously with the command so the first
+        // observation cannot be confused with a later normal DecisionLoop
+        // transition. Baseline mode holds identical focus state but makes zero
+        // native calls.
+        if (session.InvokeNative)
+        {
+            InvokeNative(
+                botPawn,
+                bot,
+                targetPawn,
+                session,
+                now);
+        }
 
         result =
-            $"started: bot={session.BotName} slot={session.BotSlot}, " +
+            $"started ({FormatMode(session)}): bot={session.BotName} slot={session.BotSlot}, " +
             $"target={session.TargetName} slot={session.TargetSlot}, " +
             $"window={TestWindowSeconds:0.00}s";
 
@@ -344,15 +352,16 @@ public sealed class NativeAttackTestService
                 _info(
                     $"TEST-ATTACK-ACCEPTED map={session.MapName}; " +
                     $"bot={session.BotName}; slot={session.BotSlot}; " +
-                    $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+                    $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
                     $"after={Elapsed(session, now):0.000}s; nativeCalls={session.NativeCalls}; " +
                     $"focusReasserts={session.ReassertCount}; " +
                     $"weapon={weapon.Name}; inReload={FormatKnownBool(weapon.InReload)}; " +
                     $"isAimingAtEnemy={SafeReadBool(() => bot.IsAimingAtEnemy)}");
             }
         }
-        else if (now - session.LastNativeCallAt >=
-                 NativeRetrySeconds)
+        else if (session.InvokeNative &&
+                 now - session.LastNativeCallAt >=
+                     NativeRetrySeconds)
         {
             InvokeNative(
                 botPawn,
@@ -391,7 +400,7 @@ public sealed class NativeAttackTestService
         _info(
             $"TEST-ATTACK-FIRED map={session.MapName}; " +
             $"bot={session.BotName}; slot={session.BotSlot}; " +
-            $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+            $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
             $"after={Elapsed(session, now):0.000}s; " +
             $"weapon={SafeName(weaponName)}; nativeCalls={session.NativeCalls}; " +
             $"focusReasserts={session.ReassertCount}; " +
@@ -523,7 +532,7 @@ public sealed class NativeAttackTestService
         _info(
             $"{outcome} map={session.MapName}; " +
             $"bot={session.BotName}; slot={session.BotSlot}; " +
-            $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+            $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
             $"after={Elapsed(session, now):0.000}s; nativeCalls={session.NativeCalls}; " +
             $"focusReasserts={session.ReassertCount}; " +
             $"everAttacking={session.EverAttacking}; isAttackingNow={attackingNow}; " +
@@ -551,7 +560,7 @@ public sealed class NativeAttackTestService
         _info(
             $"TEST-ATTACK-ABORTED map={session.MapName}; " +
             $"bot={session.BotName}; slot={session.BotSlot}; " +
-            $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+            $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
             $"after={Elapsed(session, now):0.000}s; reason={SafeName(reason)}; " +
             $"nativeCalls={session.NativeCalls}; focusReasserts={session.ReassertCount}; " +
             $"everAttacking={session.EverAttacking}; " +
@@ -892,6 +901,12 @@ public sealed class NativeAttackTestService
         point?.ToString().ToUpperInvariant() ??
         "unknown";
 
+    private static string FormatMode(
+        TestSession session) =>
+        session.InvokeNative
+            ? "native"
+            : "baseline";
+
     private static string FormatEntityIndex(
         int entityIndex) =>
         entityIndex >
@@ -921,6 +936,7 @@ public sealed class NativeAttackTestService
         public string BotName { get; init; } = "unknown";
         public string TargetName { get; init; } = "unknown";
         public string MapName { get; init; } = "unknown";
+        public bool InvokeNative { get; init; }
         public float StartedAt { get; init; }
         public float AcquireTimestamp { get; init; }
         public float LastNativeCallAt { get; set; }

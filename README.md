@@ -35,6 +35,10 @@ gamedata entry is required.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.
 - `css_ggbotai_reload` — reload the plugin configuration.
+- `css_ggbotai_testattack <botSlot> <targetSlot>` — run a two-second controlled
+  `CCSBot::Attack` diagnostic. The test holds the selected enemy with
+  read-back correction, retries native Attack while `IsAttacking=false`, and
+  records the real `weapon_fire` outcome without writing `IsAttacking` or Fire.
 - `css_ggbotai_testknife <slot>` — invoke a diagnostic knife switch on a bot and
   verify the active weapon on the next frame.
 

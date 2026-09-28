@@ -38,6 +38,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly HumanLookScanService _humanLookScan;
     private readonly ForcedEnemyAcquisitionService _forcedEnemyAcquisition;
     private readonly NativeAttackService _nativeAttack;
+    private readonly NativeAttackTestService _nativeAttackTest;
     private readonly EnemyAttackTransitionMonitorService _attackTransitionMonitor;
     private readonly AimDiagnosticsService _aimDiagnostics;
     private readonly AimPolicyService _aimPolicy;
@@ -125,6 +126,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _nativeAttack = new NativeAttackService(
             message => Logger.LogInformation("[GunGameBotAI]{Message}", message),
             message => Logger.LogWarning("[GunGameBotAI]{Message}", message));
+        _nativeAttackTest = new NativeAttackTestService(
+            _visibilityTrace,
+            _nativeAttack,
+            message => Logger.LogInformation("[GunGameBotAI][NativeAttackTest] {Message}", message));
         _attackTransitionMonitor = new EnemyAttackTransitionMonitorService(
             _visibilityTrace,
             _nativeAttack,
@@ -150,7 +155,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.55";
+    public override string ModuleVersion => "0.7.56";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -302,6 +307,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
         _forcedEnemyAcquisition.Reset();
+        _nativeAttackTest.Clear(
+            "plugin-unload");
         _attackTransitionMonitor.Reset();
         _aimDiagnostics.Reset();
         _transientControl.Clear();
@@ -565,6 +572,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _forcedEnemyAcquisition.RemoveSlot(
                         slot,
                         "ladder-traversal");
+                    _nativeAttackTest.RemoveSlot(
+                        slot,
+                        "ladder-traversal");
                     _attackTransitionMonitor.RemoveSlot(
                         slot,
                         "ladder-traversal");
@@ -593,30 +603,40 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     mapName,
                     now);
 
-                // Forced Enemy Acquisition runs after ordinary Valve/GunGame
-                // decision work, but before diagnostics/look-scan consume the
-                // current enemy state. It can therefore seed m_enemy after a
-                // full continuous-LOS grace period and let the same loop observe
-                // whether Valve accepted that state.
-                _forcedEnemyAcquisition.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    mapName,
-                    freezePeriod,
-                    now);
+                bool nativeAttackTestActive =
+                    _nativeAttackTest.IsActive(
+                        slot);
 
-                // Observation-only: measure the time from Valve's stable
-                // current enemy to IsAttacking independently of LOS age.
-                _attackTransitionMonitor.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    mapName,
-                    freezePeriod,
-                    now);
+                // A controlled native-Attack test owns enemy/perception state.
+                // Keep production Stage 6.6/6.7 writers out of that slot so the
+                // result cannot be attributed to a competing correction.
+                if (!nativeAttackTestActive)
+                {
+                    // Forced Enemy Acquisition runs after ordinary Valve/GunGame
+                    // decision work, but before diagnostics/look-scan consume the
+                    // current enemy state. It can therefore seed m_enemy after a
+                    // full continuous-LOS grace period and let the same loop observe
+                    // whether Valve accepted that state.
+                    _forcedEnemyAcquisition.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        mapName,
+                        freezePeriod,
+                        now);
+
+                    // Observation-only: measure the time from Valve's stable
+                    // current enemy to IsAttacking independently of LOS age.
+                    _attackTransitionMonitor.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        mapName,
+                        freezePeriod,
+                        now);
+                }
 
                 _visionMonitor.Observe(
                     controller,
@@ -627,28 +647,31 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     freezePeriod,
                     now);
 
-                _visionEnhancement.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    now);
-
-                _humanLookScan.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    freezePeriod,
-                    now);
-
-                // NormalGunGame deliberately deactivates the shared actuator in
-                // ThinkBot(). A newly started look scan must reacquire fast
-                // actuator ownership, exactly like Knife Rush does.
-                if (_humanLookScan.IsActive(slot))
+                if (!nativeAttackTestActive)
                 {
-                    _registry.ActivateActuator(
-                        slot);
+                    _visionEnhancement.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        now);
+
+                    _humanLookScan.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        freezePeriod,
+                        now);
+
+                    // NormalGunGame deliberately deactivates the shared actuator in
+                    // ThinkBot(). A newly started look scan must reacquire fast
+                    // actuator ownership, exactly like Knife Rush does.
+                    if (_humanLookScan.IsActive(slot))
+                    {
+                        _registry.ActivateActuator(
+                            slot);
+                    }
                 }
 
                 if (state.Mode is
@@ -832,6 +855,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 activeSlots.Add(pulseSlot);
         }
 
+        foreach (int attackTestSlot in
+                 _nativeAttackTest.ActiveSlots)
+        {
+            if (!activeSlots.Contains(attackTestSlot))
+                activeSlots.Add(attackTestSlot);
+        }
+
         for (int index = activeSlots.Count - 1;
             index >= 0;
             index--)
@@ -934,11 +964,31 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         BotBehaviorMode.KnifeLevel or
                         BotBehaviorMode.OpportunisticKnifeRush;
 
+                bool attackTestOwned =
+                    false;
+
+                if (!ladderTraversalOwned &&
+                    !knifeActuatorOwned &&
+                    state.Mode ==
+                        BotBehaviorMode.NormalGunGame &&
+                    _nativeAttackTest.IsActive(
+                        slot))
+                {
+                    attackTestOwned =
+                        _nativeAttackTest.ApplyFast(
+                            controller,
+                            pawn,
+                            bot,
+                            state,
+                            now);
+                }
+
                 bool lookScanOwned =
                     false;
 
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
+                    !attackTestOwned &&
                     state.Mode ==
                         BotBehaviorMode.NormalGunGame)
                 {
@@ -974,6 +1024,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 // registry ownership does not starve them.
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
+                    !attackTestOwned &&
                     !lookScanOwned)
                 {
                     _registry.DeactivateActuator(
@@ -1157,6 +1208,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _forcedEnemyAcquisition.RemoveSlot(
             playerSlot,
             "disconnect");
+        _nativeAttackTest.RemoveSlot(
+            playerSlot,
+            "disconnect");
         _attackTransitionMonitor.RemoveSlot(
             playerSlot,
             "disconnect");
@@ -1181,6 +1235,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _forcedEnemyAcquisition.ClearRuntimeState(
+            "round-end");
+        _nativeAttackTest.Clear(
             "round-end");
         _attackTransitionMonitor.ClearRuntimeState(
             "round-end");
@@ -1245,6 +1301,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _forcedEnemyAcquisition.RemoveSlot(
                 slot,
                 "player-death");
+            _nativeAttackTest.RemoveSlot(
+                slot,
+                "player-death");
             _attackTransitionMonitor.RemoveSlot(
                 slot,
                 "player-death");
@@ -1266,6 +1325,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         BotRuntimeState state = _registry.GetOrCreate(player.Slot);
+
+        _nativeAttackTest.OnWeaponFire(
+            player.Slot,
+            @event.Weapon,
+            Server.CurrentTime);
 
         // Special movement controllers own velocity/input while active.
         // Counter-strafe from normal combat movement must not fight them.
@@ -1318,6 +1382,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
             _forcedEnemyAcquisition.RemoveSlot(
+                slot,
+                "bot-takeover");
+            _nativeAttackTest.RemoveSlot(
                 slot,
                 "bot-takeover");
             _attackTransitionMonitor.RemoveSlot(
@@ -1918,6 +1985,115 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
     }
 
+    [ConsoleCommand("css_ggbotai_testattack", "Run a controlled native CCSBot::Attack test.")]
+    [CommandHelper(minArgs: 2, usage: "<botSlot> <targetSlot>", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnTestAttackCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!_enabled)
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Runtime is disabled; no native Attack test was started.");
+            return;
+        }
+
+        if (!int.TryParse(
+                command.GetArg(1),
+                out int botSlot) ||
+            !int.TryParse(
+                command.GetArg(2),
+                out int targetSlot))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_testattack <botSlot> <targetSlot>");
+            return;
+        }
+
+        if (!BotValidation.TryResolveLiveBot(
+                botSlot,
+                out CCSPlayerController? botController,
+                out CCSPlayerPawn? botPawn,
+                out CCSBot? bot) ||
+            botController == null ||
+            botPawn == null ||
+            bot == null)
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Shooter slot is not a live bot.");
+            return;
+        }
+
+        if (IsBotInSpawnGrace(
+                botController,
+                Server.CurrentTime))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Shooter bot is still in spawn grace; retry after it is fully initialised.");
+            return;
+        }
+
+        CCSPlayerController? targetController;
+        CCSPlayerPawn? targetPawn;
+
+        try
+        {
+            targetController =
+                Utilities.GetPlayerFromSlot(
+                    targetSlot);
+            targetPawn =
+                targetController?.PlayerPawn.Value;
+        }
+        catch
+        {
+            targetController =
+                null;
+            targetPawn =
+                null;
+        }
+
+        if (targetController == null ||
+            !targetController.IsValid ||
+            targetController.IsHLTV ||
+            targetPawn == null ||
+            !targetPawn.IsValid ||
+            targetPawn.Handle ==
+                nint.Zero ||
+            targetPawn.Health <=
+                0 ||
+            targetPawn.LifeState !=
+                (byte)LifeState_t.LIFE_ALIVE)
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Target slot is not a live player.");
+            return;
+        }
+
+        BotRuntimeState state =
+            _registry.GetOrCreate(
+                botSlot);
+
+        if (!_nativeAttackTest.TryStart(
+                botController,
+                botPawn,
+                bot,
+                state,
+                targetController,
+                targetPawn,
+                _currentMapName,
+                Server.CurrentTime,
+                out string result))
+        {
+            command.ReplyToCommand(
+                $"[GunGameBotAI] Native Attack test not started: {result}.");
+            return;
+        }
+
+        _registry.ActivateActuator(
+            botSlot);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] Native Attack test {result}. Watch [NativeAttackTest] logs.");
+    }
+
     [ConsoleCommand("css_ggbotai_testknife", "Test public bot knife activation.")]
     [CommandHelper(minArgs: 1, usage: "<slot>", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnTestKnifeCommand(CCSPlayerController? player, CommandInfo command)
@@ -1982,6 +2158,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
         _forcedEnemyAcquisition.Reset();
+        _nativeAttackTest.Clear(
+            enabled ? "runtime-enabled-reset" : "runtime-disabled");
         _attackTransitionMonitor.Reset();
         _aimDiagnostics.Reset();
         _aimNative.Reset();
@@ -2005,6 +2183,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _forcedEnemyAcquisition.ClearRuntimeState();
+        _nativeAttackTest.Clear(
+            "runtime-reset");
         _attackTransitionMonitor.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
@@ -2123,6 +2303,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"nativeAttackAssist={(Config.NativeAttackAssistEnabled ? "enabled" : "disabled")}; " +
             $"nativeAttackDelay={Config.NativeAttackAssistDelaySeconds:0.###}s; " +
             $"nativeAttackAvailable={_nativeAttack.Available}; " +
+            $"nativeAttackTests={_nativeAttackTest.ActiveCount}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
             $"liveBots={liveBots}; tracked={_registry.Count}; actuator={_registry.ActiveActuatorSlots.Count}; pulses={_buttonPulses.Count}; " +

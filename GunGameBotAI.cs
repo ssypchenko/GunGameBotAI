@@ -2002,7 +2002,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     [ConsoleCommand("css_ggbotai_testattack", "Run a controlled native CCSBot::Attack test.")]
-    [CommandHelper(minArgs: 2, usage: "<botSlot> <targetSlot>", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    [CommandHelper(minArgs: 2, usage: "<botSlot> <targetSlot> [native|baseline]", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnTestAttackCommand(CCSPlayerController? player, CommandInfo command)
     {
         if (!_enabled)
@@ -2020,9 +2020,28 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 out int targetSlot))
         {
             command.ReplyToCommand(
-                "[GunGameBotAI] Usage: css_ggbotai_testattack <botSlot> <targetSlot>");
+                "[GunGameBotAI] Usage: css_ggbotai_testattack <botSlot> <targetSlot> [native|baseline]");
             return;
         }
+
+        string testMode =
+            command.ArgCount >=
+                4
+                ? command.GetArg(3)
+                    .Trim()
+                    .ToLowerInvariant()
+                : "native";
+
+        if (testMode is not ("native" or "baseline"))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_testattack <botSlot> <targetSlot> [native|baseline]");
+            return;
+        }
+
+        bool invokeNative =
+            testMode ==
+                "native";
 
         if (!BotValidation.TryResolveLiveBot(
                 botSlot,
@@ -2096,6 +2115,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 targetPawn,
                 _currentMapName,
                 Server.CurrentTime,
+                invokeNative,
                 out string result))
         {
             command.ReplyToCommand(

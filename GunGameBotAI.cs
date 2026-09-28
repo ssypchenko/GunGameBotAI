@@ -497,6 +497,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _forcedEnemyAcquisition.RemoveSlot(
                         slot,
                         "bot-unavailable");
+                    _nativeAttackTest.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _attackTransitionMonitor.RemoveSlot(
                         slot,
                         "bot-unavailable");

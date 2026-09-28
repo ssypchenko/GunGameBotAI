@@ -130,16 +130,40 @@ public sealed class NativeAttackService
 
     public NativeAttackInvocationResult TryAttack(
         CCSBot bot,
-        CCSPlayerPawn enemyPawn)
+        CCSPlayerPawn enemyPawn) =>
+        TryAttackCore(
+            bot,
+            enemyPawn,
+            trackStatistics: true);
+
+    /// <summary>
+    /// Invoke the same validated native transition without polluting the
+    /// production Stage 6.7 accepted/noop counters. Controlled diagnostic tests
+    /// own their multi-tick outcome classification.
+    /// </summary>
+    public NativeAttackInvocationResult TryAttackForDiagnostic(
+        CCSBot bot,
+        CCSPlayerPawn enemyPawn) =>
+        TryAttackCore(
+            bot,
+            enemyPawn,
+            trackStatistics: false);
+
+    private NativeAttackInvocationResult TryAttackCore(
+        CCSBot bot,
+        CCSPlayerPawn enemyPawn,
+        bool trackStatistics)
     {
         EnsureInitialised();
 
-        _attempts++;
+        if (trackStatistics)
+            _attempts++;
 
         if (!_available ||
             _attack == null)
         {
-            _unavailable++;
+            if (trackStatistics)
+                _unavailable++;
 
             return
                 NativeAttackInvocationResult.NotInvoked(
@@ -151,7 +175,8 @@ public sealed class NativeAttackService
                 enemyPawn,
                 out string validationReason))
         {
-            _validationRejected++;
+            if (trackStatistics)
+                _validationRejected++;
 
             return
                 NativeAttackInvocationResult.NotInvoked(
@@ -160,7 +185,8 @@ public sealed class NativeAttackService
 
         try
         {
-            _invoked++;
+            if (trackStatistics)
+                _invoked++;
 
             _attack.Invoke(
                 bot.Handle,
@@ -188,7 +214,8 @@ public sealed class NativeAttackService
 
             if (attackingAfterCall)
             {
-                _accepted++;
+                if (trackStatistics)
+                    _accepted++;
 
                 return
                     new NativeAttackInvocationResult(
@@ -201,7 +228,8 @@ public sealed class NativeAttackService
                         attackingAfterCall);
             }
 
-            _noops++;
+            if (trackStatistics)
+                _noops++;
 
             return
                 new NativeAttackInvocationResult(
@@ -215,7 +243,8 @@ public sealed class NativeAttackService
         }
         catch (Exception exception)
         {
-            _failures++;
+            if (trackStatistics)
+                _failures++;
 
             // A managed invocation failure disables the integration for the
             // remainder of this plugin lifetime. A true native ABI crash cannot

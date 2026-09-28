@@ -243,8 +243,9 @@ public sealed class NativeAttackService
         }
         catch (Exception exception)
         {
-            if (trackStatistics)
-                _failures++;
+            // Invocation failure is service-health information even when the
+            // caller is the isolated diagnostic harness.
+            _failures++;
 
             // A managed invocation failure disables the integration for the
             // remainder of this plugin lifetime. A true native ABI crash cannot

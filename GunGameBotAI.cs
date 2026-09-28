@@ -886,6 +886,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _nativeAttackTest.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _registry.Remove(slot);
                     continue;
                 }
@@ -896,6 +899,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _nativeAttackTest.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _registry.Remove(slot);
                     continue;
                 }
@@ -911,6 +917,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _nativeAttackTest.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _registry.Remove(slot);
                     continue;
                 }
@@ -923,6 +932,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _nativeAttackTest.RemoveSlot(
+                        slot,
+                        "runtime-state-unavailable");
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
@@ -937,8 +949,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 // Fast actuator priority:
                 //   1. learned ladder traversal,
                 //   2. Knife Rush / mandatory knife,
-                //   3. Human Look Scan,
-                //   4. ordinary transient control.
+                //   3. controlled native Attack diagnostic,
+                //   4. Human Look Scan,
+                //   5. ordinary transient control.
                 //
                 // LookScan never competes with the two higher-priority owners.
                 bool ladderTraversalOwned =

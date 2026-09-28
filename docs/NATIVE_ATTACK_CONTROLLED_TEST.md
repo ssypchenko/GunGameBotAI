@@ -29,17 +29,25 @@ Find the two player slots with the normal server `status` command.
 ## Run
 
 ```text
-css_ggbotai_testattack <botSlot> <targetSlot>
+css_ggbotai_testattack <botSlot> <targetSlot> [native|baseline]
 ```
 
 Example:
 
 ```text
-css_ggbotai_testattack 2 0
+css_ggbotai_testattack 2 0 baseline
+
+# after resetting the encounter under the same conditions:
+css_ggbotai_testattack 2 0 native
 ```
 
 The command requires a live bot in `botSlot` and any live enemy player
 (human or bot) in `targetSlot`.
+
+`native` is the default if the third argument is omitted. `baseline` performs
+the identical target-hold/read-back logic but makes **zero** native Attack calls.
+For reliable attribution, run a baseline trial and a native trial under the same
+conditions, resetting the encounter between them.
 
 ## What the test does
 
@@ -52,10 +60,11 @@ The test lasts at most 2.0 seconds.
    fields already proven by Forced Enemy Acquisition.
 5. Preserves the original acquire timestamp while refreshing last-seen state.
 6. If Valve clears the selected enemy/visibility, reasserts that same target.
-7. Calls native `CCSBot::Attack(target)` immediately.
-8. While `IsAttacking` remains false, retries the native call every 0.10 s.
-9. As soon as `IsAttacking=true`, stops treating the current call as a no-op;
-   the bounded test continues only to observe whether the bot actually fires.
+7. In `native` mode, calls native `CCSBot::Attack(target)` immediately.
+8. In `native` mode, while `IsAttacking` remains false, retries the native
+   call every 0.10 s. In `baseline` mode this step is omitted completely.
+9. As soon as `IsAttacking=true`, records the transition; the bounded test
+   continues only to observe whether the bot actually fires.
 10. Stops immediately when a real `weapon_fire` event is observed.
 
 The diagnostic **never** writes `IsAttacking=true` and **never** presses the
@@ -153,11 +162,14 @@ bot entered a ladder/special mode, or Valve selected a different enemy.
 
 ## How to interpret the first live run
 
-The most useful outcomes are:
+Compare the baseline and native trials first. The most useful outcomes are:
 
-- **CALL -> immediate ACCEPTED -> FIRED**: native Attack works directly.
-- **several CALL/no-op -> ACCEPTED -> FIRED**: the function works, but requires
-  short read-back/reassert holding before Valve accepts the transition.
+- **baseline is slow, native CALL -> immediate ACCEPTED -> FIRED**: native Attack works directly.
+- **baseline is slow, several native CALL/no-op -> ACCEPTED -> FIRED notably
+  earlier**: the function has a measurable effect but needs short hold/retry.
+- **baseline and native accept/fire at roughly the same delay**: repeated native
+  Attack has not shown a useful effect; the later transition is likely ordinary
+  Valve AI rather than evidence that our call was accepted.
 - **CALLs while inReload=True, then success after reload ends**: the reload
   guard explains the earlier no-op.
 - **all CALLs show inReload=False, same enemy/visibility remain true, but

@@ -318,7 +318,7 @@ public sealed class NativeAttackTestService
             _info(
                 $"TEST-ATTACK-FOCUS-REASSERT map={session.MapName}; " +
                 $"bot={session.BotName}; slot={session.BotSlot}; " +
-                $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+                $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
                 $"after={Elapsed(session, now):0.000}s; count={session.ReassertCount}; " +
                 $"reason={(sameEnemy ? "visibility-cleared" : "enemy-cleared")}; " +
                 "IsAttackingWrite=false; FireWrite=false");
@@ -490,7 +490,7 @@ public sealed class NativeAttackTestService
         _info(
             $"TEST-ATTACK-CALL map={session.MapName}; " +
             $"bot={session.BotName}; slot={session.BotSlot}; " +
-            $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+            $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
             $"call={session.NativeCalls}; after={Elapsed(session, now):0.000}s; " +
             $"invoked={invocation.Invoked}; immediateAccepted={invocation.Accepted}; " +
             $"reason={invocation.Reason}; " +
@@ -505,7 +505,7 @@ public sealed class NativeAttackTestService
             _info(
                 $"TEST-ATTACK-ACCEPTED map={session.MapName}; " +
                 $"bot={session.BotName}; slot={session.BotSlot}; " +
-                $"target={session.TargetName}#{session.TargetEntityIndex}; " +
+                $"target={session.TargetName}#{session.TargetEntityIndex}; mode={FormatMode(session)}; " +
                 $"after={Elapsed(session, now):0.000}s; nativeCalls={session.NativeCalls}; " +
                 $"focusReasserts={session.ReassertCount}; source=immediate-native-readback");
         }

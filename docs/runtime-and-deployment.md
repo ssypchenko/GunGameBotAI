@@ -242,7 +242,7 @@ baseline.
 
 ## Enemy Reaction verification
 
-Version 0.8.0 replaces the separate Forced Enemy Acquisition and attack-stall
+Version 0.8.1 uses the separate Forced Enemy Acquisition and attack-stall
 assist experiments with one bounded production controller.
 
 Default behaviour:
@@ -250,7 +250,7 @@ Default behaviour:
 ```text
 physical LOS
 enemy within 1000 units
-enemy within 120 degrees of current yaw
+360-degree physical LOS; angle changes reaction delay only
 reaction delay 0.20..0.50 s, weighted by angle
 short 0.35 s yaw/focus hold
 one native CCSBot::Attack(enemy) call when the exact signature is available
@@ -284,12 +284,15 @@ Verify three cases:
 
 1. Put an enemy roughly in front of the bot. Reaction should normally be near
    the lower part of the configured delay range.
-2. Put an enemy clearly to the side but still within the 120-degree sector.
-   The bot should stop passing by, turn toward the enemy after a slightly
-   longer natural delay, acquire it and attack.
-3. Put the enemy behind the bot, outside the configured sector. Enemy Reaction
-   must not snap the bot around. A reaction may begin later only after Valve or
-   ambient look behaviour naturally brings the enemy inside the sector.
+2. Put an enemy clearly to the side. The bot should stop passing by, turn
+   toward the enemy after a slightly longer natural delay, acquire it and attack.
+3. Put the enemy directly behind the bot with clear physical LOS. The bot should
+   still notice it, use a delay near the slower end of the configured range,
+   turn around, acquire it and attack.
+4. Expose two or more enemies at once. With no Valve current enemy, the nearest
+   physically visible opponent should be selected and held for the reaction
+   episode. At effectively equal distance, the smaller view angle is the
+   tie-breaker.
 
 A `COMMIT` writes enemy/perception fields and yaw only. It never writes
 `IsAttacking=true` and never presses Fire. Native Attack is invoked once at

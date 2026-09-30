@@ -33,6 +33,7 @@ gamedata entry is required.
 - `css_ggbotai_aim_mode mixed|head|body` — choose Stage 4 point priority policy.
 - `css_ggbotai_vision_monitor 0|1` — enable/disable Stage 5 observation-only nearby-enemy vision diagnostics.
 - `css_ggbotai_hearing_monitor 0|1` — enable/disable Stage 6A observation-only hearing monitoring.
+- `css_ggbotai_hearing_reaction 0|1` — enable/disable Stage 6B bounded look reaction to Valve enemy noise.
 - `css_ggbotai_hearing_debug 0|1` — enable/disable detailed sound-event/Valve-Noise correlation logs.
 - `css_ggbotai_enemy_reaction 0|1` — enable/disable the bounded visible-enemy reaction controller.
 - `css_ggbotai_enemy_reaction_delay <minSeconds> <maxSeconds>` — tune the human-like reaction delay range.
@@ -97,6 +98,14 @@ Stage 6A adds `HearingMonitorService`. When explicitly enabled it correlates
 `CCSBot.Noise*` state. It records source team relationship, native travel
 distance, noise-position error and bent-noise availability, but performs no
 hearing, enemy, view, navigation, movement or attack writes.
+
+Stage 6B adds opt-in `HearingReactionService`. A new Valve-owned enemy
+`NoiseTimestamp` may create a short reaction delay and bounded `EyeAngles.Y`
+hold toward the copied, imprecise `NoisePosition`. `NoiseSource` is used only
+to validate that the source is an opposing-team pawn and to record its entity
+id; the source pawn's current position is never read. The service never assigns
+Enemy and never changes hearing, navigation, movement, weapon or attack state.
+Visible combat, ladder traversal and special Knife ownership outrank hearing.
 
 `EnemyReactionService` is the single production path for visible-enemy
 aggression. Detection uses real physical LOS across the full 360 degrees

@@ -11,7 +11,15 @@ After a short human-like delay it briefly turns yaw toward the enemy, seeds or
 refreshes Valve perception state, and may call the validated native
 `CCSBot::Attack` transition once.
 
-The default profile is conservative:
+The default profile is production-oriented:
+
+The ConfigVersion 43 production profile keeps `EnabledOnLoad=false` as the
+master runtime gate. Behaviour-changing bot features default to enabled, while
+debug/observation-only facilities default to disabled. In particular:
+`Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
+`VisionDebug=false`, `VisionMonitorEnabled=false`,
+`StuckMonitorEnabled=false`, `GeometrySafetyDetectionEnabled=false`,
+`LadderMapDebug=false`, and `LadderHumanMovementDiagnostics=false`.
 
 ```json
 {
@@ -57,15 +65,15 @@ The default profile is conservative:
   "KnifeRushSecondaryAttackChancePercent": 35,
   "KnifeRushAllowOnGrenadeLevel": false,
   "GrenadeLevelEnabled": true,
-  "AimEnhancementEnabled": false,
+  "AimEnhancementEnabled": true,
   "AimMode": "Mixed",
   "AimDebug": false,
   "VisionMonitorEnabled": false,
   "VisionMonitorDistance": 800.0,
   "VisionDebug": false,
-  "VisionEnhancementEnabled": false,
+  "VisionEnhancementEnabled": true,
   "VisionLookAroundRestartIntervalSeconds": 0.75,
-  "HumanLookScanEnabled": false,
+  "HumanLookScanEnabled": true,
   "HumanLookScanMinIntervalSeconds": 2.50,
   "HumanLookScanMaxIntervalSeconds": 4.50,
   "HumanLookScanHoldSeconds": 0.30,
@@ -84,11 +92,11 @@ The default profile is conservative:
   "EnemyReactionNativeAttackEnabled": true,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 42
+  "ConfigVersion": 43
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; full 360-degree Enemy Reaction uses version `42`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `43`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -96,7 +104,7 @@ safe defaults: `VisionMonitorEnabled=false`,
 `VisionEnhancementEnabled=true` from the 0.7.40/0.7.41 experiment is preserved
 during migration.
 
-`AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook.
+`AimEnhancementEnabled` controls the Stage 4 `PickNewAimSpot` PostHook and defaults to `true` in the production profile.
 `AimMode` accepts `Mixed`, `Head`, or `Body`. `AimDebug` enables Stage 3
 visibility diagnostics plus Stage 4 correction/performance diagnostics.
 
@@ -108,8 +116,7 @@ the broad `Debug` flag. Aggregate statistics remain available through
 `css_ggbotai_status`. A per-map `MAP-SUMMARY` is written automatically when
 the map ends.
 
-`VisionEnhancementEnabled` controls the Stage 6 managed look-around experiment
-and defaults to `false`. Stage 6 v2 retains the v1
+`VisionEnhancementEnabled` controls managed Valve look-around support and defaults to `true` in the production profile. Stage 6 v2 retains the v1
 `CCSBot.InhibitLookAroundTimestamp` release and may also reset
 `CCSBot.LookAroundStateTimestamp` to zero on a bounded cadence when there is
 no valid current enemy and pathfinding is not controlling the bot's eye
@@ -117,8 +124,7 @@ angles. `VisionLookAroundRestartIntervalSeconds` controls that cadence and is
 validated to `0.50..5.0` seconds. Stage 6 never writes `EyeAngles`;
 `EyeAnglesUnderPathFinderControl` remains observation-only.
 
-`HumanLookScanEnabled` controls the ambient physical look-scan experiment
-and defaults to `false`. It writes only the yaw component
+`HumanLookScanEnabled` controls the ambient physical look-scan behaviour and defaults to `true` in the production profile. It writes only the yaw component
 `CCSPlayerPawn.EyeAngles.Y` through the shared fast actuator. Direction choice
 is now geometry then random; enemy-directed hints were removed in ConfigVersion
 41. While Enemy Reaction is pending or active, ambient look scanning is

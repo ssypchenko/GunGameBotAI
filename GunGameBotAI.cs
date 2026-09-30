@@ -460,10 +460,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _visionMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(
-                        slot,
-                        "human-takeover");
-                    _attackTransitionMonitor.RemoveSlot(
+                    _enemyReaction.RemoveSlot(
                         slot,
                         "human-takeover");
                     _aimDiagnostics.RemoveSlot(slot);

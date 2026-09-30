@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 44;
+    public override int Version { get; set; } = 45;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -261,6 +261,17 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool HearingMonitorEnabled { get; set; } = false;
     public bool HearingDebug { get; set; } = false;
 
+    // Stage 6B bounded hearing reaction. Uses only Valve's imprecise
+    // NoisePosition snapshot from a validated enemy NoiseSource. It may hold
+    // EyeAngles.Y briefly but never changes Enemy, navigation, movement or fire.
+    public bool HearingReactionEnabled { get; set; } = false;
+    public float HearingReactionMinSeconds { get; set; } = 0.10f;
+    public float HearingReactionMaxSeconds { get; set; } = 0.25f;
+    public float HearingReactionHoldSeconds { get; set; } = 0.25f;
+    public float HearingReactionYawToleranceDegrees { get; set; } = 6.0f;
+    public float HearingReactionMaxDistance { get; set; } = 1400.0f;
+    public float HearingReactionCooldownSeconds { get; set; } = 0.20f;
+
     // Managed Valve look-around support. Enabled by default; diagnostics stay separate.
     // v1 releases Valve's look-around inhibit. v2 may also restart Valve's own
     // look-around state on a bounded cadence when no current enemy exists.
@@ -310,6 +321,48 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
         VisionMonitorDistance = Clamp(VisionMonitorDistance, 100.0f, 2000.0f, 800.0f, nameof(VisionMonitorDistance), warn);
+        HearingReactionMinSeconds = Clamp(
+            HearingReactionMinSeconds,
+            0.05f,
+            1.00f,
+            0.10f,
+            nameof(HearingReactionMinSeconds),
+            warn);
+        HearingReactionMaxSeconds = Clamp(
+            HearingReactionMaxSeconds,
+            HearingReactionMinSeconds,
+            1.50f,
+            MathF.Max(0.25f, HearingReactionMinSeconds),
+            nameof(HearingReactionMaxSeconds),
+            warn);
+        HearingReactionHoldSeconds = Clamp(
+            HearingReactionHoldSeconds,
+            0.10f,
+            0.75f,
+            0.25f,
+            nameof(HearingReactionHoldSeconds),
+            warn);
+        HearingReactionYawToleranceDegrees = Clamp(
+            HearingReactionYawToleranceDegrees,
+            1.0f,
+            30.0f,
+            6.0f,
+            nameof(HearingReactionYawToleranceDegrees),
+            warn);
+        HearingReactionMaxDistance = Clamp(
+            HearingReactionMaxDistance,
+            100.0f,
+            3000.0f,
+            1400.0f,
+            nameof(HearingReactionMaxDistance),
+            warn);
+        HearingReactionCooldownSeconds = Clamp(
+            HearingReactionCooldownSeconds,
+            0.0f,
+            2.0f,
+            0.20f,
+            nameof(HearingReactionCooldownSeconds),
+            warn);
         VisionLookAroundRestartIntervalSeconds = Clamp(
             VisionLookAroundRestartIntervalSeconds,
             0.50f,

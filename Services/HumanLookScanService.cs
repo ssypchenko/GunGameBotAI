@@ -1015,16 +1015,6 @@ public sealed class HumanLookScanService
                 System.Globalization.CultureInfo.InvariantCulture)
             : "unknown";
 
-    private static string FormatOptional(
-        int? value) =>
-        value?.ToString() ??
-        "none";
-
-    private static string FormatOptional(
-        AimPointKind? value) =>
-        value?.ToString().ToUpperInvariant() ??
-        "none";
-
     private sealed class ScanState
     {
         public bool Active { get; set; }

@@ -13,12 +13,12 @@ refreshes Valve perception state, and may call the validated native
 
 The default profile is production-oriented:
 
-The ConfigVersion 44 production profile keeps `EnabledOnLoad=false` as the
+The ConfigVersion 45 production profile keeps `EnabledOnLoad=false` as the
 master runtime gate. Behaviour-changing bot features default to enabled, while
 debug/observation-only facilities default to disabled. In particular:
 `Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
 `VisionDebug=false`, `VisionMonitorEnabled=false`,
-`HearingMonitorEnabled=false`, `HearingDebug=false`,
+`HearingMonitorEnabled=false`, `HearingReactionEnabled=false`, `HearingDebug=false`,
 `StuckMonitorEnabled=false`, `GeometrySafetyDetectionEnabled=false`,
 `LadderMapDebug=false`, and `LadderHumanMovementDiagnostics=false`.
 
@@ -74,6 +74,13 @@ debug/observation-only facilities default to disabled. In particular:
   "VisionDebug": false,
   "HearingMonitorEnabled": false,
   "HearingDebug": false,
+  "HearingReactionEnabled": false,
+  "HearingReactionMinSeconds": 0.10,
+  "HearingReactionMaxSeconds": 0.25,
+  "HearingReactionHoldSeconds": 0.25,
+  "HearingReactionYawToleranceDegrees": 6.0,
+  "HearingReactionMaxDistance": 1400.0,
+  "HearingReactionCooldownSeconds": 0.20,
   "VisionEnhancementEnabled": true,
   "VisionLookAroundRestartIntervalSeconds": 0.75,
   "HumanLookScanEnabled": true,
@@ -95,11 +102,11 @@ debug/observation-only facilities default to disabled. In particular:
   "EnemyReactionNativeAttackEnabled": true,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 44
+  "ConfigVersion": 45
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; the production-default profile uses version `44`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `45`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -126,6 +133,17 @@ and `weapon_reload` with Valve `CCSBot.NoisePosition`, `NoiseTravelDistance`,
 `BendNoisePositionValid`. `HearingDebug` controls detailed correlation logging.
 Stage 6A never writes hearing, enemy, view, navigation, movement or attack
 state. Aggregate hearing statistics are included in `css_ggbotai_status`.
+
+`HearingReactionEnabled` controls Stage 6B and defaults to `false` until live
+acceptance. A new Valve enemy `NoiseTimestamp` inside
+`HearingReactionMaxDistance` may create a random
+`HearingReactionMinSeconds..HearingReactionMaxSeconds` delay followed by a
+short `HearingReactionHoldSeconds` `EyeAngles.Y` hold toward the copied
+`NoisePosition`. `HearingReactionYawToleranceDegrees` suppresses redundant
+yaw writes and `HearingReactionCooldownSeconds` prevents immediate repeated
+leases. `NoiseSource` is used only for team/entity validation; the source
+pawn's current position is never read. Stage 6B never assigns Enemy and never
+writes hearing, navigation, movement, weapon or attack state.
 
 `VisionEnhancementEnabled` controls managed Valve look-around support and defaults to `true` in the production profile. Stage 6 v2 retains the v1
 `CCSBot.InhibitLookAroundTimestamp` release and may also reset

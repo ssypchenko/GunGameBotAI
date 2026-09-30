@@ -91,12 +91,13 @@ visible enemy. It records acquisition delay, view angle, movement state and
 behaviour mode, but performs no vision, enemy, view or movement writes.
 
 `EnemyReactionService` is the single production path for visible-enemy
-aggression. An opponent must have real physical LOS and enter the configured
-view sector (120 degrees from the current yaw by default). The service chooses
-one target, waits an angle-weighted random reaction delay (0.20..0.50 seconds by
-default), then briefly turns yaw toward that target, seeds or refreshes Valve's
-enemy/perception fields, and calls the validated native `CCSBot::Attack`
-transition once. It never writes `IsAttacking` and never presses Fire. The
+aggression. Detection uses real physical LOS across the full 360 degrees
+inside the configured distance. If Valve already owns a visible current enemy,
+that target is preserved; otherwise the service selects exactly one nearest
+physically visible opponent (view angle is only a tie-breaker). It then waits an
+angle-weighted random reaction delay (0.20..0.50 seconds by default), briefly
+turns yaw toward that target, seeds or refreshes Valve's enemy/perception
+fields, and calls the validated native `CCSBot::Attack` transition once. It never writes `IsAttacking` and never presses Fire. The
 short yaw hold ends as soon as Valve owns combat aim/attack, a shot is observed,
 LOS is lost, or the hold timeout expires. Ambient Human Look Scan is suppressed
 while a reaction is pending or active and otherwise remains geometry/random

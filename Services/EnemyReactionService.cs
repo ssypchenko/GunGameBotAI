@@ -119,15 +119,15 @@ public sealed class EnemyReactionService
             _states.Remove(slot);
         }
 
-        foreach ((int botSlot, ReactionState state) in
+        foreach ((int botSlot, ReactionState targetState) in
                  _states
                      .Where(pair => pair.Value.TargetSlot == slot)
                      .ToArray())
         {
             _onPluginAcquisitionEnded(
-                state.BotSlot,
-                state.TargetEntityIndex);
-            LogEnd(state, $"target-{reason}");
+                targetState.BotSlot,
+                targetState.TargetEntityIndex);
+            LogEnd(targetState, $"target-{reason}");
             _states.Remove(botSlot);
         }
     }

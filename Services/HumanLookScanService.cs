@@ -15,9 +15,9 @@ namespace GunGameBotAI.Services;
 /// target for a short bounded interval.
 ///
 /// Valve keeps ownership of navigation, movement, target selection, firing and
-/// combat aim. Pitch and roll are preserved. Direction selection is separate:
-/// first a physically visible but Valve-unacquired enemy, then open map
-/// geometry, then the legacy random fallback.
+/// combat aim. Pitch and roll are preserved. Enemy-directed turning belongs to
+/// EnemyReactionService; this service uses only open geometry and random
+/// fallback directions while no reaction is pending.
 /// </summary>
 public sealed class HumanLookScanService
 {
@@ -48,9 +48,6 @@ public sealed class HumanLookScanService
     private long _nearSideScans;
     private long _sideScans;
     private long _rearScans;
-    private long _visibleEnemyHintScans;
-    private long _immediateHintStarts;
-    private long _hintCooldownSkips;
     private long _geometryScans;
     private long _randomScans;
     private long _failures;
@@ -92,8 +89,7 @@ public sealed class HumanLookScanService
                 $"fastWithinTolerance={_fastWithinTolerance}; skippedPathfinder={_skippedPathfinder}; " +
                 $"skippedStationary={_skippedStationary}; skippedRecentFire={_skippedRecentFire}; " +
                 $"nearSide={_nearSideScans}; side={_sideScans}; rear={_rearScans}; " +
-                $"directionHint={_visibleEnemyHintScans}; immediateHints={_immediateHintStarts}; " +
-                $"hintCooldownSkips={_hintCooldownSkips}; directionGeometry={_geometryScans}; " +
+                $"directionGeometry={_geometryScans}; " +
                 $"directionRandom={_randomScans}; avgRequestedDeg={averageRequested:0.0}; " +
                 $"avgObservedDeg={averageObserved:0.0}; " +
                 $"maxObservedDeg={_maximumObservedDegrees:0.0}; failures={_failures}";
@@ -132,9 +128,6 @@ public sealed class HumanLookScanService
         _nearSideScans = 0;
         _sideScans = 0;
         _rearScans = 0;
-        _visibleEnemyHintScans = 0;
-        _immediateHintStarts = 0;
-        _hintCooldownSkips = 0;
         _geometryScans = 0;
         _randomScans = 0;
         _failures = 0;
@@ -353,45 +346,6 @@ public sealed class HumanLookScanService
             return;
         }
 
-        // A physically visible but Valve-unacquired enemy is an immediate
-        // trigger. It deliberately bypasses the normal 2.5..4.5 second scan
-        // schedule, but all safety/recent-fire/speed gates above still apply.
-        //
-        // Even while this hint is on cooldown we suppress geometry/random:
-        // looking away from a currently visible missed enemy would defeat the
-        // purpose of the hint policy.
-        if (_directionSelector.TrySelectVisibleEnemyHint(
-                controller,
-                pawn,
-                startYaw,
-                now,
-                Config,
-                out HumanLookDirectionSelection hintSelection))
-        {
-            if (now <
-                state.HintCooldownUntil)
-            {
-                _hintCooldownSkips++;
-                return;
-            }
-
-            state.HintCooldownUntil =
-                now +
-                Config.HumanLookScanVisibleEnemyHintCooldownSeconds;
-
-            _immediateHintStarts++;
-
-            StartScan(
-                state,
-                hintSelection,
-                startYaw,
-                speed2D,
-                movementYaw,
-                now);
-
-            return;
-        }
-
         if (now <
             state.NextScanAt)
         {
@@ -502,9 +456,6 @@ public sealed class HumanLookScanService
 
         switch (state.DirectionSource)
         {
-            case "visible-enemy-hint":
-                _visibleEnemyHintScans++;
-                break;
             case "geometry":
                 _geometryScans++;
                 break;
@@ -1094,8 +1045,6 @@ public sealed class HumanLookScanService
         public bool Active { get; set; }
 
         public float NextScanAt { get; set; }
-
-        public float HintCooldownUntil { get; set; }
 
         public float StartedAt { get; set; }
 

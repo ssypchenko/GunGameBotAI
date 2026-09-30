@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 42;
+    public override int Version { get; set; } = 43;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -33,7 +33,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float IdleRepathSeconds { get; set; } = 4.0f;
 
     // Observation-only Stage 1 diagnostics. Never performs recovery actions.
-    public bool StuckMonitorEnabled { get; set; } = true;
+    public bool StuckMonitorEnabled { get; set; } = false;
 
     // ---------------------------------------------------------------------
     // Persistent physical ladder learning / traversal
@@ -219,7 +219,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalProactiveFailureCooldownSeconds { get; set; } = 1.50f;
 
     // Integrated GeometryProbe floor/hole diagnostics. Observation-only.
-    public bool GeometrySafetyDetectionEnabled { get; set; } = true;
+    public bool GeometrySafetyDetectionEnabled { get; set; } = false;
 
     public bool CombatStrafeEnabled { get; set; } = true;
     public bool CounterStrafeEnabled { get; set; } = true;
@@ -243,8 +243,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     public bool GrenadeLevelEnabled { get; set; } = true;
 
-    // Stage 4 aim correction is deliberately opt-in for the first production release.
-    public bool AimEnhancementEnabled { get; set; } = false;
+    // Production combat aim correction. Enabled by default; diagnostics stay separate.
+    public bool AimEnhancementEnabled { get; set; } = true;
     public AimMode AimMode { get; set; } = global::GunGameBotAI.Models.AimMode.Mixed;
     public bool AimDebug { get; set; } = false;
 
@@ -256,26 +256,26 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // so vision tests do not enable geometry/knife/other legacy debug streams.
     public bool VisionDebug { get; set; } = false;
 
-    // Stage 6 managed look-around experiment. Disabled until explicitly tested.
+    // Managed Valve look-around support. Enabled by default; diagnostics stay separate.
     // v1 releases Valve's look-around inhibit. v2 may also restart Valve's own
     // look-around state on a bounded cadence when no current enemy exists.
     // It never writes EyeAngles directly.
-    public bool VisionEnhancementEnabled { get; set; } = false;
+    public bool VisionEnhancementEnabled { get; set; } = true;
     public float VisionLookAroundRestartIntervalSeconds { get; set; } = 0.75f;
 
-    // Stage 6.5 experimental human-like physical look scanning. Disabled by
-    // default. v3 uses the shared fast actuator to hold only
+    // Human-like physical look scanning. Enabled by default. v3 uses the shared
+    // fast actuator to hold only
     // CCSPlayerPawn.EyeAngles.Y (yaw) with read-back correction; Valve retains
     // navigation, movement, target selection and combat aim.
-    public bool HumanLookScanEnabled { get; set; } = false;
+    public bool HumanLookScanEnabled { get; set; } = true;
     public float HumanLookScanMinIntervalSeconds { get; set; } = 2.50f;
     public float HumanLookScanMaxIntervalSeconds { get; set; } = 4.50f;
     public float HumanLookScanHoldSeconds { get; set; } = 0.30f;
     public float HumanLookScanYawToleranceDegrees { get; set; } = 7.5f;
 
-    // Direction policy: first use a physically visible but Valve-unacquired
-    // enemy as a yaw hint; otherwise choose the most open world-geometry ray.
-    // Random selection remains the final fallback if neither source succeeds.
+    // Ambient direction policy: choose the most open world-geometry ray.
+    // Random selection remains the final fallback. Enemy-directed turning is
+    // owned exclusively by EnemyReactionService.
     public bool HumanLookScanGeometryFallbackEnabled { get; set; } = true;
     public float HumanLookScanGeometryTraceDistance { get; set; } = 1200.0f;
     public float HumanLookScanGeometryMinimumClearDistance { get; set; } = 160.0f;
@@ -970,6 +970,43 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // Rear threats are intentionally eligible; view angle affects
             // reaction delay only, never visibility eligibility.
             Version = 42;
+        }
+
+        if (Version < 43)
+        {
+            // v43 adopts the production profile: behaviour-changing combat
+            // features ON by default, observation/debug facilities OFF.
+            // Runtime itself remains opt-in through EnabledOnLoad=false.
+            Debug = false;
+            VerboseCorrectionDebug = false;
+            StuckMonitorEnabled = false;
+            LadderMapDebug = false;
+            LadderHumanMovementDiagnostics = false;
+            GeometrySafetyDetectionEnabled = false;
+            AimDebug = false;
+            VisionMonitorEnabled = false;
+            VisionDebug = false;
+
+            AggressiveStateEnabled = true;
+            IdleRepathEnabled = true;
+            LadderEntryJumpEnabled = true;
+            LadderTraversalRecoveryEnabled = true;
+            LadderTraversalPostExitRepathEnabled = true;
+            LadderTraversalPostExitEnemySpawnGoalEnabled = true;
+            CombatStrafeEnabled = true;
+            CounterStrafeEnabled = true;
+            SniperPeekEnabled = true;
+            KnifeRushEnabled = true;
+            GrenadeLevelEnabled = true;
+            AimEnhancementEnabled = true;
+            VisionEnhancementEnabled = true;
+            HumanLookScanEnabled = true;
+            HumanLookScanGeometryFallbackEnabled = true;
+            EnemyReactionEnabled = true;
+            EnemyReactionNativeAttackEnabled = true;
+
+            EnabledOnLoad = false;
+            Version = 43;
         }
     }
 

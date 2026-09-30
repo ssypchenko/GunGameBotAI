@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 41;
+    public override int Version { get; set; } = 42;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -283,15 +283,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float HumanLookScanMinimumSpeed { get; set; } = 30.0f;
     public float HumanLookScanRecentFireGraceSeconds { get; set; } = 0.75f;
 
-    // Unified production enemy reaction. A physically visible enemy must first
-    // enter this forward/peripheral sector. After a short angle-weighted delay
-    // the plugin turns yaw toward the enemy, seeds/refreshes Valve perception,
-    // invokes CCSBot::Attack once, then returns combat ownership to Valve.
+    // Unified production enemy reaction. Any physically visible enemy inside
+    // the configured distance can be noticed, including behind the bot. After
+    // a short angle-weighted delay the plugin turns yaw toward the selected
+    // threat, seeds/refreshes Valve perception, invokes CCSBot::Attack once,
+    // then returns combat ownership to Valve.
     public bool EnemyReactionEnabled { get; set; } = true;
     public float EnemyReactionMinSeconds { get; set; } = 0.20f;
     public float EnemyReactionMaxSeconds { get; set; } = 0.50f;
     public float EnemyReactionDistance { get; set; } = 1000.0f;
-    public float EnemyReactionMaxViewAngleDegrees { get; set; } = 120.0f;
     public float EnemyReactionHoldSeconds { get; set; } = 0.35f;
     public float EnemyReactionYawToleranceDegrees { get; set; } = 6.0f;
     public bool EnemyReactionNativeAttackEnabled { get; set; } = true;
@@ -384,13 +384,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             2500.0f,
             1000.0f,
             nameof(EnemyReactionDistance),
-            warn);
-        EnemyReactionMaxViewAngleDegrees = Clamp(
-            EnemyReactionMaxViewAngleDegrees,
-            30.0f,
-            150.0f,
-            120.0f,
-            nameof(EnemyReactionMaxViewAngleDegrees),
             warn);
         EnemyReactionHoldSeconds = Clamp(
             EnemyReactionHoldSeconds,
@@ -965,11 +958,18 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             EnemyReactionMinSeconds = 0.20f;
             EnemyReactionMaxSeconds = 0.50f;
             EnemyReactionDistance = 1000.0f;
-            EnemyReactionMaxViewAngleDegrees = 120.0f;
             EnemyReactionHoldSeconds = 0.35f;
             EnemyReactionYawToleranceDegrees = 6.0f;
             EnemyReactionNativeAttackEnabled = true;
             Version = 41;
+        }
+
+        if (Version < 42)
+        {
+            // v42 expands Enemy Reaction to full 360-degree physical LOS.
+            // Rear threats are intentionally eligible; view angle affects
+            // reaction delay only, never visibility eligibility.
+            Version = 42;
         }
     }
 

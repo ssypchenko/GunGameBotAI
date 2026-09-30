@@ -276,9 +276,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Direction policy: first use a physically visible but Valve-unacquired
     // enemy as a yaw hint; otherwise choose the most open world-geometry ray.
     // Random selection remains the final fallback if neither source succeeds.
-    public bool HumanLookScanVisibleEnemyHintEnabled { get; set; } = false;
-    public float HumanLookScanVisibleEnemyHintDistance { get; set; } = 800.0f;
-    public float HumanLookScanVisibleEnemyHintCooldownSeconds { get; set; } = 0.75f;
     public bool HumanLookScanGeometryFallbackEnabled { get; set; } = true;
     public float HumanLookScanGeometryTraceDistance { get; set; } = 1200.0f;
     public float HumanLookScanGeometryMinimumClearDistance { get; set; } = 160.0f;
@@ -352,20 +349,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             30.0f,
             7.5f,
             nameof(HumanLookScanYawToleranceDegrees),
-            warn);
-        HumanLookScanVisibleEnemyHintDistance = Clamp(
-            HumanLookScanVisibleEnemyHintDistance,
-            100.0f,
-            2000.0f,
-            800.0f,
-            nameof(HumanLookScanVisibleEnemyHintDistance),
-            warn);
-        HumanLookScanVisibleEnemyHintCooldownSeconds = Clamp(
-            HumanLookScanVisibleEnemyHintCooldownSeconds,
-            0.25f,
-            5.0f,
-            0.75f,
-            nameof(HumanLookScanVisibleEnemyHintCooldownSeconds),
             warn);
         HumanLookScanGeometryTraceDistance = Clamp(
             HumanLookScanGeometryTraceDistance,
@@ -952,12 +935,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 34)
         {
-            // v34 changes only direction choice: visible-unacquired enemy hint,
-            // then world-geometry openness, then random fallback. Keep the
-            // behavioural experiment opt-in after upgrade.
             HumanLookScanEnabled = false;
-            HumanLookScanVisibleEnemyHintEnabled = true;
-            HumanLookScanVisibleEnemyHintDistance = 800.0f;
             HumanLookScanGeometryFallbackEnabled = true;
             HumanLookScanGeometryTraceDistance = 1200.0f;
             HumanLookScanGeometryMinimumClearDistance = 160.0f;
@@ -966,12 +944,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 35)
         {
-            // v35 makes a physically visible but Valve-unacquired enemy an
-            // immediate trigger instead of waiting for the regular scan timer.
-            // A short per-bot cooldown prevents repeated hint scans when Valve
-            // still does not acquire the same continuing LOS opportunity.
-            HumanLookScanEnabled = false;
-            HumanLookScanVisibleEnemyHintCooldownSeconds = 0.75f;
             Version = 35;
         }
 
@@ -989,7 +961,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         {
             // v41 replaces the separate visible-enemy hint, forced-acquisition
             // and attack-stall experiment with one bounded production reaction.
-            HumanLookScanVisibleEnemyHintEnabled = false;
             EnemyReactionEnabled = true;
             EnemyReactionMinSeconds = 0.20f;
             EnemyReactionMaxSeconds = 0.50f;

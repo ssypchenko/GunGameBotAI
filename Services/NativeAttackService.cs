@@ -9,7 +9,7 @@ namespace GunGameBotAI.Services;
 /// transition recovered from libserver.so.
 ///
 /// This service owns ABI/signature validation only. Eligibility is decided by
-/// EnemyAttackTransitionMonitorService and remains opt-in/fail-closed.
+/// EnemyReactionService. The integration remains fail-closed after CS2 updates.
 /// </summary>
 public sealed class NativeAttackService
 {
@@ -130,40 +130,15 @@ public sealed class NativeAttackService
 
     public NativeAttackInvocationResult TryAttack(
         CCSBot bot,
-        CCSPlayerPawn enemyPawn) =>
-        TryAttackCore(
-            bot,
-            enemyPawn,
-            trackStatistics: true);
-
-    /// <summary>
-    /// Invoke the same validated native transition without polluting the
-    /// production Stage 6.7 accepted/noop counters. Controlled diagnostic tests
-    /// own their multi-tick outcome classification.
-    /// </summary>
-    public NativeAttackInvocationResult TryAttackForDiagnostic(
-        CCSBot bot,
-        CCSPlayerPawn enemyPawn) =>
-        TryAttackCore(
-            bot,
-            enemyPawn,
-            trackStatistics: false);
-
-    private NativeAttackInvocationResult TryAttackCore(
-        CCSBot bot,
-        CCSPlayerPawn enemyPawn,
-        bool trackStatistics)
+        CCSPlayerPawn enemyPawn)
     {
         EnsureInitialised();
-
-        if (trackStatistics)
-            _attempts++;
+        _attempts++;
 
         if (!_available ||
             _attack == null)
         {
-            if (trackStatistics)
-                _unavailable++;
+            _unavailable++;
 
             return
                 NativeAttackInvocationResult.NotInvoked(
@@ -175,8 +150,7 @@ public sealed class NativeAttackService
                 enemyPawn,
                 out string validationReason))
         {
-            if (trackStatistics)
-                _validationRejected++;
+            _validationRejected++;
 
             return
                 NativeAttackInvocationResult.NotInvoked(
@@ -185,8 +159,7 @@ public sealed class NativeAttackService
 
         try
         {
-            if (trackStatistics)
-                _invoked++;
+            _invoked++;
 
             _attack.Invoke(
                 bot.Handle,
@@ -214,8 +187,7 @@ public sealed class NativeAttackService
 
             if (attackingAfterCall)
             {
-                if (trackStatistics)
-                    _accepted++;
+                _accepted++;
 
                 return
                     new NativeAttackInvocationResult(
@@ -228,8 +200,7 @@ public sealed class NativeAttackService
                         attackingAfterCall);
             }
 
-            if (trackStatistics)
-                _noops++;
+            _noops++;
 
             return
                 new NativeAttackInvocationResult(
@@ -243,8 +214,6 @@ public sealed class NativeAttackService
         }
         catch (Exception exception)
         {
-            // Invocation failure is service-health information even when the
-            // caller is the isolated diagnostic harness.
             _failures++;
 
             // A managed invocation failure disables the integration for the
@@ -284,7 +253,7 @@ public sealed class NativeAttackService
             _attack =
                 null;
             _status =
-                "unsupported platform; Stage 6.7 currently Linux-only";
+                "unsupported platform; native enemy reaction is currently Linux-only";
 
             return;
         }
@@ -313,7 +282,7 @@ public sealed class NativeAttackService
 
                 _info(
                     $"[NativeAttack] CCSBot::Attack signature OK; " +
-                    $"address=0x{function.Handle.ToInt64():X16}; assist=disabled-until-config-enabled.");
+                    $"address=0x{function.Handle.ToInt64():X16}; integration=ready.");
 
                 return;
             }
@@ -332,7 +301,7 @@ public sealed class NativeAttackService
             "CCSBot::Attack exact signature unavailable";
 
         _warning(
-            "[NativeAttack] CCSBot::Attack signature not found; Stage 6.7 assist unavailable.");
+            "[NativeAttack] CCSBot::Attack signature not found; enemy reaction will continue without the native transition.");
     }
 
     private static bool ValidateCurrentTarget(

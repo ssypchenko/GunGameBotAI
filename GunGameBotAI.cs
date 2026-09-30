@@ -34,6 +34,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly IAimPointProvider _aimPointProvider;
     private readonly VisibilityTraceService _visibilityTrace;
     private readonly VisionMonitorService _visionMonitor;
+    private readonly HearingMonitorService _hearingMonitor;
     private readonly VisionEnhancementService _visionEnhancement;
     private readonly HumanLookScanService _humanLookScan;
     private readonly NativeAttackService _nativeAttack;
@@ -95,6 +96,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     candidate,
                     now),
             message => Logger.LogInformation("[GunGameBotAI][Vision] {Message}", message));
+        _hearingMonitor = new HearingMonitorService(
+            message => Logger.LogInformation("[GunGameBotAI][Hearing] {Message}", message));
         _visionEnhancement = new VisionEnhancementService(
             message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
         _humanLookScan = new HumanLookScanService(
@@ -142,7 +145,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.2";
+    public override string ModuleVersion => "0.8.3";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -195,6 +198,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _currentMapName = currentMap;
             _ladderMap.OnMapStart(currentMap);
             _visionMonitor.BeginMap(currentMap);
+            _hearingMonitor.BeginMap(currentMap);
             _visionEnhancement.BeginMap();
             _humanLookScan.BeginMap();
             _enemyReaction.BeginMap();
@@ -209,7 +213,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterEventHandler<EventRoundEnd>(OnRoundEnd);
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
+        RegisterEventHandler<EventPlayerFootstep>(OnPlayerFootstep);
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
+        RegisterEventHandler<EventWeaponReload>(OnWeaponReload);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventBotTakeover>(OnBotTakeover);
 
@@ -265,6 +271,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
         _visionMonitor.ClearRuntimeState();
+        _hearingMonitor.Reset();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
         _enemyReaction.Reset();
@@ -283,7 +290,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         DeregisterEventHandler<EventRoundEnd>(OnRoundEnd);
         DeregisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         DeregisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
+        DeregisterEventHandler<EventPlayerFootstep>(OnPlayerFootstep);
         DeregisterEventHandler<EventWeaponFire>(OnWeaponFire);
+        DeregisterEventHandler<EventWeaponReload>(OnWeaponReload);
         DeregisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         DeregisterEventHandler<EventBotTakeover>(OnBotTakeover);
 
@@ -357,6 +366,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.RemoveSlot(slot);
         _stuckMonitor.RemoveSlot(slot);
         _visionMonitor.RemoveSlot(slot);
+        _hearingMonitor.RemoveSlot(slot);
         _visionEnhancement.RemoveSlot(slot);
         _humanLookScan.RemoveSlot(slot);
         _enemyReaction.RemoveSlot(
@@ -447,6 +457,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _visionMonitor.RemoveSlot(slot);
+                    _hearingMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
                     _enemyReaction.RemoveSlot(
@@ -467,6 +478,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _buttonPulses.Cancel(slot);
                     _stuckMonitor.RemoveSlot(slot);
                     _visionMonitor.RemoveSlot(slot);
+                    _hearingMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
                     _enemyReaction.RemoveSlot(
@@ -478,6 +490,15 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
+
+                _hearingMonitor.Observe(
+                    controller,
+                    pawn,
+                    bot,
+                    state,
+                    mapName,
+                    freezePeriod,
+                    now);
 
                 _geometrySafety.Observe(
                     controller,
@@ -1114,6 +1135,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 : mapName;
         ResetRuntimeState();
         _visionMonitor.BeginMap(_currentMapName);
+        _hearingMonitor.BeginMap(_currentMapName);
         _visionEnhancement.BeginMap();
         _humanLookScan.BeginMap();
         _enemyReaction.BeginMap();
@@ -1130,6 +1152,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         StopSharedTimers();
         _enemyReaction.LogMapSummary(_currentMapName);
         _visionMonitor.LogMapSummary(_currentMapName);
+        _hearingMonitor.LogMapSummary(_currentMapName);
         _visionEnhancement.LogMapSummary(_currentMapName);
         _humanLookScan.LogMapSummary(_currentMapName);
         _nativeAttack.LogMapSummary(_currentMapName);
@@ -1146,6 +1169,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.RemoveSlot(playerSlot);
         _stuckMonitor.RemoveSlot(playerSlot);
         _visionMonitor.RemoveSlot(playerSlot);
+        _hearingMonitor.RemoveSlot(playerSlot);
         _visionEnhancement.RemoveSlot(playerSlot);
         _humanLookScan.RemoveSlot(playerSlot);
         _enemyReaction.RemoveSlot(
@@ -1169,6 +1193,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         // are round-scoped even though aggregate diagnostics may survive.
         _transientControl.Clear();
         _visionMonitor.ClearRuntimeState();
+        _hearingMonitor.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _enemyReaction.ClearRuntimeState();
@@ -1228,6 +1253,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _visionMonitor.RemoveSlot(slot);
+            _hearingMonitor.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
             _enemyReaction.RemoveSlot(
@@ -1242,8 +1268,48 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         return HookResult.Continue;
     }
 
+    private HookResult OnPlayerFootstep(
+        EventPlayerFootstep @event,
+        GameEventInfo info)
+    {
+        if (_enabled)
+        {
+            _hearingMonitor.RecordFootstep(
+                @event.Userid,
+                _currentMapName,
+                Server.CurrentTime);
+        }
+
+        return HookResult.Continue;
+    }
+
+    private HookResult OnWeaponReload(
+        EventWeaponReload @event,
+        GameEventInfo info)
+    {
+        if (_enabled)
+        {
+            _hearingMonitor.RecordReload(
+                @event.Userid,
+                _currentMapName,
+                Server.CurrentTime);
+        }
+
+        return HookResult.Continue;
+    }
+
     private HookResult OnWeaponFire(EventWeaponFire @event, GameEventInfo info)
     {
+        if (_enabled)
+        {
+            _hearingMonitor.RecordWeaponFire(
+                @event.Userid,
+                @event.Weapon,
+                @event.Silenced,
+                _currentMapName,
+                Server.CurrentTime);
+        }
+
         if (!_enabled || @event.Userid is not { IsValid: true, IsBot: true } player || player.IsHLTV ||
             !BotValidation.TryResolveLiveBot(player.Slot, out _, out CCSPlayerPawn? pawn, out _) || pawn == null)
         {
@@ -1304,6 +1370,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _geometrySafety.RemoveSlot(slot);
             _stuckMonitor.RemoveSlot(slot);
             _visionMonitor.RemoveSlot(slot);
+            _hearingMonitor.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
             _enemyReaction.RemoveSlot(
@@ -1485,6 +1552,54 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] vision monitor={(enabled ? "enabled" : "disabled")}; " +
             $"distance={Config.VisionMonitorDistance:0}; mode=observe-only; " +
             $"detailedEvents={(Config.VisionDebug ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_hearing_monitor", "Enable or disable Stage 6A observation-only hearing monitoring.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnHearingMonitorCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_hearing_monitor 0|1");
+            return;
+        }
+
+        Config.HearingMonitorEnabled =
+            enabled;
+        _hearingMonitor.Config =
+            Config;
+
+        if (!enabled)
+            _hearingMonitor.ClearRuntimeState();
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] hearing monitor={(enabled ? "enabled" : "disabled")}; " +
+            "mode=observe-only; sources=Valve-Noise+footstep+weapon_fire+reload; " +
+            $"detailedEvents={(Config.HearingDebug ? "enabled" : "disabled")}.");
+    }
+
+    [ConsoleCommand("css_ggbotai_hearing_debug", "Enable or disable detailed Stage 6A hearing correlation logs.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnHearingDebugCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (!TryParseBinary(command.GetArg(1), out bool enabled))
+        {
+            command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_hearing_debug 0|1");
+            return;
+        }
+
+        Config.HearingDebug =
+            enabled;
+        _hearingMonitor.Config =
+            Config;
+
+        PersistConfig(command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] hearingDebug={(enabled ? "enabled" : "disabled")}; " +
+            "logs=SOUND-EVENT/NATIVE-NOISE/EVENT-NO-NATIVE-MATCH.");
     }
 
     [ConsoleCommand("css_ggbotai_vision_debug", "Enable or disable focused Stage 5/6 vision diagnostics.")]
@@ -1921,6 +2036,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _ladderMap?.ResetRuntimeTracking();
         _stuckMonitor.Reset();
         _visionMonitor.Reset();
+        _hearingMonitor.Reset();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
         _enemyReaction.Reset();
@@ -1943,6 +2059,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Reset();
         _stuckMonitor.Reset();
         _visionMonitor.ClearRuntimeState();
+        _hearingMonitor.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _enemyReaction.ClearRuntimeState();
@@ -1979,6 +2096,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _geometrySafety.Config = Config;
         _stuckMonitor.Config = Config;
         _visionMonitor.Config = Config;
+        _hearingMonitor.Config = Config;
         _visionEnhancement.Config = Config;
         _humanLookScan.Config = Config;
         _enemyReaction.Config = Config;
@@ -1990,6 +2108,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!Config.VisionMonitorEnabled)
             _visionMonitor.ClearRuntimeState();
+
+        if (!Config.HearingMonitorEnabled)
+            _hearingMonitor.ClearRuntimeState();
 
         if (!Config.VisionEnhancementEnabled)
             _visionEnhancement.ClearRuntimeState();
@@ -2030,10 +2151,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] runtime={(_enabled ? "enabled" : "disabled")}; " +
             $"focusedDebug={(Config.Debug ? "enabled" : "disabled")}; " +
             $"visionDebug={(Config.VisionDebug ? "enabled" : "disabled")}; " +
+            $"hearingDebug={(Config.HearingDebug ? "enabled" : "disabled")}; " +
             $"aimDebug={(Config.AimDebug ? "enabled" : "disabled")}; aimDiagTracked={_aimDiagnostics.TrackedCount}; " +
             $"aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}; aimMode={Config.AimMode}; " +
             $"aimNativeAvailable={_aimNative.Available}; aimHooked={_aimNative.Hooked}; " +
             $"visionMonitor={(Config.VisionMonitorEnabled ? "enabled" : "disabled")}; visionDistance={Config.VisionMonitorDistance:0}; " +
+            $"hearingMonitor={(Config.HearingMonitorEnabled ? "enabled" : "disabled")}; " +
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             $"lookScan={(Config.HumanLookScanEnabled ? "enabled" : "disabled")}; " +
@@ -2059,6 +2182,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] aimPerf {_aimService.PerformanceSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] visionStats {_visionMonitor.StatisticsSummary}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] hearingStats {_hearingMonitor.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] visionEnhanceStats {_visionEnhancement.StatisticsSummary}.");
         command.ReplyToCommand(

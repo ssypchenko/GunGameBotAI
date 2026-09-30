@@ -149,9 +149,6 @@ public sealed class HumanLookDirectionService
                 "geometry",
                 selected.TargetYaw,
                 selected.RelativeYaw,
-                null,
-                float.NaN,
-                null,
                 selected.ClearDistance,
                 successfulTraces);
 
@@ -188,8 +185,5 @@ public readonly record struct HumanLookDirectionSelection(
     string Source,
     float TargetYaw,
     float RelativeAngle,
-    int? EnemyEntityIndex,
-    float EnemyDistance,
-    AimPointKind? VisiblePoint,
     float GeometryClearDistance,
     int GeometryTraceCount);

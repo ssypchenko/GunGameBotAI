@@ -39,6 +39,7 @@ public sealed class HearingReactionService
     private long _started;
     private long _refreshed;
     private long _committed;
+    private long _finished;
     private long _completed;
     private long _combatInterrupted;
     private long _modeInterrupted;
@@ -90,15 +91,9 @@ public sealed class HearingReactionService
                     : 0.0;
 
             double averageObserved =
-                (_completed +
-                 _combatInterrupted +
-                 _modeInterrupted +
-                 _pathfinderInterrupted) > 0
+                _finished > 0
                     ? _totalObservedDegrees /
-                      (_completed +
-                       _combatInterrupted +
-                       _modeInterrupted +
-                       _pathfinderInterrupted)
+                      _finished
                     : 0.0;
 
             int tracking =
@@ -110,7 +105,7 @@ public sealed class HearingReactionService
                 $"friendlyNoise={_friendlyNoises}; unknownNoise={_unknownNoises}; " +
                 $"distanceRejected={_distanceRejected}; combatRejected={_combatRejected}; " +
                 $"pathfinderRejected={_pathfinderRejected}; cooldownRejected={_cooldownRejected}; " +
-                $"started={_started}; refreshed={_refreshed}; committed={_committed}; completed={_completed}; " +
+                $"started={_started}; refreshed={_refreshed}; committed={_committed}; finished={_finished}; completed={_completed}; " +
                 $"combatInterrupted={_combatInterrupted}; modeInterrupted={_modeInterrupted}; " +
                 $"pathfinderInterrupted={_pathfinderInterrupted}; writes={_writes}; " +
                 $"withinTolerance={_withinTolerance}; effectiveTurns={_effectiveTurns}; " +
@@ -138,6 +133,7 @@ public sealed class HearingReactionService
         _started = 0;
         _refreshed = 0;
         _committed = 0;
+        _finished = 0;
         _completed = 0;
         _combatInterrupted = 0;
         _modeInterrupted = 0;
@@ -684,6 +680,7 @@ public sealed class HearingReactionService
         float observed =
             state.MaxObservedTurn;
 
+        _finished++;
         _totalObservedDegrees +=
             observed;
 

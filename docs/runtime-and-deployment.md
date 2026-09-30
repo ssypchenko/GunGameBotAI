@@ -229,191 +229,79 @@ lookScanStats
 With `VisionDebug=true`, each finished/interrupted scan emits one compact
 `[LookScan] SCAN` line. There is no per-tick scan trace.
 
-For the v3 mechanical test, verify that `avgObservedDeg` and
-`effectiveTurns` now show the real eye yaw following the requested target.
-`fastCorrections` should show how often Valve drift was corrected, while
-`fastWithinTolerance` shows ticks where no rewrite was needed. For direction
-policy validation, `immediateHints` should rise whenever the Vision log shows a
-physically-visible-but-not-acquired opportunity that survives the eligibility
-gates; `hintCooldownSkips` shows repeated LOS samples intentionally suppressed
-during the short cooldown. If movement is
-visibly disrupted, stop before judging vision effectiveness.
+For the Human Look Scan mechanical test, verify that `avgObservedDeg` and
+`effectiveTurns` show the real eye yaw following the requested geometry/random
+target. `fastCorrections` should show how often Valve drift was corrected,
+while `fastWithinTolerance` shows ticks where no rewrite was needed. Enemy
+direction is no longer an input to Human Look Scan. If movement is visibly
+disrupted, stop before judging vision effectiveness.
 
 If physical turns are real and movement remains healthy, compare front,
 front-side, side and rear acquisition/loss statistics with the Stage 5/6
 baseline.
 
-## Stage 6.6 Forced Enemy Acquisition verification
+## Enemy Reaction verification
 
-Stage 6.6 is a separate opt-in experiment:
+Version 0.8.0 replaces the separate Forced Enemy Acquisition and attack-stall
+assist experiments with one bounded production controller.
 
-```text
-css_ggbotai_forced_acquire 1
-```
-
-The trigger is **continuous physical LOS**, not field of view. An opponent at
-160 degrees behind the bot can therefore qualify if HEAD/CHEST/GUT/PELVIS
-remains physically trace-visible for the full delay. View angle is logged only
-for diagnostics and never gates acquisition.
-
-Default trigger:
+Default behaviour:
 
 ```text
-continuous physical LOS >= 1.0 s
-distance <= 800
-Valve current enemy = none
-mode = NormalGunGame
+physical LOS
+enemy within 1000 units
+enemy within 120 degrees of current yaw
+reaction delay 0.20..0.50 s, weighted by angle
+short 0.35 s yaw/focus hold
+one native CCSBot::Attack(enemy) call when the exact signature is available
+Valve owns firing and continuing combat
 ```
 
-The write is intentionally limited to enemy/perception state. Stage 6.6 never
-sets `IsAttacking`, never presses Fire, and does not call `CCSBot::Attack`.
-
-Relevant log lines:
+For a clean live test, disable unrelated diagnostics and enable only the compact
+Enemy Reaction trace:
 
 ```text
-VISIBLE-NOT-ATTACKING
-FORCED-ACQUIRE
-FORCED-ACQUIRE-HELD
-FORCED-ACQUIRE-REASSERT
-FORCED-ACQUIRE-ABORTED
-FORCED-ACQUIRE-DROPPED-BEFORE-HELD
-FORCED-ACQUIRE-DROPPED-AFTER-HELD
-FORCED-ACQUIRE-ATTACKING
-FORCED-ACQUIRE-STILL-NOT-ATTACKING
+css_ggbotai_enable 1
+css_ggbotai_stuck_monitor 0
+css_ggbotai_vision_monitor 0
+css_ggbotai_vision_debug 1
+css_ggbotai_enemy_reaction 1
+css_ggbotai_enemy_reaction_delay 0.20 0.50
+css_ggbotai_status
 ```
 
-Interpretation:
-
-- VisionMonitor logs the corresponding target transition as `ACQUIRED_FORCED`
-  and excludes it from natural `acquired/avgAcquireMs` statistics.
-- `HELD` means Valve kept the supplied `m_enemy` on a later DecisionLoop.
-- `REASSERT` means Valve cleared the target during the bounded hold, but the
-  same opponent was still alive, in range, physically visible, and no different
-  Valve target existed; the original acquire timestamp is preserved.
-- `ABORTED` means the forced episode ended for a lifecycle/safety reason
-  rather than proving an attack/drop outcome.
-- `DROPPED-BEFORE-HELD` means Valve rejected/cleared the supplied target
-  before the first later DecisionLoop confirmed it.
-- `DROPPED-AFTER-HELD` means Valve initially retained the target but cleared
-  or replaced it later within the observation window.
-- `ATTACKING` means Valve naturally progressed into its own attack state.
-- `STILL-NOT-ATTACKING` is emitted only after the full configured observation
-  window (default 1.0 s) and records current physical LOS, target-alive state,
-  distance, angle, visible point, `IsEnemyVisible`, and `IsAimingAtEnemy`.
-The old `VISIBLE-NOT-ATTACKING state=acquired-not-attacking` message was
-retired in 0.7.53 because its duration came from physical LOS rather than from
-Valve enemy acquisition.
-
-Use `css_ggbotai_status` and retain `forcedAcquireStats` plus the
-`[ForcedAcquire] MAP-SUMMARY`. For the reassert test, verify
-`forcedAcquireReassert=0.6s` and compare `reasserted`,
-`startedAttacking`, `droppedAfterHeld`,
-`stillNotAttackingAfterWindow`, and `aborted`.
-
-### Stage 6.6c attack-transition diagnostic
-
-0.7.53 adds a separate observation-only measurement of the transition from a
-stable Valve current enemy to `IsAttacking=true`. It is active while either
-Vision Monitor or Forced Enemy Acquisition is enabled, but its detailed event
-logs still require `VisionDebug=true`.
-
-Check status for:
+Expected diagnostic sequence:
 
 ```text
-attackTransitionStall=1s
-attackTransitionStats
+[EnemyReaction] DETECTED
+[EnemyReaction] COMMIT
+[EnemyReaction] FIRED
 ```
 
-Relevant events:
+or an `END` event if the bounded session is cancelled/released before a shot.
+
+Verify three cases:
+
+1. Put an enemy roughly in front of the bot. Reaction should normally be near
+   the lower part of the configured delay range.
+2. Put an enemy clearly to the side but still within the 120-degree sector.
+   The bot should stop passing by, turn toward the enemy after a slightly
+   longer natural delay, acquire it and attack.
+3. Put the enemy behind the bot, outside the configured sector. Enemy Reaction
+   must not snap the bot around. A reaction may begin later only after Valve or
+   ambient look behaviour naturally brings the enemy inside the sector.
+
+A `COMMIT` writes enemy/perception fields and yaw only. It never writes
+`IsAttacking=true` and never presses Fire. Native Attack is invoked once at
+most for that reaction. If the exact signature is unavailable after a CS2
+update, the bounded turn/acquisition still runs and Valve is left to perform the
+attack transition naturally.
+
+After testing, return compact diagnostics to normal with:
 
 ```text
-ENEMY-ACQUIRED-NOT-ATTACKING
-ATTACK-TRANSITION-STALLED
-ATTACK-TRANSITION-STARTED
-ATTACK-TRANSITION-RECOVERED
-ATTACK-TRANSITION-ENDED
-ATTACK-TRANSITION-ABORTED
+css_ggbotai_vision_debug 0
 ```
-
-The timing source is `CCSBot.CurrentEnemyAcquireTimestamp` only when it is
-recent enough to belong to the current NormalGunGame observation; older
-timestamps are treated as stale and the monitor falls back to first
-observation. `ATTACK-TRANSITION-STALLED` is emitted only in `NormalGunGame`
-after the
-same current enemy has been held for at least
-`EnemyAttackTransitionStallSeconds` (default 1.0 s), while
-`IsEnemyVisible=true` and a fresh physical LOS trace succeeds. The log
-records `enemyHeldFor`, continuous `enemyVisibleFor` and
-`physicalLosFor`. A `strongEvidence=true` stall is the cleanest trigger for
-investigating native `CCSBot::Attack()`.
-
-Special modes such as Knife Rush and ladder traversal are intentionally
-excluded from stall classification so their own control policies cannot be
-mistaken for a Valve attack-state delay.
-
-## Stage 6.7 native Attack assist
-
-Version 0.7.54 adds an opt-in Linux-only native wrapper around the recovered
-Valve `CCSBot::Attack(CCSPlayerPawn*)` transition.
-
-The feature is OFF after migration:
-
-```text
-NativeAttackAssistEnabled=false
-```
-
-Before enabling, verify status reports:
-
-```text
-nativeAttackAvailable=True
-nativeAttackStats ... status=exact-signature-resolved
-```
-
-Enable explicitly from the server console:
-
-```text
-css_ggbotai_native_attack 1
-```
-
-The command resets current attack-transition tracking so an already-stale enemy
-cannot trigger an immediate native call.
-
-The call occurs at most once per attack-transition episode and only when the
-strong condition remains true for the effective delay:
-
-```text
-NormalGunGame
-same live current enemy
-enemyHeldFor >= effective delay
-enemyVisibleFor >= effective delay
-physicalLosFor >= effective delay
-IsEnemyVisible == true
-fresh physical LOS == true
-IsAttacking == false
-no ladder / takeover / special mode
-```
-
-The effective delay is:
-
-```text
-max(EnemyAttackTransitionStallSeconds, NativeAttackAssistDelaySeconds)
-```
-
-Relevant logs:
-
-```text
-NATIVE-ATTACK-CALL
-NATIVE-ATTACK-ACCEPTED
-NATIVE-ATTACK-NOOP
-NATIVE-ATTACK-UNAVAILABLE
-NATIVE-ATTACK-REJECTED
-```
-
-`ACCEPTED` means the immediate postcondition is `IsAttacking=true`.
-A void native return by itself is not treated as success.
-
-The first experiment never retries the native call within the same episode and
-never writes `IsAttacking=true` directly.
 
 ## CounterStrikeSharp 1.0.375 / KHook
 

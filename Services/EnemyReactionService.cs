@@ -80,7 +80,8 @@ public sealed class EnemyReactionService
 
     public void Reset()
     {
-        _states.Clear();
+        ClearRuntimeState();
+
         _detections = 0;
         _committed = 0;
         _cancelled = 0;
@@ -91,8 +92,18 @@ public sealed class EnemyReactionService
         _shotsObserved = 0;
     }
 
-    public void ClearRuntimeState() =>
+    public void ClearRuntimeState()
+    {
+        foreach (ReactionState state in
+                 _states.Values)
+        {
+            _onPluginAcquisitionEnded(
+                state.BotSlot,
+                state.TargetEntityIndex);
+        }
+
         _states.Clear();
+    }
 
     public void RemoveSlot(
         int slot,

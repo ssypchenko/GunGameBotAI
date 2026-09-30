@@ -977,21 +977,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 36)
         {
-            // v36 adds the guarded Forced Enemy Acquisition experiment. Keep it
-            // OFF after migration so the operator explicitly opts into writing
-            // CCSBot enemy/perception state after validating the build.
-            ForcedEnemyAcquisitionEnabled = false;
-            ForcedEnemyAcquisitionDelaySeconds = 1.00f;
-            ForcedEnemyAcquisitionDistance = 800.0f;
             Version = 36;
         }
 
         if (Version < 37)
         {
-            // v37 is diagnostic-only: extend post-force observation to classify
-            // late target drops versus attack transitions. Preserve the
-            // operator's existing ForcedEnemyAcquisitionEnabled choice.
-            ForcedEnemyAcquisitionPostObservationSeconds = 1.00f;
             Version = 37;
         }
 

@@ -56,7 +56,7 @@ public sealed class VisionMonitorService
     private long _eventsSide;
     private long _eventsRear;
     private long _eventsAcquired;
-    private long _eventsForcedAcquired;
+    private long _eventsPluginAcquired;
     private long _eventsLostUnacquired;
     private double _totalAcquireSeconds;
     private double _maximumAcquireSeconds;
@@ -104,7 +104,7 @@ public sealed class VisionMonitorService
                 $"visionControlReadFailures={_eventsVisionControlReadFailures}; " +
                 $"moving={_eventsStartedMoving}; stationary={_eventsStartedStationary}; " +
                 $"front={_eventsFront}; frontSide={_eventsFrontSide}; side={_eventsSide}; rear={_eventsRear}; " +
-                $"acquired={_eventsAcquired}; forcedAcquired={_eventsForcedAcquired}; " +
+                $"acquired={_eventsAcquired}; pluginAcquired={_eventsPluginAcquired}; " +
                 $"lost={_eventsLostUnacquired}; active={ActiveEventCount}; " +
                 $"avgAcquireMs={averageAcquireMs:0.0}; " +
                 $"maxAcquireMs={_maximumAcquireSeconds * 1000.0:0.0}";
@@ -136,7 +136,7 @@ public sealed class VisionMonitorService
         _eventsSide = 0;
         _eventsRear = 0;
         _eventsAcquired = 0;
-        _eventsForcedAcquired = 0;
+        _eventsPluginAcquired = 0;
         _eventsLostUnacquired = 0;
         _totalAcquireSeconds = 0.0;
         _maximumAcquireSeconds = 0.0;
@@ -181,7 +181,7 @@ public sealed class VisionMonitorService
             $"visionControlReadFailures={_mapStats.VisionControlReadFailures}; " +
             $"moving={_mapStats.Moving}; stationary={_mapStats.Stationary}; " +
             $"front={_mapStats.Front}; frontSide={_mapStats.FrontSide}; side={_mapStats.Side}; rear={_mapStats.Rear}; " +
-            $"acquired={_mapStats.Acquired}; forcedAcquired={_mapStats.ForcedAcquired}; " +
+            $"acquired={_mapStats.Acquired}; pluginAcquired={_mapStats.PluginAcquired}; " +
             $"lost={_mapStats.Lost}; active={ActiveEventCount}; " +
             $"avgAcquireMs={averageAcquireMs:0.0}; maxAcquireMs={_mapStats.MaximumAcquireSeconds * 1000.0:0.0}");
     }
@@ -212,10 +212,10 @@ public sealed class VisionMonitorService
     }
 
     /// <summary>
-    /// Marks a current missed-acquisition event as plugin-forced so it is not
+    /// Marks a current missed-acquisition event as plugin-supplied so it is not
     /// counted as a natural Valve acquisition on the next Observe() pass.
     /// </summary>
-    public void MarkForcedAcquisition(
+    public void MarkPluginAcquisition(
         int botSlot,
         int enemyEntityIndex,
         float now)
@@ -230,14 +230,14 @@ public sealed class VisionMonitorService
                 out VisionPairState? pair) &&
             pair.Active)
         {
-            pair.ForcedByPlugin =
+            pair.AcquiredByPlugin =
                 true;
-            pair.ForcedAt =
+            pair.PluginAcquiredAt =
                 now;
         }
     }
 
-    public void ClearForcedAcquisitionMarker(
+    public void ClearPluginAcquisitionMarker(
         int botSlot,
         int enemyEntityIndex)
     {
@@ -250,9 +250,9 @@ public sealed class VisionMonitorService
                 key,
                 out VisionPairState? pair))
         {
-            pair.ForcedByPlugin =
+            pair.AcquiredByPlugin =
                 false;
-            pair.ForcedAt =
+            pair.PluginAcquiredAt =
                 0.0f;
         }
     }
@@ -460,12 +460,12 @@ public sealed class VisionMonitorService
                     bot,
                     now);
 
-            // A forced marker belongs only to one active vision episode.
+            // A plugin-acquisition marker belongs only to one active vision episode.
             // Reusing the pair object for a later natural event must never
-            // inherit an earlier plugin-forced classification.
-            pair.ForcedByPlugin =
+            // inherit an earlier plugin-supplied classification.
+            pair.AcquiredByPlugin =
                 false;
-            pair.ForcedAt =
+            pair.PluginAcquiredAt =
                 0.0f;
 
             pair.Active =
@@ -670,30 +670,30 @@ public sealed class VisionMonitorService
             now +
             EventRestartCooldownSeconds;
 
-        if (pair.ForcedByPlugin)
+        if (pair.AcquiredByPlugin)
         {
-            float forcedAt =
-                pair.ForcedAt;
+            float pluginAcquiredAt =
+                pair.PluginAcquiredAt;
 
             // Consume the marker with this exact vision episode. Without this,
             // a later natural event for the same bot/enemy pair can be
-            // incorrectly classified as ACQUIRED_FORCED.
-            pair.ForcedByPlugin =
+            // incorrectly classified as ACQUIRED_PLUGIN.
+            pair.AcquiredByPlugin =
                 false;
-            pair.ForcedAt =
+            pair.PluginAcquiredAt =
                 0.0f;
 
-            _eventsForcedAcquired++;
-            _mapStats.ForcedAcquired++;
+            _eventsPluginAcquired++;
+            _mapStats.PluginAcquired++;
 
             if (Config.VisionDebug)
             {
                 _info(
-                    $"ACQUIRED_FORCED map={SafeMap(mapName)}; " +
+                    $"ACQUIRED_PLUGIN map={SafeMap(mapName)}; " +
                     $"bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
                     $"enemy={pair.EnemyName}#{valveEnemyEntityIndex}; " +
                     $"timeFromVisionEvent={timeToAcquire:0.000}; " +
-                    $"forcedAt={forcedAt:0.000}; " +
+                    $"pluginAcquiredAt={pluginAcquiredAt:0.000}; " +
                     $"initialAngle={FormatOptional(pair.InitialEnemyAngleFromView)}; " +
                     $"initialViewSector={pair.InitialViewSector}; " +
                     "excludedFromNaturalAcquireStats=true");
@@ -793,9 +793,9 @@ public sealed class VisionMonitorService
             pair.SuppressUntil =
                 now +
                 EventRestartCooldownSeconds;
-            pair.ForcedByPlugin =
+            pair.AcquiredByPlugin =
                 false;
-            pair.ForcedAt =
+            pair.PluginAcquiredAt =
                 0.0f;
 
             _eventsLostUnacquired++;
@@ -1207,7 +1207,7 @@ public sealed class VisionMonitorService
         public long Side { get; set; }
         public long Rear { get; set; }
         public long Acquired { get; set; }
-        public long ForcedAcquired { get; set; }
+        public long PluginAcquired { get; set; }
         public long Lost { get; set; }
         public double TotalAcquireSeconds { get; set; }
         public double MaximumAcquireSeconds { get; set; }
@@ -1234,7 +1234,7 @@ public sealed class VisionMonitorService
             Side = 0;
             Rear = 0;
             Acquired = 0;
-            ForcedAcquired = 0;
+            PluginAcquired = 0;
             Lost = 0;
             TotalAcquireSeconds = 0.0;
             MaximumAcquireSeconds = 0.0;
@@ -1295,8 +1295,8 @@ public sealed class VisionMonitorService
         public float InitialLookAroundInhibitRemaining { get; set; }
         public bool InitialPathfinderEyeControl { get; set; }
 
-        public bool ForcedByPlugin { get; set; }
+        public bool AcquiredByPlugin { get; set; }
 
-        public float ForcedAt { get; set; }
+        public float PluginAcquiredAt { get; set; }
     }
 }

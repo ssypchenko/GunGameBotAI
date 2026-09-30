@@ -9,7 +9,7 @@ namespace GunGameBotAI.Services;
 /// transition recovered from libserver.so.
 ///
 /// This service owns ABI/signature validation only. Eligibility is decided by
-/// EnemyAttackTransitionMonitorService and remains opt-in/fail-closed.
+/// EnemyReactionService. The integration remains fail-closed after CS2 updates.
 /// </summary>
 public sealed class NativeAttackService
 {
@@ -133,7 +133,6 @@ public sealed class NativeAttackService
         CCSPlayerPawn enemyPawn)
     {
         EnsureInitialised();
-
         _attempts++;
 
         if (!_available ||
@@ -254,7 +253,7 @@ public sealed class NativeAttackService
             _attack =
                 null;
             _status =
-                "unsupported platform; Stage 6.7 currently Linux-only";
+                "unsupported platform; native enemy reaction is currently Linux-only";
 
             return;
         }
@@ -283,7 +282,7 @@ public sealed class NativeAttackService
 
                 _info(
                     $"[NativeAttack] CCSBot::Attack signature OK; " +
-                    $"address=0x{function.Handle.ToInt64():X16}; assist=disabled-until-config-enabled.");
+                    $"address=0x{function.Handle.ToInt64():X16}; integration=ready.");
 
                 return;
             }
@@ -302,7 +301,7 @@ public sealed class NativeAttackService
             "CCSBot::Attack exact signature unavailable";
 
         _warning(
-            "[NativeAttack] CCSBot::Attack signature not found; Stage 6.7 assist unavailable.");
+            "[NativeAttack] CCSBot::Attack signature not found; enemy reaction will continue without the native transition.");
     }
 
     private static bool ValidateCurrentTarget(

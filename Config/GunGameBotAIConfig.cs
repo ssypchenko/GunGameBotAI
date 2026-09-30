@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 40;
+    public override int Version { get; set; } = 43;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -33,7 +33,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float IdleRepathSeconds { get; set; } = 4.0f;
 
     // Observation-only Stage 1 diagnostics. Never performs recovery actions.
-    public bool StuckMonitorEnabled { get; set; } = true;
+    public bool StuckMonitorEnabled { get; set; } = false;
 
     // ---------------------------------------------------------------------
     // Persistent physical ladder learning / traversal
@@ -219,7 +219,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float LadderTraversalProactiveFailureCooldownSeconds { get; set; } = 1.50f;
 
     // Integrated GeometryProbe floor/hole diagnostics. Observation-only.
-    public bool GeometrySafetyDetectionEnabled { get; set; } = true;
+    public bool GeometrySafetyDetectionEnabled { get; set; } = false;
 
     public bool CombatStrafeEnabled { get; set; } = true;
     public bool CounterStrafeEnabled { get; set; } = true;
@@ -243,8 +243,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
     public bool GrenadeLevelEnabled { get; set; } = true;
 
-    // Stage 4 aim correction is deliberately opt-in for the first production release.
-    public bool AimEnhancementEnabled { get; set; } = false;
+    // Production combat aim correction. Enabled by default; diagnostics stay separate.
+    public bool AimEnhancementEnabled { get; set; } = true;
     public AimMode AimMode { get; set; } = global::GunGameBotAI.Models.AimMode.Mixed;
     public bool AimDebug { get; set; } = false;
 
@@ -256,29 +256,26 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // so vision tests do not enable geometry/knife/other legacy debug streams.
     public bool VisionDebug { get; set; } = false;
 
-    // Stage 6 managed look-around experiment. Disabled until explicitly tested.
+    // Managed Valve look-around support. Enabled by default; diagnostics stay separate.
     // v1 releases Valve's look-around inhibit. v2 may also restart Valve's own
     // look-around state on a bounded cadence when no current enemy exists.
     // It never writes EyeAngles directly.
-    public bool VisionEnhancementEnabled { get; set; } = false;
+    public bool VisionEnhancementEnabled { get; set; } = true;
     public float VisionLookAroundRestartIntervalSeconds { get; set; } = 0.75f;
 
-    // Stage 6.5 experimental human-like physical look scanning. Disabled by
-    // default. v3 uses the shared fast actuator to hold only
+    // Human-like physical look scanning. Enabled by default. v3 uses the shared
+    // fast actuator to hold only
     // CCSPlayerPawn.EyeAngles.Y (yaw) with read-back correction; Valve retains
     // navigation, movement, target selection and combat aim.
-    public bool HumanLookScanEnabled { get; set; } = false;
+    public bool HumanLookScanEnabled { get; set; } = true;
     public float HumanLookScanMinIntervalSeconds { get; set; } = 2.50f;
     public float HumanLookScanMaxIntervalSeconds { get; set; } = 4.50f;
     public float HumanLookScanHoldSeconds { get; set; } = 0.30f;
     public float HumanLookScanYawToleranceDegrees { get; set; } = 7.5f;
 
-    // Direction policy: first use a physically visible but Valve-unacquired
-    // enemy as a yaw hint; otherwise choose the most open world-geometry ray.
-    // Random selection remains the final fallback if neither source succeeds.
-    public bool HumanLookScanVisibleEnemyHintEnabled { get; set; } = true;
-    public float HumanLookScanVisibleEnemyHintDistance { get; set; } = 800.0f;
-    public float HumanLookScanVisibleEnemyHintCooldownSeconds { get; set; } = 0.75f;
+    // Ambient direction policy: choose the most open world-geometry ray.
+    // Random selection remains the final fallback. Enemy-directed turning is
+    // owned exclusively by EnemyReactionService.
     public bool HumanLookScanGeometryFallbackEnabled { get; set; } = true;
     public float HumanLookScanGeometryTraceDistance { get; set; } = 1200.0f;
     public float HumanLookScanGeometryMinimumClearDistance { get; set; } = 160.0f;
@@ -286,35 +283,18 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float HumanLookScanMinimumSpeed { get; set; } = 30.0f;
     public float HumanLookScanRecentFireGraceSeconds { get; set; } = 0.75f;
 
-    // Stage 6.6: if the same enemy remains physically visible by trace for the
-    // configured time while Valve still has no current enemy, seed Valve's
-    // enemy/perception fields. This is independent of view angle. It does not
-    // set IsAttacking and does not press Fire.
-    public bool ForcedEnemyAcquisitionEnabled { get; set; } = false;
-    public float ForcedEnemyAcquisitionDelaySeconds { get; set; } = 1.00f;
-    public float ForcedEnemyAcquisitionDistance { get; set; } = 800.0f;
-
-    // Diagnostic-only window after a successful forced write. During this
-    // period we observe whether Valve keeps/drops the target and whether it
-    // naturally enters attack state. This does not change bot behaviour.
-    public float ForcedEnemyAcquisitionPostObservationSeconds { get; set; } = 1.00f;
-
-    // Stage 6.6b: after a forced target is seeded, briefly reassert the same
-    // perception state if Valve clears it while the same enemy is still alive
-    // and physically visible. This is still not an Attack() call and never
-    // presses Fire. The original acquisition timestamp is preserved.
-    public float ForcedEnemyAcquisitionReassertSeconds { get; set; } = 0.60f;
-
-    // Observation-only Stage 6.6c diagnostic. A stall is counted only after
-    // Valve has held the same current enemy for this long and, at that moment,
-    // IsEnemyVisible=true and a real physical LOS trace still succeeds.
-    public float EnemyAttackTransitionStallSeconds { get; set; } = 1.00f;
-
-    // Stage 6.7 native Valve attack-state transition. Explicit opt-in only.
-    // The trigger remains the strong attack-stall condition; this delay is
-    // combined with EnemyAttackTransitionStallSeconds using the stricter value.
-    public bool NativeAttackAssistEnabled { get; set; } = false;
-    public float NativeAttackAssistDelaySeconds { get; set; } = 1.00f;
+    // Unified production enemy reaction. Any physically visible enemy inside
+    // the configured distance can be noticed, including behind the bot. After
+    // a short angle-weighted delay the plugin turns yaw toward the selected
+    // threat, seeds/refreshes Valve perception, invokes CCSBot::Attack once,
+    // then returns combat ownership to Valve.
+    public bool EnemyReactionEnabled { get; set; } = true;
+    public float EnemyReactionMinSeconds { get; set; } = 0.20f;
+    public float EnemyReactionMaxSeconds { get; set; } = 0.50f;
+    public float EnemyReactionDistance { get; set; } = 1000.0f;
+    public float EnemyReactionHoldSeconds { get; set; } = 0.35f;
+    public float EnemyReactionYawToleranceDegrees { get; set; } = 6.0f;
+    public bool EnemyReactionNativeAttackEnabled { get; set; } = true;
 
     public int MaxWeaponSwitchRetries { get; set; } = 5;
     public float WeaponSwitchRetryIntervalSeconds { get; set; } = 0.10f;
@@ -370,20 +350,6 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             7.5f,
             nameof(HumanLookScanYawToleranceDegrees),
             warn);
-        HumanLookScanVisibleEnemyHintDistance = Clamp(
-            HumanLookScanVisibleEnemyHintDistance,
-            100.0f,
-            2000.0f,
-            800.0f,
-            nameof(HumanLookScanVisibleEnemyHintDistance),
-            warn);
-        HumanLookScanVisibleEnemyHintCooldownSeconds = Clamp(
-            HumanLookScanVisibleEnemyHintCooldownSeconds,
-            0.25f,
-            5.0f,
-            0.75f,
-            nameof(HumanLookScanVisibleEnemyHintCooldownSeconds),
-            warn);
         HumanLookScanGeometryTraceDistance = Clamp(
             HumanLookScanGeometryTraceDistance,
             256.0f,
@@ -398,47 +364,40 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             160.0f,
             nameof(HumanLookScanGeometryMinimumClearDistance),
             warn);
-        ForcedEnemyAcquisitionDelaySeconds = Clamp(
-            ForcedEnemyAcquisitionDelaySeconds,
-            0.25f,
-            5.0f,
-            1.00f,
-            nameof(ForcedEnemyAcquisitionDelaySeconds),
-            warn);
-        ForcedEnemyAcquisitionDistance = Clamp(
-            ForcedEnemyAcquisitionDistance,
-            100.0f,
-            2000.0f,
-            800.0f,
-            nameof(ForcedEnemyAcquisitionDistance),
-            warn);
-        ForcedEnemyAcquisitionPostObservationSeconds = Clamp(
-            ForcedEnemyAcquisitionPostObservationSeconds,
-            0.50f,
-            3.00f,
-            1.00f,
-            nameof(ForcedEnemyAcquisitionPostObservationSeconds),
-            warn);
-        ForcedEnemyAcquisitionReassertSeconds = Clamp(
-            ForcedEnemyAcquisitionReassertSeconds,
-            0.10f,
+        EnemyReactionMinSeconds = Clamp(
+            EnemyReactionMinSeconds,
+            0.05f,
             1.50f,
-            0.60f,
-            nameof(ForcedEnemyAcquisitionReassertSeconds),
+            0.20f,
+            nameof(EnemyReactionMinSeconds),
             warn);
-        EnemyAttackTransitionStallSeconds = Clamp(
-            EnemyAttackTransitionStallSeconds,
-            0.50f,
-            3.00f,
-            1.00f,
-            nameof(EnemyAttackTransitionStallSeconds),
+        EnemyReactionMaxSeconds = Clamp(
+            EnemyReactionMaxSeconds,
+            EnemyReactionMinSeconds,
+            2.00f,
+            MathF.Max(0.50f, EnemyReactionMinSeconds),
+            nameof(EnemyReactionMaxSeconds),
             warn);
-        NativeAttackAssistDelaySeconds = Clamp(
-            NativeAttackAssistDelaySeconds,
-            1.00f,
-            5.00f,
-            1.00f,
-            nameof(NativeAttackAssistDelaySeconds),
+        EnemyReactionDistance = Clamp(
+            EnemyReactionDistance,
+            100.0f,
+            2500.0f,
+            1000.0f,
+            nameof(EnemyReactionDistance),
+            warn);
+        EnemyReactionHoldSeconds = Clamp(
+            EnemyReactionHoldSeconds,
+            0.10f,
+            0.75f,
+            0.35f,
+            nameof(EnemyReactionHoldSeconds),
+            warn);
+        EnemyReactionYawToleranceDegrees = Clamp(
+            EnemyReactionYawToleranceDegrees,
+            1.0f,
+            30.0f,
+            6.0f,
+            nameof(EnemyReactionYawToleranceDegrees),
             warn);
         HumanLookScanMinimumSpeed = Clamp(
             HumanLookScanMinimumSpeed,
@@ -969,12 +928,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 34)
         {
-            // v34 changes only direction choice: visible-unacquired enemy hint,
-            // then world-geometry openness, then random fallback. Keep the
-            // behavioural experiment opt-in after upgrade.
             HumanLookScanEnabled = false;
-            HumanLookScanVisibleEnemyHintEnabled = true;
-            HumanLookScanVisibleEnemyHintDistance = 800.0f;
             HumanLookScanGeometryFallbackEnabled = true;
             HumanLookScanGeometryTraceDistance = 1200.0f;
             HumanLookScanGeometryMinimumClearDistance = 160.0f;
@@ -983,60 +937,76 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
         if (Version < 35)
         {
-            // v35 makes a physically visible but Valve-unacquired enemy an
-            // immediate trigger instead of waiting for the regular scan timer.
-            // A short per-bot cooldown prevents repeated hint scans when Valve
-            // still does not acquire the same continuing LOS opportunity.
-            HumanLookScanEnabled = false;
-            HumanLookScanVisibleEnemyHintCooldownSeconds = 0.75f;
             Version = 35;
         }
 
         if (Version < 36)
         {
-            // v36 adds the guarded Forced Enemy Acquisition experiment. Keep it
-            // OFF after migration so the operator explicitly opts into writing
-            // CCSBot enemy/perception state after validating the build.
-            ForcedEnemyAcquisitionEnabled = false;
-            ForcedEnemyAcquisitionDelaySeconds = 1.00f;
-            ForcedEnemyAcquisitionDistance = 800.0f;
             Version = 36;
         }
 
         if (Version < 37)
         {
-            // v37 is diagnostic-only: extend post-force observation to classify
-            // late target drops versus attack transitions. Preserve the
-            // operator's existing ForcedEnemyAcquisitionEnabled choice.
-            ForcedEnemyAcquisitionPostObservationSeconds = 1.00f;
             Version = 37;
         }
 
-        if (Version < 38)
+        if (Version < 41)
         {
-            // v38 briefly reasserts the same forced enemy/perception state if
-            // Valve drops it while physical LOS still exists. Preserve the
-            // operator's existing opt-in because this is a bounded extension of
-            // the already-enabled Stage 6.6 experiment.
-            ForcedEnemyAcquisitionReassertSeconds = 0.60f;
-            Version = 38;
+            // v41 replaces the separate visible-enemy hint, forced-acquisition
+            // and attack-stall experiment with one bounded production reaction.
+            EnemyReactionEnabled = true;
+            EnemyReactionMinSeconds = 0.20f;
+            EnemyReactionMaxSeconds = 0.50f;
+            EnemyReactionDistance = 1000.0f;
+            EnemyReactionHoldSeconds = 0.35f;
+            EnemyReactionYawToleranceDegrees = 6.0f;
+            EnemyReactionNativeAttackEnabled = true;
+            Version = 41;
         }
 
-        if (Version < 39)
+        if (Version < 42)
         {
-            // v39 is diagnostic-only. Measure the delay from a stable Valve
-            // current enemy to IsAttacking separately from physical LOS age.
-            EnemyAttackTransitionStallSeconds = 1.00f;
-            Version = 39;
+            // v42 expands Enemy Reaction to full 360-degree physical LOS.
+            // Rear threats are intentionally eligible; view angle affects
+            // reaction delay only, never visibility eligibility.
+            Version = 42;
         }
 
-        if (Version < 40)
+        if (Version < 43)
         {
-            // v40 adds the first behaviour-changing native CCSBot::Attack
-            // experiment. Require an explicit operator opt-in after migration.
-            NativeAttackAssistEnabled = false;
-            NativeAttackAssistDelaySeconds = 1.00f;
-            Version = 40;
+            // v43 adopts the production profile: behaviour-changing combat
+            // features ON by default, observation/debug facilities OFF.
+            // Runtime itself remains opt-in through EnabledOnLoad=false.
+            Debug = false;
+            VerboseCorrectionDebug = false;
+            StuckMonitorEnabled = false;
+            LadderMapDebug = false;
+            LadderHumanMovementDiagnostics = false;
+            GeometrySafetyDetectionEnabled = false;
+            AimDebug = false;
+            VisionMonitorEnabled = false;
+            VisionDebug = false;
+
+            AggressiveStateEnabled = true;
+            IdleRepathEnabled = true;
+            LadderEntryJumpEnabled = true;
+            LadderTraversalRecoveryEnabled = true;
+            LadderTraversalPostExitRepathEnabled = true;
+            LadderTraversalPostExitEnemySpawnGoalEnabled = true;
+            CombatStrafeEnabled = true;
+            CounterStrafeEnabled = true;
+            SniperPeekEnabled = true;
+            KnifeRushEnabled = true;
+            GrenadeLevelEnabled = true;
+            AimEnhancementEnabled = true;
+            VisionEnhancementEnabled = true;
+            HumanLookScanEnabled = true;
+            HumanLookScanGeometryFallbackEnabled = true;
+            EnemyReactionEnabled = true;
+            EnemyReactionNativeAttackEnabled = true;
+
+            EnabledOnLoad = false;
+            Version = 43;
         }
     }
 

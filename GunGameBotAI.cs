@@ -36,9 +36,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly VisionMonitorService _visionMonitor;
     private readonly VisionEnhancementService _visionEnhancement;
     private readonly HumanLookScanService _humanLookScan;
-    private readonly ForcedEnemyAcquisitionService _forcedEnemyAcquisition;
     private readonly NativeAttackService _nativeAttack;
-    private readonly EnemyAttackTransitionMonitorService _attackTransitionMonitor;
+    private readonly EnemyReactionService _enemyReaction;
     private readonly AimDiagnosticsService _aimDiagnostics;
     private readonly AimPolicyService _aimPolicy;
     private readonly AimService _aimService;
@@ -100,35 +99,28 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
         _humanLookScan = new HumanLookScanService(
             new HumanLookDirectionService(
-                _visibilityTrace,
-                (candidate, now) =>
-                    IsBotInSpawnGrace(
-                        candidate,
-                        now)),
+                _visibilityTrace),
             message => Logger.LogInformation("[GunGameBotAI][LookScan] {Message}", message));
-        _forcedEnemyAcquisition = new ForcedEnemyAcquisitionService(
+        _nativeAttack = new NativeAttackService(
+            message => Logger.LogInformation("[GunGameBotAI]{Message}", message),
+            message => Logger.LogWarning("[GunGameBotAI]{Message}", message));
+        _enemyReaction = new EnemyReactionService(
             _visibilityTrace,
+            _nativeAttack,
             (candidate, now) =>
                 IsBotInSpawnGrace(
                     candidate,
                     now),
             (slot, enemyEntityIndex, now) =>
-                _visionMonitor.MarkForcedAcquisition(
+                _visionMonitor.MarkPluginAcquisition(
                     slot,
                     enemyEntityIndex,
                     now),
             (slot, enemyEntityIndex) =>
-                _visionMonitor.ClearForcedAcquisitionMarker(
+                _visionMonitor.ClearPluginAcquisitionMarker(
                     slot,
                     enemyEntityIndex),
-            message => Logger.LogInformation("[GunGameBotAI][ForcedAcquire] {Message}", message));
-        _nativeAttack = new NativeAttackService(
-            message => Logger.LogInformation("[GunGameBotAI]{Message}", message),
-            message => Logger.LogWarning("[GunGameBotAI]{Message}", message));
-        _attackTransitionMonitor = new EnemyAttackTransitionMonitorService(
-            _visibilityTrace,
-            _nativeAttack,
-            message => Logger.LogInformation("[GunGameBotAI][AttackTransition] {Message}", message));
+            message => Logger.LogInformation("[GunGameBotAI][EnemyReaction] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,
             message => Logger.LogInformation("[GunGameBotAI][Aim] {Message}", message));
@@ -150,7 +142,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.7.55";
+    public override string ModuleVersion => "0.8.2";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -163,19 +155,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         config.Validate(message => Logger.LogWarning("[GunGameBotAI] {Message}", message));
         Config = config;
         ApplyConfigToServices();
-
-        if (_loaded &&
-            Config.NativeAttackAssistEnabled &&
-            !_nativeAttack.Available)
-        {
-            Config.NativeAttackAssistEnabled =
-                false;
-            _attackTransitionMonitor.Config =
-                Config;
-
-            Logger.LogWarning(
-                "[GunGameBotAI][NativeAttack] Configuration requested Native Attack Assist, but the exact CCSBot::Attack signature is unavailable; runtime assist forced disabled.");
-        }
 
         if (!_loaded)
         {
@@ -218,9 +197,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.BeginMap(currentMap);
             _visionEnhancement.BeginMap();
             _humanLookScan.BeginMap();
-            _forcedEnemyAcquisition.BeginMap();
+            _enemyReaction.BeginMap();
             _nativeAttack.ResetStatistics();
-            _attackTransitionMonitor.BeginMap();
         }
 
         RegisterListener<Listeners.OnMapStart>(OnMapStart);
@@ -236,18 +214,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterEventHandler<EventBotTakeover>(OnBotTakeover);
 
         _nativeAttack.Initialize();
-
-        if (Config.NativeAttackAssistEnabled &&
-            !_nativeAttack.Available)
-        {
-            Config.NativeAttackAssistEnabled =
-                false;
-            _attackTransitionMonitor.Config =
-                Config;
-
-            Logger.LogWarning(
-                "[GunGameBotAI][NativeAttack] NativeAttackAssistEnabled=true but the exact CCSBot::Attack signature is unavailable; runtime assist forced disabled.");
-        }
 
         _aimNative.Initialize();
 
@@ -301,8 +267,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.ClearRuntimeState();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
-        _forcedEnemyAcquisition.Reset();
-        _attackTransitionMonitor.Reset();
+        _enemyReaction.Reset();
         _aimDiagnostics.Reset();
         _transientControl.Clear();
         ReleaseAllKnownButtonPulses();
@@ -394,10 +359,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.RemoveSlot(slot);
         _visionEnhancement.RemoveSlot(slot);
         _humanLookScan.RemoveSlot(slot);
-        _forcedEnemyAcquisition.RemoveSlot(
-            slot,
-            "spawn-grace");
-        _attackTransitionMonitor.RemoveSlot(
+        _enemyReaction.RemoveSlot(
             slot,
             "spawn-grace");
         _aimDiagnostics.RemoveSlot(slot);
@@ -487,10 +449,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _visionMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(
-                        slot,
-                        "bot-unavailable");
-                    _attackTransitionMonitor.RemoveSlot(
+                    _enemyReaction.RemoveSlot(
                         slot,
                         "bot-unavailable");
                     _aimDiagnostics.RemoveSlot(slot);
@@ -510,10 +469,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _visionMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(
-                        slot,
-                        "human-takeover");
-                    _attackTransitionMonitor.RemoveSlot(
+                    _enemyReaction.RemoveSlot(
                         slot,
                         "human-takeover");
                     _aimDiagnostics.RemoveSlot(slot);
@@ -562,10 +518,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _stuckMonitor.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
-                    _forcedEnemyAcquisition.RemoveSlot(
-                        slot,
-                        "ladder-traversal");
-                    _attackTransitionMonitor.RemoveSlot(
+                    _enemyReaction.RemoveSlot(
                         slot,
                         "ladder-traversal");
 
@@ -593,12 +546,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     mapName,
                     now);
 
-                // Forced Enemy Acquisition runs after ordinary Valve/GunGame
-                // decision work, but before diagnostics/look-scan consume the
-                // current enemy state. It can therefore seed m_enemy after a
-                // full continuous-LOS grace period and let the same loop observe
-                // whether Valve accepted that state.
-                _forcedEnemyAcquisition.Observe(
+                _enemyReaction.Observe(
                     controller,
                     pawn,
                     bot,
@@ -607,16 +555,26 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     freezePeriod,
                     now);
 
-                // Observation-only: measure the time from Valve's stable
-                // current enemy to IsAttacking independently of LOS age.
-                _attackTransitionMonitor.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    mapName,
-                    freezePeriod,
-                    now);
+                bool enemyReactionTracking =
+                    _enemyReaction.IsTracking(
+                        slot);
+
+                if (enemyReactionTracking)
+                {
+                    // A newly detected enemy must immediately stop any ambient
+                    // look-around lease, even during the human-like reaction
+                    // delay before EnemyReaction starts writing yaw.
+                    _visionEnhancement.RemoveSlot(
+                        slot);
+                    _humanLookScan.RemoveSlot(
+                        slot);
+                }
+
+                if (_enemyReaction.IsActive(slot))
+                {
+                    _registry.ActivateActuator(
+                        slot);
+                }
 
                 _visionMonitor.Observe(
                     controller,
@@ -627,28 +585,31 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     freezePeriod,
                     now);
 
-                _visionEnhancement.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    now);
-
-                _humanLookScan.Observe(
-                    controller,
-                    pawn,
-                    bot,
-                    state,
-                    freezePeriod,
-                    now);
-
-                // NormalGunGame deliberately deactivates the shared actuator in
-                // ThinkBot(). A newly started look scan must reacquire fast
-                // actuator ownership, exactly like Knife Rush does.
-                if (_humanLookScan.IsActive(slot))
+                // EnemyReaction is the only service allowed to steer toward a
+                // visible opponent. Ambient look-around remains geometry/random
+                // only and stays out while a reaction is pending or active.
+                if (!enemyReactionTracking)
                 {
-                    _registry.ActivateActuator(
-                        slot);
+                    _visionEnhancement.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        now);
+
+                    _humanLookScan.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        freezePeriod,
+                        now);
+
+                    if (_humanLookScan.IsActive(slot))
+                    {
+                        _registry.ActivateActuator(
+                            slot);
+                    }
                 }
 
                 if (state.Mode is
@@ -832,6 +793,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 activeSlots.Add(pulseSlot);
         }
 
+        foreach (int reactionSlot in
+                 _enemyReaction.ActiveSlots)
+        {
+            if (!activeSlots.Contains(reactionSlot))
+                activeSlots.Add(reactionSlot);
+        }
+
         for (int index = activeSlots.Count - 1;
             index >= 0;
             index--)
@@ -856,6 +824,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _enemyReaction.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _registry.Remove(slot);
                     continue;
                 }
@@ -866,6 +837,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _enemyReaction.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _registry.Remove(slot);
                     continue;
                 }
@@ -881,6 +855,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _enemyReaction.RemoveSlot(
+                        slot,
+                        "bot-unavailable");
                     _registry.Remove(slot);
                     continue;
                 }
@@ -893,6 +870,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 {
                     _buttonPulses.Cancel(slot);
                     _transientControl.CancelSlot(slot);
+                    _enemyReaction.RemoveSlot(
+                        slot,
+                        "runtime-state-unavailable");
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
@@ -907,10 +887,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 // Fast actuator priority:
                 //   1. learned ladder traversal,
                 //   2. Knife Rush / mandatory knife,
-                //   3. Human Look Scan,
-                //   4. ordinary transient control.
-                //
-                // LookScan never competes with the two higher-priority owners.
+                //   3. bounded visible-enemy reaction,
+                //   4. ambient Human Look Scan,
+                //   5. ordinary transient control.
                 bool ladderTraversalOwned =
                     _ladderMap?.ApplyFast(
                         pawn,
@@ -934,11 +913,31 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         BotBehaviorMode.KnifeLevel or
                         BotBehaviorMode.OpportunisticKnifeRush;
 
+                bool enemyReactionOwned =
+                    false;
+
+                if (!ladderTraversalOwned &&
+                    !knifeActuatorOwned &&
+                    state.Mode ==
+                        BotBehaviorMode.NormalGunGame &&
+                    _enemyReaction.IsActive(
+                        slot))
+                {
+                    enemyReactionOwned =
+                        _enemyReaction.ApplyFast(
+                            controller,
+                            pawn,
+                            bot,
+                            state,
+                            now);
+                }
+
                 bool lookScanOwned =
                     false;
 
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
+                    !enemyReactionOwned &&
                     state.Mode ==
                         BotBehaviorMode.NormalGunGame)
                 {
@@ -974,6 +973,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 // registry ownership does not starve them.
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
+                    !enemyReactionOwned &&
                     !lookScanOwned)
                 {
                     _registry.DeactivateActuator(
@@ -1116,9 +1116,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.BeginMap(_currentMapName);
         _visionEnhancement.BeginMap();
         _humanLookScan.BeginMap();
-        _forcedEnemyAcquisition.BeginMap();
+        _enemyReaction.BeginMap();
         _nativeAttack.ResetStatistics();
-        _attackTransitionMonitor.BeginMap();
         _ladderMap?.OnMapStart(mapName);
 
         if (_loaded)
@@ -1129,15 +1128,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     {
         _mapChanging = true;
         StopSharedTimers();
-        _forcedEnemyAcquisition.AbortPending(
-            "map-end");
-        _attackTransitionMonitor.ClearRuntimeState(
-            "map-end");
+        _enemyReaction.LogMapSummary(_currentMapName);
         _visionMonitor.LogMapSummary(_currentMapName);
         _visionEnhancement.LogMapSummary(_currentMapName);
         _humanLookScan.LogMapSummary(_currentMapName);
-        _forcedEnemyAcquisition.LogMapSummary(_currentMapName);
-        _attackTransitionMonitor.LogMapSummary(_currentMapName);
         _nativeAttack.LogMapSummary(_currentMapName);
         _ladderMap?.OnMapEnd();
         ResetRuntimeState();
@@ -1154,10 +1148,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.RemoveSlot(playerSlot);
         _visionEnhancement.RemoveSlot(playerSlot);
         _humanLookScan.RemoveSlot(playerSlot);
-        _forcedEnemyAcquisition.RemoveSlot(
-            playerSlot,
-            "disconnect");
-        _attackTransitionMonitor.RemoveSlot(
+        _enemyReaction.RemoveSlot(
             playerSlot,
             "disconnect");
         _aimDiagnostics.RemoveSlot(playerSlot);
@@ -1180,10 +1171,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
-        _forcedEnemyAcquisition.ClearRuntimeState(
-            "round-end");
-        _attackTransitionMonitor.ClearRuntimeState(
-            "round-end");
+        _enemyReaction.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         return HookResult.Continue;
@@ -1242,10 +1230,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
-            _forcedEnemyAcquisition.RemoveSlot(
-                slot,
-                "player-death");
-            _attackTransitionMonitor.RemoveSlot(
+            _enemyReaction.RemoveSlot(
                 slot,
                 "player-death");
             _aimDiagnostics.RemoveSlot(slot);
@@ -1266,6 +1251,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         BotRuntimeState state = _registry.GetOrCreate(player.Slot);
+
+        _enemyReaction.OnWeaponFire(
+            player.Slot,
+            Server.CurrentTime);
 
         // Special movement controllers own velocity/input while active.
         // Counter-strafe from normal combat movement must not fight them.
@@ -1317,10 +1306,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionMonitor.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
-            _forcedEnemyAcquisition.RemoveSlot(
-                slot,
-                "bot-takeover");
-            _attackTransitionMonitor.RemoveSlot(
+            _enemyReaction.RemoveSlot(
                 slot,
                 "bot-takeover");
             _aimDiagnostics.RemoveSlot(slot);
@@ -1489,19 +1475,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             enabled;
         _visionMonitor.Config =
             Config;
-        _attackTransitionMonitor.Config =
-            Config;
 
         if (!enabled)
             _visionMonitor.ClearRuntimeState();
-
-        if (!Config.VisionMonitorEnabled &&
-            !Config.ForcedEnemyAcquisitionEnabled &&
-            !Config.NativeAttackAssistEnabled)
-        {
-            _attackTransitionMonitor.ClearRuntimeState(
-                "diagnostic-disabled");
-        }
 
         PersistConfig(command);
 
@@ -1530,14 +1506,14 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             Config;
         _humanLookScan.Config =
             Config;
-        _attackTransitionMonitor.Config =
+        _enemyReaction.Config =
             Config;
 
         PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] visionDebug={(enabled ? "enabled" : "disabled")}; " +
-            "events=vision-gap/acquired/lost; Stage6 interventions=aggregate-only.");
+            "events=vision-gap/acquired/lost plus EnemyReaction detection/commit/end.");
     }
 
     [ConsoleCommand("css_ggbotai_vision_enhancement", "Enable or disable Stage 6 managed look-around enhancement.")]
@@ -1590,22 +1566,20 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         command.ReplyToCommand(
             $"[GunGameBotAI] look scan={(enabled ? "enabled" : "disabled")}; " +
-            "control=EyeAngles.Y-fast-readback; enemyDirectionInput=none; " +
+            "control=EyeAngles.Y-fast-readback; enemyDirectionInput=EnemyReaction; " +
             $"interval={Config.HumanLookScanMinIntervalSeconds:0.###}.." +
             $"{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"hold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"yawTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
-            "direction=visible-enemy-hint>geometry>random; " +
-            $"hintDistance={Config.HumanLookScanVisibleEnemyHintDistance:0.#}; " +
-            $"hintCooldown={Config.HumanLookScanVisibleEnemyHintCooldownSeconds:0.###}s; " +
+            "direction=geometry>random; " +
             $"geometryDistance={Config.HumanLookScanGeometryTraceDistance:0.#}; " +
             $"fastTicks={Config.FastActuatorEveryTicks}; " +
             $"minimumSpeed={Config.HumanLookScanMinimumSpeed:0.#}.");
     }
 
-    [ConsoleCommand("css_ggbotai_forced_acquire", "Enable or disable Stage 6.6 forced enemy acquisition.")]
+    [ConsoleCommand("css_ggbotai_enemy_reaction", "Enable or disable bounded visible-enemy reaction.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
-    public void OnForcedEnemyAcquisitionCommand(
+    public void OnEnemyReactionCommand(
         CCSPlayerController? player,
         CommandInfo command)
     {
@@ -1614,101 +1588,69 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 out bool enabled))
         {
             command.ReplyToCommand(
-                "[GunGameBotAI] Usage: css_ggbotai_forced_acquire 0|1");
+                "[GunGameBotAI] Usage: css_ggbotai_enemy_reaction 0|1");
             return;
         }
 
-        Config.ForcedEnemyAcquisitionEnabled =
+        Config.EnemyReactionEnabled =
             enabled;
-        _forcedEnemyAcquisition.Config =
-            Config;
-        _attackTransitionMonitor.Config =
+        _enemyReaction.Config =
             Config;
 
         if (!enabled)
-            _forcedEnemyAcquisition.ClearRuntimeState(
-                "operator-disabled");
-
-        if (!Config.VisionMonitorEnabled &&
-            !Config.ForcedEnemyAcquisitionEnabled &&
-            !Config.NativeAttackAssistEnabled)
-        {
-            _attackTransitionMonitor.ClearRuntimeState(
-                "diagnostic-disabled");
-        }
+            _enemyReaction.ClearRuntimeState();
 
         PersistConfig(
             command);
 
         command.ReplyToCommand(
-            $"[GunGameBotAI] forced acquisition={(enabled ? "enabled" : "disabled")}; " +
-            $"delay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s continuous physical LOS; " +
-            $"distance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
-            $"postObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
-            $"reassert={Config.ForcedEnemyAcquisitionReassertSeconds:0.###}s; " +
-            "viewAngleGate=none; writes=enemy/perception-only; " +
-            "IsAttackingWrite=false; FireWrite=false.");
+            $"[GunGameBotAI] enemyReaction={(enabled ? "enabled" : "disabled")}; " +
+            $"delay={Config.EnemyReactionMinSeconds:0.###}.." +
+            $"{Config.EnemyReactionMaxSeconds:0.###}s; " +
+            $"distance={Config.EnemyReactionDistance:0.#}; " +
+            "awareness=360deg-physical-LOS; targetPolicy=ValveEnemyElseNearestVisible; " +
+            $"hold={Config.EnemyReactionHoldSeconds:0.###}s; " +
+            $"native={Config.EnemyReactionNativeAttackEnabled}; " +
+            $"nativeAvailable={_nativeAttack.Available}.");
     }
 
-    [ConsoleCommand("css_ggbotai_native_attack", "Enable or disable Stage 6.7 guarded native CCSBot::Attack assist.")]
-    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
-    public void OnNativeAttackAssistCommand(
+    [ConsoleCommand("css_ggbotai_enemy_reaction_delay", "Set visible-enemy reaction delay range.")]
+    [CommandHelper(minArgs: 2, usage: "<minSeconds> <maxSeconds>", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnEnemyReactionDelayCommand(
         CCSPlayerController? player,
         CommandInfo command)
     {
-        if (!TryParseBinary(
+        if (!float.TryParse(
                 command.GetArg(1),
-                out bool enabled))
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float minimum) ||
+            !float.TryParse(
+                command.GetArg(2),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float maximum) ||
+            minimum < 0.05f ||
+            maximum > 2.00f ||
+            maximum < minimum)
         {
             command.ReplyToCommand(
-                "[GunGameBotAI] Usage: css_ggbotai_native_attack 0|1");
+                "[GunGameBotAI] Usage: css_ggbotai_enemy_reaction_delay <minSeconds 0.05..2.00> <maxSeconds 0.05..2.00>");
             return;
         }
 
-        if (enabled &&
-            !_nativeAttack.Available)
-        {
-            Config.NativeAttackAssistEnabled =
-                false;
-            _attackTransitionMonitor.Config =
-                Config;
-
-            command.ReplyToCommand(
-                $"[GunGameBotAI] native Attack assist cannot be enabled: {_nativeAttack.Status}.");
-
-            PersistConfig(
-                command);
-
-            return;
-        }
-
-        Config.NativeAttackAssistEnabled =
-            enabled;
-        _attackTransitionMonitor.Config =
+        Config.EnemyReactionMinSeconds =
+            minimum;
+        Config.EnemyReactionMaxSeconds =
+            maximum;
+        _enemyReaction.Config =
             Config;
-
-        // Start/stop from a fresh transition episode so enabling the feature
-        // cannot immediately act on an enemy that was already stale before the
-        // operator changed the setting.
-        _attackTransitionMonitor.ClearRuntimeState(
-            enabled
-                ? "native-attack-enabled"
-                : "native-attack-disabled");
 
         PersistConfig(
             command);
 
-        float effectiveDelay =
-            MathF.Max(
-                Config.EnemyAttackTransitionStallSeconds,
-                Config.NativeAttackAssistDelaySeconds);
-
         command.ReplyToCommand(
-            $"[GunGameBotAI] nativeAttackAssist={(enabled ? "enabled" : "disabled")}; " +
-            $"available={_nativeAttack.Available}; " +
-            $"configuredDelay={Config.NativeAttackAssistDelaySeconds:0.###}s; " +
-            $"effectiveStrongDelay={effectiveDelay:0.###}s; " +
-            "policy=one-call-per-strong-stall; IsAttackingRawWrite=false.");
+            $"[GunGameBotAI] enemy reaction delay={minimum:0.###}..{maximum:0.###}s.");
     }
 
     [ConsoleCommand("css_ggbotai_aim_debug", "Enable or disable point-specific aim visibility diagnostics.")]
@@ -1981,8 +1923,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.Reset();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
-        _forcedEnemyAcquisition.Reset();
-        _attackTransitionMonitor.Reset();
+        _enemyReaction.Reset();
         _aimDiagnostics.Reset();
         _aimNative.Reset();
         _transientControl.Clear();
@@ -2004,8 +1945,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
-        _forcedEnemyAcquisition.ClearRuntimeState();
-        _attackTransitionMonitor.ClearRuntimeState();
+        _enemyReaction.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
         _transientControl.Clear();
@@ -2041,8 +1981,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visionMonitor.Config = Config;
         _visionEnhancement.Config = Config;
         _humanLookScan.Config = Config;
-        _forcedEnemyAcquisition.Config = Config;
-        _attackTransitionMonitor.Config = Config;
+        _enemyReaction.Config = Config;
         _aimDiagnostics.Config = Config;
         _aimService.Config = Config;
 
@@ -2058,17 +1997,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (!Config.HumanLookScanEnabled)
             _humanLookScan.ClearRuntimeState();
 
-        if (!Config.ForcedEnemyAcquisitionEnabled)
-            _forcedEnemyAcquisition.ClearRuntimeState(
-                "config-disabled");
-
-        if (!Config.VisionMonitorEnabled &&
-            !Config.ForcedEnemyAcquisitionEnabled &&
-            !Config.NativeAttackAssistEnabled)
-        {
-            _attackTransitionMonitor.ClearRuntimeState(
-                "diagnostic-disabled");
-        }
+        if (!Config.EnemyReactionEnabled)
+            _enemyReaction.ClearRuntimeState();
 
         if (!Config.AimDebug)
             _aimDiagnostics.Reset();
@@ -2108,20 +2038,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             $"lookScan={(Config.HumanLookScanEnabled ? "enabled" : "disabled")}; " +
             "lookScanControl=EyeAngles.Y-fast-readback; " +
-            $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}..{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
+            $"lookScanInterval={Config.HumanLookScanMinIntervalSeconds:0.###}.." +
+            $"{Config.HumanLookScanMaxIntervalSeconds:0.###}s; " +
             $"lookScanHold={Config.HumanLookScanHoldSeconds:0.###}s; " +
             $"lookScanTolerance={Config.HumanLookScanYawToleranceDegrees:0.#}deg; " +
-            $"lookScanDirection={(Config.HumanLookScanVisibleEnemyHintEnabled ? "immediate-hint>" : "")}" +
-            $"{(Config.HumanLookScanGeometryFallbackEnabled ? "geometry>" : "")}random; " +
-            $"lookScanHintCooldown={Config.HumanLookScanVisibleEnemyHintCooldownSeconds:0.###}s; " +
-            $"forcedAcquire={(Config.ForcedEnemyAcquisitionEnabled ? "enabled" : "disabled")}; " +
-            $"forcedAcquireDelay={Config.ForcedEnemyAcquisitionDelaySeconds:0.###}s; " +
-            $"forcedAcquireDistance={Config.ForcedEnemyAcquisitionDistance:0.#}; " +
-            $"forcedAcquirePostObserve={Config.ForcedEnemyAcquisitionPostObservationSeconds:0.###}s; " +
-            $"forcedAcquireReassert={Config.ForcedEnemyAcquisitionReassertSeconds:0.###}s; " +
-            $"attackTransitionStall={Config.EnemyAttackTransitionStallSeconds:0.###}s; " +
-            $"nativeAttackAssist={(Config.NativeAttackAssistEnabled ? "enabled" : "disabled")}; " +
-            $"nativeAttackDelay={Config.NativeAttackAssistDelaySeconds:0.###}s; " +
+            $"enemyReaction={(Config.EnemyReactionEnabled ? "enabled" : "disabled")}; " +
+            $"enemyReactionDelay={Config.EnemyReactionMinSeconds:0.###}.." +
+            $"{Config.EnemyReactionMaxSeconds:0.###}s; " +
+            $"enemyReactionDistance={Config.EnemyReactionDistance:0.#}; " +
+            "enemyReactionAwareness=360deg-physical-LOS; " +
+            $"enemyReactionHold={Config.EnemyReactionHoldSeconds:0.###}s; " +
             $"nativeAttackAvailable={_nativeAttack.Available}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +
             $"humanLadderDiag={(Config.LadderHumanMovementDiagnostics ? "enabled" : "disabled")}; " +
@@ -2138,9 +2064,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] lookScanStats {_humanLookScan.StatisticsSummary}.");
         command.ReplyToCommand(
-            $"[GunGameBotAI] forcedAcquireStats {_forcedEnemyAcquisition.StatisticsSummary}.");
-        command.ReplyToCommand(
-            $"[GunGameBotAI] attackTransitionStats {_attackTransitionMonitor.StatisticsSummary}.");
+            $"[GunGameBotAI] enemyReactionStats {_enemyReaction.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] nativeAttackStats {_nativeAttack.StatisticsSummary}; status={_nativeAttack.Status}.");
         command.ReplyToCommand(

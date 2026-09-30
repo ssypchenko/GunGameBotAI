@@ -32,6 +32,8 @@ gamedata entry is required.
 - `css_ggbotai_aim 0|1` — enable/disable Stage 4 bounded targetSpot correction.
 - `css_ggbotai_aim_mode mixed|head|body` — choose Stage 4 point priority policy.
 - `css_ggbotai_vision_monitor 0|1` — enable/disable Stage 5 observation-only nearby-enemy vision diagnostics.
+- `css_ggbotai_enemy_reaction 0|1` — enable/disable the bounded visible-enemy reaction controller.
+- `css_ggbotai_enemy_reaction_delay <minSeconds> <maxSeconds>` — tune the human-like reaction delay range.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
 - `css_ggbotai_knife_distance 100..1000` — set the Knife Rush trigger distance.
 - `css_ggbotai_reload` — reload the plugin configuration.
@@ -88,6 +90,19 @@ opponent is physically visible while Valve has not yet acquired that pawn as a
 visible enemy. It records acquisition delay, view angle, movement state and
 behaviour mode, but performs no vision, enemy, view or movement writes.
 
+`EnemyReactionService` is the single production path for visible-enemy
+aggression. Detection uses real physical LOS across the full 360 degrees
+inside the configured distance. If Valve already owns a visible current enemy,
+that target is preserved; otherwise the service selects exactly one nearest
+physically visible opponent (view angle is only a tie-breaker). It then waits an
+angle-weighted random reaction delay (0.20..0.50 seconds by default), briefly
+turns yaw toward that target, seeds or refreshes Valve's enemy/perception
+fields, and calls the validated native `CCSBot::Attack` transition once. It never writes `IsAttacking` and never presses Fire. The
+short yaw hold ends as soon as Valve owns combat aim/attack, a shot is observed,
+LOS is lost, or the hold timeout expires. Ambient Human Look Scan is suppressed
+while a reaction is pending or active and otherwise remains geometry/random
+only, so it no longer competes for enemy-directed turning.
+
 ## Known limitations and verification gates
 
 - There is no complete path-finding or wall-penetration/omniscience logic.
@@ -95,6 +110,9 @@ behaviour mode, but performs no vision, enemy, view or movement writes.
 - Native SelectItem weapon switching is fail-closed: an accepted signature
   must resolve and the known platform vtable slot must contain a non-null
   function pointer before the engine call is attempted.
+- Native `CCSBot::Attack` is also fail-closed. If its exact signature is not
+  available after a CS2 update, enemy reaction still performs bounded
+  turn/acquisition and leaves the final attack transition to Valve.
 - CounterStrikeSharp loading, unload, and Release compilation can be checked
   locally. Behaviour on a live CS2 server, including the generated config and
   game-side weapon activation, must still be tested by the server operator.

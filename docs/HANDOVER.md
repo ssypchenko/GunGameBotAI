@@ -1,6 +1,6 @@
 # GunGameBotAI development handover
 
-Last updated: 2026-09-28
+Last updated: 2026-09-30
 
 This file is the working handover for continuing GunGameBotAI development in a
 new chat/session without reconstructing the vision/attack investigation from
@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.7.55
-ConfigVersion 40
+GunGameBotAI 0.8.2
+ConfigVersion 43
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```
@@ -50,9 +50,10 @@ more state than necessary.
 
 Do not broaden an experiment merely because a schema field is writable.
 
-Stage 6.7 may call native `CCSBot::Attack(CCSPlayerPawn*)`, but only when the
-explicit opt-in is enabled and the strong-stall safety gate remains satisfied.
-There is still no raw `IsAttacking=true` fallback.
+The production vision-to-combat correction is now `EnemyReactionService`.
+It may call the validated native `CCSBot::Attack(CCSPlayerPawn*)` once after
+the configured human-like reaction delay. There is still no raw
+`IsAttacking=true` write and no Fire/PrimaryAttack injection.
 
 ## Stable/accepted systems
 
@@ -72,7 +73,53 @@ otherwise:
 Routine ladder success logs stay quiet unless their explicit debug settings are
 enabled. Critical ladder failures remain warnings.
 
-## Vision development history
+## Current production enemy reaction (0.8.1)
+
+The previous visible-enemy hint, Forced Enemy Acquisition, attack-transition
+monitor and controlled Native Attack test harness were development scaffolding.
+They are removed from the runtime.
+
+The current flow is:
+
+```text
+real physical LOS anywhere inside reaction distance
+    -> choose one target (Valve current enemy, otherwise nearest visible)
+    -> angle-weighted random reaction delay
+    -> short EyeAngles.Y turn/hold
+    -> seed or refresh Valve enemy/perception state
+    -> one CCSBot::Attack(enemy) call when native signature is available
+    -> Valve owns combat aim, firing, movement and continuation
+```
+
+Default tuning:
+
+```text
+EnemyReactionEnabled = true
+EnemyReactionMinSeconds = 0.20
+EnemyReactionMaxSeconds = 0.50
+EnemyReactionDistance = 1000
+EnemyReactionHoldSeconds = 0.35
+EnemyReactionYawToleranceDegrees = 6
+EnemyReactionNativeAttackEnabled = true
+```
+
+Detection is full 360 degrees. View angle is not an eligibility gate; it only
+weights the reaction delay from fastest in front to slowest directly behind.
+The reaction is cancelled if LOS is lost, the target becomes invalid, another
+Valve enemy takes ownership, the bot leaves NormalGunGame, or ladder/Knife Rush
+takes higher-priority actuator ownership. Ambient Human Look Scan is now
+geometry/random only and never steers toward an enemy.
+
+Native Attack live A/B testing established that `CCSBot::Attack` reliably
+changes `IsAttacking` from false to true and can lead to a real
+`weapon_fire`. Baseline runs also showed that Valve can attack naturally once
+the target/perception state is stable, so production uses one native call only;
+there is no 100 ms retry loop.
+
+## Vision development history (retired experiments below)
+
+The sections below are retained as reverse-engineering history. They do not
+describe the current production control path.
 
 ### Stage 5 — Vision Monitor
 

@@ -6,15 +6,15 @@ Instead of changing Valve visibility, FOV or enemy-selection logic, the plugin
 periodically turns the bot's physical eye yaw while Valve keeps ownership of
 navigation, movement, target selection, firing and combat aim.
 
-Direction selection is deliberately separated from view enforcement. Starting with 0.7.49, the policy is:
+Direction selection is deliberately separated from view enforcement. In 0.8.0
+enemy-directed turning moved to `EnemyReactionService`. Human Look Scan is
+ambient only:
 
-1. physically visible but not Valve-acquired enemy hint — immediate trigger;
-2. most open world-geometry direction — regular scheduled scan;
-3. random human-like fallback — regular scheduled scan.
+1. most open world-geometry direction;
+2. random human-like fallback.
 
-The enemy hint is allowed only when the normal scan eligibility gates prove
-Valve has no valid current enemy. It uses the same physical LOS trace as
-VisionMonitor and never selects an enemy through a wall.
+While an enemy reaction is pending or active, Human Look Scan is suppressed so
+the two controllers never compete for yaw.
 
 ## Experiment history
 
@@ -64,10 +64,8 @@ Runtime command:
 css_ggbotai_look_scan 0|1
 ```
 
-Configuration migration to ConfigVersion 34 forces the feature OFF once. The
-operator must explicitly enable it again after upgrading because the direction
-policy now uses physically visible enemy information before geometry/random
-fallbacks.
+The feature remains opt-in. ConfigVersion 41 removes the retired enemy-hint
+settings; enemy-directed turning is owned only by `EnemyReactionService`.
 
 ## Explicit non-goals
 
@@ -127,9 +125,6 @@ Defaults:
 "HumanLookScanMaxIntervalSeconds": 4.50,
 "HumanLookScanHoldSeconds": 0.30,
 "HumanLookScanYawToleranceDegrees": 7.5,
-"HumanLookScanVisibleEnemyHintEnabled": true,
-"HumanLookScanVisibleEnemyHintDistance": 800.0,
-"HumanLookScanVisibleEnemyHintCooldownSeconds": 0.75,
 "HumanLookScanGeometryFallbackEnabled": true,
 "HumanLookScanGeometryTraceDistance": 1200.0,
 "HumanLookScanGeometryMinimumClearDistance": 160.0,
@@ -150,37 +145,12 @@ fast ownership and Valve resumes naturally.
 
 ## Direction policy
 
-Direction choice is separate from the fast yaw-hold mechanism.
+Direction choice is separate from the fast yaw-hold mechanism and contains no
+enemy information.
 
-### 1. VisibleEnemyHint
+### 1. Geometry fallback
 
-When the bot has no valid Valve current enemy, the selector examines live
-opponents inside `HumanLookScanVisibleEnemyHintDistance` (default 800 units).
-
-This check happens every DecisionLoop after the existing safety, recent-fire and
-minimum-speed gates. It deliberately bypasses `NextScanAt`: a real
-physically-visible missed enemy no longer waits for the normal 2.5–4.5 second
-human-look interval.
-
-For each candidate it uses `VisibilityTraceService.TryFindFirstVisiblePoint`.
-Only a candidate with a real physical line of sight to HEAD/CHEST/GUT/PELVIS is
-eligible. The closest physically visible candidate is selected.
-
-The scan target is yaw-only toward the first visible point. Pitch is not aimed
-at the enemy. If Valve acquires any enemy, the fast safety gate immediately
-ends the scan.
-
-This path never hints through walls.
-
-After an immediate hint starts, the bot gets a short per-bot cooldown controlled
-by `HumanLookScanVisibleEnemyHintCooldownSeconds` (default 0.75 s). While a
-visible missed enemy still exists but the hint is on cooldown, geometry/random
-scans are suppressed instead of making the bot look away.
-
-### 2. Geometry fallback
-
-If no visible-unacquired enemy exists, ten horizontal world-only rays are tested
-relative to the current eye yaw:
+Ten horizontal world-only rays are tested relative to the current eye yaw:
 
 ```text
 -150 -120 -90 -60 -30 +30 +60 +90 +120 +150
@@ -193,10 +163,9 @@ The selector chooses among directions within 24 world units of the best clear
 distance. The geometry result is accepted only when the best ray is at least
 `HumanLookScanGeometryMinimumClearDistance` (default 160 units).
 
-### 3. Random fallback
+### 2. Random fallback
 
-If enemy-hint and geometry selection both fail, the original distribution is
-used:
+If geometry selection fails, the original distribution is used:
 
 - 50%: 45–70 degrees;
 - 30%: 80–110 degrees;
@@ -227,9 +196,6 @@ skippedRecentFire
 nearSide
 side
 rear
-directionHint
-immediateHints
-hintCooldownSkips
 directionGeometry
 directionRandom
 avgRequestedDeg

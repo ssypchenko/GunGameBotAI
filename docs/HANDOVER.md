@@ -24,7 +24,7 @@ Current development target after this handover:
 
 ```text
 GunGameBotAI 0.8.1
-ConfigVersion 42
+ConfigVersion 43
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```

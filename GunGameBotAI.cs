@@ -111,6 +111,15 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 IsBotInSpawnGrace(
                     candidate,
                     now),
+            (slot, enemyEntityIndex, now) =>
+                _visionMonitor.MarkForcedAcquisition(
+                    slot,
+                    enemyEntityIndex,
+                    now),
+            (slot, enemyEntityIndex) =>
+                _visionMonitor.ClearForcedAcquisitionMarker(
+                    slot,
+                    enemyEntityIndex),
             message => Logger.LogInformation("[GunGameBotAI][EnemyReaction] {Message}", message));
         _aimDiagnostics = new AimDiagnosticsService(
             _visibilityTrace,

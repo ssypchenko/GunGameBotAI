@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.0
-ConfigVersion 41
+GunGameBotAI 0.8.1
+ConfigVersion 42
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```
@@ -73,7 +73,7 @@ otherwise:
 Routine ladder success logs stay quiet unless their explicit debug settings are
 enabled. Critical ladder failures remain warnings.
 
-## Current production enemy reaction (0.8.0)
+## Current production enemy reaction (0.8.1)
 
 The previous visible-enemy hint, Forced Enemy Acquisition, attack-transition
 monitor and controlled Native Attack test harness were development scaffolding.
@@ -82,7 +82,8 @@ They are removed from the runtime.
 The current flow is:
 
 ```text
-real physical LOS + enemy inside configured view sector
+real physical LOS anywhere inside reaction distance
+    -> choose one target (Valve current enemy, otherwise nearest visible)
     -> angle-weighted random reaction delay
     -> short EyeAngles.Y turn/hold
     -> seed or refresh Valve enemy/perception state
@@ -97,12 +98,13 @@ EnemyReactionEnabled = true
 EnemyReactionMinSeconds = 0.20
 EnemyReactionMaxSeconds = 0.50
 EnemyReactionDistance = 1000
-EnemyReactionMaxViewAngleDegrees = 120
 EnemyReactionHoldSeconds = 0.35
 EnemyReactionYawToleranceDegrees = 6
 EnemyReactionNativeAttackEnabled = true
 ```
 
+Detection is full 360 degrees. View angle is not an eligibility gate; it only
+weights the reaction delay from fastest in front to slowest directly behind.
 The reaction is cancelled if LOS is lost, the target becomes invalid, another
 Valve enemy takes ownership, the bot leaves NormalGunGame, or ladder/Knife Rush
 takes higher-priority actuator ownership. Ambient Human Look Scan is now

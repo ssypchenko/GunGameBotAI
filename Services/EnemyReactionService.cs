@@ -175,6 +175,19 @@ public sealed class EnemyReactionService
         int currentEnemyEntityIndex =
             ReadCurrentEnemyEntityIndex(bot);
 
+        bool currentEnemyPhysicallyVisible =
+            currentEnemyEntityIndex >
+                0 &&
+            IsCurrentEnemyPhysicallyVisible(
+                botPawn,
+                bot,
+                currentEnemyEntityIndex);
+
+        int protectedValveEnemyEntityIndex =
+            currentEnemyPhysicallyVisible
+                ? currentEnemyEntityIndex
+                : -1;
+
         if (_states.TryGetValue(slot, out ReactionState? state))
         {
             if (state.Active)
@@ -195,8 +208,8 @@ public sealed class EnemyReactionService
                 return;
             }
 
-            if (currentEnemyEntityIndex > 0 &&
-                currentEnemyEntityIndex != state.TargetEntityIndex)
+            if (protectedValveEnemyEntityIndex > 0 &&
+                protectedValveEnemyEntityIndex != state.TargetEntityIndex)
             {
                 Cancel(slot, state, "different-valve-enemy");
                 return;
@@ -229,7 +242,7 @@ public sealed class EnemyReactionService
         if (!TrySelectVisibleEnemy(
                 controller,
                 botPawn,
-                currentEnemyEntityIndex,
+                protectedValveEnemyEntityIndex,
                 currentYaw,
                 now,
                 out CCSPlayerController? targetController,
@@ -333,9 +346,13 @@ public sealed class EnemyReactionService
             ReadCurrentEnemyEntityIndex(bot);
 
         if (currentEnemyEntityIndex > 0 &&
-            currentEnemyEntityIndex != state.TargetEntityIndex)
+            currentEnemyEntityIndex != state.TargetEntityIndex &&
+            IsCurrentEnemyPhysicallyVisible(
+                botPawn,
+                bot,
+                currentEnemyEntityIndex))
         {
-            Cancel(slot, state, "different-valve-enemy-fast");
+            Cancel(slot, state, "different-visible-valve-enemy-fast");
             return false;
         }
 
@@ -353,6 +370,7 @@ public sealed class EnemyReactionService
         if (!sameEnemy || !visible)
         {
             if (!WriteFocus(
+                    botPawn,
                     bot,
                     targetPawn,
                     state,
@@ -439,6 +457,7 @@ public sealed class EnemyReactionService
         float now)
     {
         if (!WriteFocus(
+                botPawn,
                 bot,
                 targetPawn,
                 state,
@@ -773,6 +792,7 @@ public sealed class EnemyReactionService
     }
 
     private bool WriteFocus(
+        CCSPlayerPawn botPawn,
         CCSBot bot,
         CCSPlayerPawn targetPawn,
         ReactionState state,
@@ -791,7 +811,11 @@ public sealed class EnemyReactionService
 
         if (currentEnemyEntityIndex > 0 &&
             currentEnemyEntityIndex !=
-                state.TargetEntityIndex)
+                state.TargetEntityIndex &&
+            IsCurrentEnemyPhysicallyVisible(
+                botPawn,
+                bot,
+                currentEnemyEntityIndex))
         {
             return false;
         }
@@ -961,6 +985,43 @@ public sealed class EnemyReactionService
                     (byte)LifeState_t.LIFE_ALIVE &&
                 candidatePawn.TeamNum !=
                     botPawn.TeamNum;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool IsCurrentEnemyPhysicallyVisible(
+        CCSPlayerPawn botPawn,
+        CCSBot bot,
+        int expectedEntityIndex)
+    {
+        try
+        {
+            CCSPlayerPawn? current =
+                bot.Enemy.Value;
+
+            if (current == null ||
+                !current.IsValid ||
+                current.Handle == nint.Zero ||
+                current.Health <= 0 ||
+                current.LifeState !=
+                    (byte)LifeState_t.LIFE_ALIVE ||
+                checked((int)current.Index) !=
+                    expectedEntityIndex)
+            {
+                return false;
+            }
+
+            return
+                _visibility.TryFindFirstVisiblePoint(
+                    botPawn,
+                    current,
+                    out AimPointKind? visiblePoint,
+                    out _) &&
+                visiblePoint !=
+                    null;
         }
         catch
         {

@@ -9,8 +9,9 @@ namespace GunGameBotAI.Services;
 /// <summary>
 /// Production enemy reaction controller.
 ///
-/// A live opponent must first be physically visible inside the configured view
-/// sector. The service then waits a short angle-weighted reaction delay. If the
+/// A live opponent must first be physically visible inside the configured
+/// distance. Detection is 360 degrees: a rear opponent with real LOS is a valid
+/// threat. The service then waits a short angle-weighted reaction delay. If the
 /// opponent is still valid and visible, it briefly owns yaw, seeds/refreshes
 /// Valve's enemy perception state, and invokes CCSBot::Attack once. Firing,
 /// weapon handling, movement and the continuing combat decision remain Valve's.
@@ -205,13 +206,6 @@ public sealed class EnemyReactionService
             state.TargetYaw = targetYaw;
             state.LastAngle = currentAngle;
             state.LastVisiblePoint = visiblePoint;
-
-            if (MathF.Abs(currentAngle) >
-                Config.EnemyReactionMaxViewAngleDegrees)
-            {
-                Cancel(slot, state, "left-view-sector-before-reaction");
-                return;
-            }
 
             if (now < state.ReactAt)
                 return;
@@ -534,9 +528,9 @@ public sealed class EnemyReactionService
         relativeAngle = 0.0f;
         visiblePoint = null;
 
-        float bestAngleMagnitude =
-            float.PositiveInfinity;
         float bestDistance =
+            float.PositiveInfinity;
+        float bestAngleMagnitude =
             float.PositiveInfinity;
 
         foreach (CCSPlayerController candidateController in
@@ -602,17 +596,20 @@ public sealed class EnemyReactionService
                 MathF.Abs(candidateRelativeAngle);
 
             if (candidateDistance >
-                    Config.EnemyReactionDistance ||
-                angleMagnitude >
-                    Config.EnemyReactionMaxViewAngleDegrees)
+                Config.EnemyReactionDistance)
             {
                 continue;
             }
 
-            if (angleMagnitude >
-                    bestAngleMagnitude + 0.01f ||
-                (MathF.Abs(angleMagnitude - bestAngleMagnitude) <= 0.01f &&
-                 candidateDistance >= bestDistance))
+            // With no Valve-owned enemy, choose exactly one threat. Distance
+            // is primary so a nearby rear attacker is not ignored in favour of
+            // a distant opponent already near the crosshair. Angle is only the
+            // deterministic tie-breaker. Once selected, ReactionState locks the
+            // target until it dies, LOS is lost, or Valve chooses another enemy.
+            if (candidateDistance >
+                    bestDistance + 0.01f ||
+                (MathF.Abs(candidateDistance - bestDistance) <= 0.01f &&
+                 angleMagnitude >= bestAngleMagnitude))
             {
                 continue;
             }
@@ -885,12 +882,12 @@ public sealed class EnemyReactionService
         if (maximum <= minimum)
             return minimum;
 
+        // Full 360-degree awareness still preserves a human-like timing cost:
+        // straight ahead is fastest, directly behind is slowest.
         float angleRatio =
             Math.Clamp(
                 angleMagnitude /
-                    MathF.Max(
-                        1.0f,
-                        Config.EnemyReactionMaxViewAngleDegrees),
+                    180.0f,
                 0.0f,
                 1.0f);
 

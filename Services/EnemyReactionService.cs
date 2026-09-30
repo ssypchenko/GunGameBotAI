@@ -195,11 +195,17 @@ public sealed class EnemyReactionService
             state.LastAngle = currentAngle;
             state.LastVisiblePoint = visiblePoint;
 
+            if (MathF.Abs(currentAngle) >
+                Config.EnemyReactionMaxViewAngleDegrees)
+            {
+                Cancel(slot, state, "left-view-sector-before-reaction");
+                return;
+            }
+
             if (now < state.ReactAt)
                 return;
 
             if (!CommitReaction(
-                    controller,
                     botPawn,
                     bot,
                     targetPawn,
@@ -421,7 +427,6 @@ public sealed class EnemyReactionService
     }
 
     private bool CommitReaction(
-        CCSPlayerController controller,
         CCSPlayerPawn botPawn,
         CCSBot bot,
         CCSPlayerPawn targetPawn,

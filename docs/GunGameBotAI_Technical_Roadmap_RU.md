@@ -316,26 +316,79 @@ Managed улучшения:
 
 ### Этап 6. Hearing / Noise layer
 
-**Цель:** улучшить реакцию на реальные звуковые события.
+**Цель:** улучшить реакцию на реальные звуковые события, не превращая слух в
+wallhack и не отбирая у Valve обычную навигацию/бой.
 
-Сначала исследовать:
-- какие hearing/noise поля/таймеры доступны через schema;
-- можно ли получить события выстрела, шага, reload, grenade bounce, doors, flashbang через существующие game events/hooks без вмешательства в engine AI;
-- может ли managed layer использовать эти события для look/repath без знания точного скрытого enemy.
+#### 6A. Hearing diagnostics — завершён
 
-Managed режим:
-- на слышимый noise делать bounded look/repath/investigation;
-- не присваивать enemy через стены только по звуку;
-- хранить `LastHeardPosition`, `LastHeardAt`, `NoiseConfidence`.
+Live-тест на `aim_fiffy_gg1` подтвердил:
 
-Native режим:
+- `CCSBot.NoiseTimestamp/NoisePosition/NoiseTravelDistance/NoiseSource` доступны
+  и обновляются в обычном бою;
+- enemy footsteps, weapon fire и reload дают полезные native noise updates;
+- в тесте с двумя ботами одной команды и одним противником все 1669 native
+  updates были от enemy source; friendly/self native noise не наблюдался;
+- `NoisePosition` уже содержит заметную пространственную неточность и поэтому
+  подходит как hearing target без чтения точной скрытой позиции enemy;
+- `BentNoisePosition` может оставаться stale между последующими noise episodes,
+  поэтому в active hearing его пока не использовать;
+- `NoiseTravelDistance` на этой карте обычно близок к straight-line distance и
+  пока остаётся диагностическим полем.
+
+#### 6B. Bounded hearing look reaction — реализован, ожидает live acceptance
+
+`HearingReactionService`:
+
+- реагирует только на новый положительный `NoiseTimestamp`;
+- требует live opposing-team `NoiseSource`;
+- копирует только Valve `NoisePosition`;
+- `NoiseSource` использует только для team/entity validation и **никогда** не
+  читает текущую позицию source pawn;
+- после короткой human-like задержки временно удерживает только
+  `CCSPlayerPawn.EyeAngles.Y` в сторону `NoisePosition`;
+- не присваивает `Enemy`, не меняет hearing/perception/nav/movement/fire;
+- repeated noise может уточнить target внутри текущего lease, но не продлевает
+  его deadline;
+- visible combat, ladder и Knife/special ownership имеют более высокий
+  приоритет;
+- feature отдельно выключается через `HearingReactionEnabled`.
+
+Default 6B:
+
+```text
+HearingReactionEnabled = false
+HearingReactionMinSeconds = 0.10
+HearingReactionMaxSeconds = 0.25
+HearingReactionHoldSeconds = 0.25
+HearingReactionYawToleranceDegrees = 6
+HearingReactionMaxDistance = 1400
+HearingReactionCooldownSeconds = 0.20
+```
+
+Критерии приёмки 6B:
+
+- enemy sound без LOS вызывает короткий поворот к approximate `NoisePosition`;
+- friendly sound не вызывает поворот;
+- при появлении visible enemy hearing lease немедленно прекращается;
+- ladder/Knife ownership не нарушается;
+- repeated noise не создаёт постоянный yaw hold;
+- выключение `HearingReactionEnabled` полностью убирает Stage 6B writes.
+
+#### 6C и далее — после принятия 6B
+
+Следующий managed шаг — bounded investigation/navigation к сохранённому
+`LastHeardPosition` через Valve GoalPosition/repath, без ручного удержания
+ForwardMove. Отдельно остаются GunGame-specific `CombatHotspot`,
+`DeathMemory` и post-respawn intent.
+
+Native режим оставлять последним:
+
 - patch `InvestigateNoise` SELF_DEFENSE gate;
 - `OnAudibleEvent_GlobalHearRange`;
-- сохранить типы событий, которые фактически проходят через engine function.
+- сохранять фактические типы событий, проходящие через engine function.
 
-Критерии:
-- звук вызывает investigation, но не даёт точного wallhack tracking;
-- hearing можно отключить независимо от vision.
+Общий критерий Stage 6: звук вызывает полезную investigation/reaction, но не
+даёт точного wallhack tracking; hearing выключается независимо от vision.
 
 
 ### Этап 7. Native BotAIPatches companion: инфраструктура

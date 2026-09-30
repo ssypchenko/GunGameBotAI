@@ -13,6 +13,7 @@ The plugin documentation is intentionally kept beside the project source.
 - `capabilities/visibility-trace.md` — Stage 3 point-specific visibility tracing and aim diagnostics.
 - `capabilities/aim-service.md` — Stage 4 bounded PickNewAimSpot targetSpot correction.
 - `capabilities/vision-monitor.md` — Stage 5 observation-only nearby-enemy acquisition diagnostics.
+- `capabilities/hearing-monitor.md` — Stage 6A observation-only Valve Noise/game-event correlation diagnostics.
 - `capabilities/vision-enhancement.md` — Stage 6 bounded managed look-around experiment.
 - `capabilities/enemy-reaction.md` — production bounded visible-enemy turn/acquire/native-Attack handoff.
 

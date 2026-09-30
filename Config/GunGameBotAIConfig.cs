@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 43;
+    public override int Version { get; set; } = 44;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -255,6 +255,11 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Focused Stage 5/6 diagnostics. Keep separate from the general Debug flag
     // so vision tests do not enable geometry/knife/other legacy debug streams.
     public bool VisionDebug { get; set; } = false;
+
+    // Stage 6A observation-only hearing diagnostics. The monitor correlates
+    // public sound events with Valve CCSBot.Noise* state and never changes AI.
+    public bool HearingMonitorEnabled { get; set; } = false;
+    public bool HearingDebug { get; set; } = false;
 
     // Managed Valve look-around support. Enabled by default; diagnostics stay separate.
     // v1 releases Valve's look-around inhibit. v2 may also restart Valve's own

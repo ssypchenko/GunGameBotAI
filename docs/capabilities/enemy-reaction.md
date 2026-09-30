@@ -7,13 +7,15 @@ harness.
 
 ## Goal
 
-When an enemy is genuinely visible inside the bot's configured view sector, the
-bot should not continue moving past that opponent as if nothing happened. The
-reaction remains bounded and human-like:
+When an enemy is genuinely physically visible anywhere around the bot, the bot
+should not continue moving past that opponent as if nothing happened. Detection
+is intentionally 360 degrees; view angle affects reaction time, not eligibility.
+The reaction remains bounded and human-like:
 
 ```text
-physical LOS + view-sector gate
-    -> short reaction delay
+physical LOS inside reaction distance
+    -> select exactly one target
+    -> short angle-weighted reaction delay
     -> turn yaw toward the enemy
     -> seed/refresh Valve perception
     -> call CCSBot::Attack(enemy) once when available
@@ -28,7 +30,6 @@ physical LOS + view-sector gate
   "EnemyReactionMinSeconds": 0.20,
   "EnemyReactionMaxSeconds": 0.50,
   "EnemyReactionDistance": 1000.0,
-  "EnemyReactionMaxViewAngleDegrees": 120.0,
   "EnemyReactionHoldSeconds": 0.35,
   "EnemyReactionYawToleranceDegrees": 6.0,
   "EnemyReactionNativeAttackEnabled": true
@@ -52,12 +53,17 @@ A new reaction requires:
 - target alive and on the opposing team;
 - target inside `EnemyReactionDistance`;
 - a real `VisibilityTraceService` point trace to the target;
-- absolute yaw difference no greater than
-  `EnemyReactionMaxViewAngleDegrees`;
 - no different valid Valve current enemy.
 
 The controller therefore does not react to a physically unobstructed opponent
 behind the bot merely because a ray can reach it.
+
+The controller selects exactly one target. If Valve already owns a valid
+physically visible current enemy, that enemy is preserved. Otherwise the
+nearest physically visible opponent is selected across the full 360 degrees.
+At effectively equal distance, the smaller absolute view angle wins as a
+deterministic tie-breaker. Once selected, the target is locked for that reaction
+episode until it dies, LOS is lost, or Valve takes ownership of another enemy.
 
 ## Commit and hold
 

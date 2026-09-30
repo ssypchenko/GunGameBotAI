@@ -35,6 +35,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly VisibilityTraceService _visibilityTrace;
     private readonly VisionMonitorService _visionMonitor;
     private readonly HearingMonitorService _hearingMonitor;
+    private readonly HearingReactionService _hearingReaction;
     private readonly VisionEnhancementService _visionEnhancement;
     private readonly HumanLookScanService _humanLookScan;
     private readonly NativeAttackService _nativeAttack;
@@ -98,6 +99,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             message => Logger.LogInformation("[GunGameBotAI][Vision] {Message}", message));
         _hearingMonitor = new HearingMonitorService(
             message => Logger.LogInformation("[GunGameBotAI][Hearing] {Message}", message));
+        _hearingReaction = new HearingReactionService(
+            message => Logger.LogInformation("[GunGameBotAI][HearingReaction] {Message}", message));
         _visionEnhancement = new VisionEnhancementService(
             message => Logger.LogInformation("[GunGameBotAI][VisionEnhancement] {Message}", message));
         _humanLookScan = new HumanLookScanService(
@@ -145,7 +148,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.3";
+    public override string ModuleVersion => "0.8.4";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -199,6 +202,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _ladderMap.OnMapStart(currentMap);
             _visionMonitor.BeginMap(currentMap);
             _hearingMonitor.BeginMap(currentMap);
+            _hearingReaction.BeginMap();
             _visionEnhancement.BeginMap();
             _humanLookScan.BeginMap();
             _enemyReaction.BeginMap();
@@ -272,6 +276,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.Reset();
         _visionMonitor.ClearRuntimeState();
         _hearingMonitor.Reset();
+        _hearingReaction.Reset();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
         _enemyReaction.Reset();
@@ -367,6 +372,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.RemoveSlot(slot);
         _visionMonitor.RemoveSlot(slot);
         _hearingMonitor.RemoveSlot(slot);
+        _hearingReaction.RemoveSlot(slot);
         _visionEnhancement.RemoveSlot(slot);
         _humanLookScan.RemoveSlot(slot);
         _enemyReaction.RemoveSlot(
@@ -458,6 +464,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _stuckMonitor.RemoveSlot(slot);
                     _visionMonitor.RemoveSlot(slot);
                     _hearingMonitor.RemoveSlot(slot);
+                    _hearingReaction.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
                     _enemyReaction.RemoveSlot(
@@ -479,6 +486,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _stuckMonitor.RemoveSlot(slot);
                     _visionMonitor.RemoveSlot(slot);
                     _hearingMonitor.RemoveSlot(slot);
+                    _hearingReaction.RemoveSlot(slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
                     _enemyReaction.RemoveSlot(
@@ -582,12 +590,41 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 if (enemyReactionTracking)
                 {
-                    // A newly detected enemy must immediately stop any ambient
-                    // look-around lease, even during the human-like reaction
-                    // delay before EnemyReaction starts writing yaw.
+                    // Real physical LOS / Valve combat always outranks hearing.
+                    // Drop any pending auditory turn so stale sound can never
+                    // rotate the bot away from a visible opponent.
+                    _hearingReaction.RemoveSlot(
+                        slot);
                     _visionEnhancement.RemoveSlot(
                         slot);
                     _humanLookScan.RemoveSlot(
+                        slot);
+                }
+                else
+                {
+                    _hearingReaction.Observe(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        freezePeriod,
+                        now);
+                }
+
+                bool hearingReactionTracking =
+                    !enemyReactionTracking &&
+                    _hearingReaction.IsTracking(
+                        slot);
+
+                if (hearingReactionTracking)
+                {
+                    // Hearing outranks ambient look-around. It only owns yaw
+                    // for a short bounded lease and never owns movement/nav.
+                    _visionEnhancement.RemoveSlot(
+                        slot);
+                    _humanLookScan.RemoveSlot(
+                        slot);
+                    _registry.ActivateActuator(
                         slot);
                 }
 
@@ -606,10 +643,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     freezePeriod,
                     now);
 
-                // EnemyReaction is the only service allowed to steer toward a
-                // visible opponent. Ambient look-around remains geometry/random
-                // only and stays out while a reaction is pending or active.
-                if (!enemyReactionTracking)
+                // Ambient scanning stays out while either visible-enemy or
+                // auditory reaction owns the bounded look direction.
+                if (!enemyReactionTracking &&
+                    !hearingReactionTracking)
                 {
                     _visionEnhancement.Observe(
                         controller,
@@ -821,6 +858,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 activeSlots.Add(reactionSlot);
         }
 
+        foreach (int hearingSlot in
+                 _hearingReaction.ActiveSlots)
+        {
+            if (!activeSlots.Contains(hearingSlot))
+                activeSlots.Add(hearingSlot);
+        }
+
         for (int index = activeSlots.Count - 1;
             index >= 0;
             index--)
@@ -848,6 +892,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _enemyReaction.RemoveSlot(
                         slot,
                         "bot-unavailable");
+                    _hearingReaction.RemoveSlot(
+                        slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -861,6 +907,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _enemyReaction.RemoveSlot(
                         slot,
                         "bot-unavailable");
+                    _hearingReaction.RemoveSlot(
+                        slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -879,6 +927,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _enemyReaction.RemoveSlot(
                         slot,
                         "bot-unavailable");
+                    _hearingReaction.RemoveSlot(
+                        slot);
                     _registry.Remove(slot);
                     continue;
                 }
@@ -894,6 +944,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _enemyReaction.RemoveSlot(
                         slot,
                         "runtime-state-unavailable");
+                    _hearingReaction.RemoveSlot(
+                        slot);
                     _registry.DeactivateActuator(slot);
                     continue;
                 }
@@ -909,8 +961,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 //   1. learned ladder traversal,
                 //   2. Knife Rush / mandatory knife,
                 //   3. bounded visible-enemy reaction,
-                //   4. ambient Human Look Scan,
-                //   5. ordinary transient control.
+                //   4. bounded enemy-hearing reaction,
+                //   5. ambient Human Look Scan,
+                //   6. ordinary transient control.
                 bool ladderTraversalOwned =
                     _ladderMap?.ApplyFast(
                         pawn,
@@ -953,12 +1006,33 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                             now);
                 }
 
+                bool hearingReactionOwned =
+                    false;
+
+                if (!ladderTraversalOwned &&
+                    !knifeActuatorOwned &&
+                    !enemyReactionOwned &&
+                    state.Mode ==
+                        BotBehaviorMode.NormalGunGame &&
+                    _hearingReaction.IsTracking(
+                        slot))
+                {
+                    hearingReactionOwned =
+                        _hearingReaction.ApplyFast(
+                            controller,
+                            pawn,
+                            bot,
+                            state,
+                            now);
+                }
+
                 bool lookScanOwned =
                     false;
 
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
                     !enemyReactionOwned &&
+                    !hearingReactionOwned &&
                     state.Mode ==
                         BotBehaviorMode.NormalGunGame)
                 {
@@ -995,6 +1069,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
                     !enemyReactionOwned &&
+                    !hearingReactionOwned &&
                     !lookScanOwned)
                 {
                     _registry.DeactivateActuator(
@@ -1136,6 +1211,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ResetRuntimeState();
         _visionMonitor.BeginMap(_currentMapName);
         _hearingMonitor.BeginMap(_currentMapName);
+        _hearingReaction.BeginMap();
         _visionEnhancement.BeginMap();
         _humanLookScan.BeginMap();
         _enemyReaction.BeginMap();
@@ -1153,6 +1229,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _enemyReaction.LogMapSummary(_currentMapName);
         _visionMonitor.LogMapSummary(_currentMapName);
         _hearingMonitor.LogMapSummary(_currentMapName);
+        _hearingReaction.LogMapSummary(_currentMapName);
         _visionEnhancement.LogMapSummary(_currentMapName);
         _humanLookScan.LogMapSummary(_currentMapName);
         _nativeAttack.LogMapSummary(_currentMapName);
@@ -1170,6 +1247,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.RemoveSlot(playerSlot);
         _visionMonitor.RemoveSlot(playerSlot);
         _hearingMonitor.RemoveSlot(playerSlot);
+        _hearingReaction.RemoveSlot(playerSlot);
         _visionEnhancement.RemoveSlot(playerSlot);
         _humanLookScan.RemoveSlot(playerSlot);
         _enemyReaction.RemoveSlot(
@@ -1194,6 +1272,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _transientControl.Clear();
         _visionMonitor.ClearRuntimeState();
         _hearingMonitor.ClearRuntimeState();
+        _hearingReaction.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _enemyReaction.ClearRuntimeState();
@@ -1254,6 +1333,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _stuckMonitor.RemoveSlot(slot);
             _visionMonitor.RemoveSlot(slot);
             _hearingMonitor.RemoveSlot(slot);
+            _hearingReaction.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
             _enemyReaction.RemoveSlot(
@@ -1371,6 +1451,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _stuckMonitor.RemoveSlot(slot);
             _visionMonitor.RemoveSlot(slot);
             _hearingMonitor.RemoveSlot(slot);
+            _hearingReaction.RemoveSlot(slot);
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
             _enemyReaction.RemoveSlot(
@@ -1580,7 +1661,44 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"detailedEvents={(Config.HearingDebug ? "enabled" : "disabled")}.");
     }
 
-    [ConsoleCommand("css_ggbotai_hearing_debug", "Enable or disable detailed Stage 6A hearing correlation logs.")]
+    [ConsoleCommand("css_ggbotai_hearing_reaction", "Enable or disable Stage 6B bounded enemy-hearing look reaction.")]
+    [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnHearingReactionCommand(
+        CCSPlayerController? player,
+        CommandInfo command)
+    {
+        if (!TryParseBinary(
+                command.GetArg(1),
+                out bool enabled))
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_hearing_reaction 0|1");
+            return;
+        }
+
+        Config.HearingReactionEnabled =
+            enabled;
+        _hearingReaction.Config =
+            Config;
+
+        if (!enabled)
+            _hearingReaction.ClearRuntimeState();
+
+        PersistConfig(
+            command);
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] hearingReaction={(enabled ? "enabled" : "disabled")}; " +
+            $"delay={Config.HearingReactionMinSeconds:0.###}.." +
+            $"{Config.HearingReactionMaxSeconds:0.###}s; " +
+            $"hold={Config.HearingReactionHoldSeconds:0.###}s; " +
+            $"yawTolerance={Config.HearingReactionYawToleranceDegrees:0.#}deg; " +
+            $"maxDistance={Config.HearingReactionMaxDistance:0.#}; " +
+            $"cooldown={Config.HearingReactionCooldownSeconds:0.###}s; " +
+            "target=Valve-NoisePosition; movement=none; enemyAssignment=none.");
+    }
+
+    [ConsoleCommand("css_ggbotai_hearing_debug", "Enable or disable detailed Stage 6A/6B hearing logs.")]
     [CommandHelper(minArgs: 1, usage: "0|1", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnHearingDebugCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -1594,12 +1712,14 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             enabled;
         _hearingMonitor.Config =
             Config;
+        _hearingReaction.Config =
+            Config;
 
         PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] hearingDebug={(enabled ? "enabled" : "disabled")}; " +
-            "logs=SOUND-EVENT/NATIVE-NOISE/EVENT-NO-NATIVE-MATCH.");
+            "logs=SOUND-EVENT/NATIVE-NOISE/EVENT-NO-NATIVE-MATCH+REACTION-*.");
     }
 
     [ConsoleCommand("css_ggbotai_vision_debug", "Enable or disable focused Stage 5/6 vision diagnostics.")]
@@ -2037,6 +2157,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.Reset();
         _visionMonitor.Reset();
         _hearingMonitor.Reset();
+        _hearingReaction.Reset();
         _visionEnhancement.Reset();
         _humanLookScan.Reset();
         _enemyReaction.Reset();
@@ -2060,6 +2181,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.Reset();
         _visionMonitor.ClearRuntimeState();
         _hearingMonitor.ClearRuntimeState();
+        _hearingReaction.ClearRuntimeState();
         _visionEnhancement.ClearRuntimeState();
         _humanLookScan.ClearRuntimeState();
         _enemyReaction.ClearRuntimeState();
@@ -2097,6 +2219,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _stuckMonitor.Config = Config;
         _visionMonitor.Config = Config;
         _hearingMonitor.Config = Config;
+        _hearingReaction.Config = Config;
         _visionEnhancement.Config = Config;
         _humanLookScan.Config = Config;
         _enemyReaction.Config = Config;
@@ -2111,6 +2234,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!Config.HearingMonitorEnabled)
             _hearingMonitor.ClearRuntimeState();
+
+        if (!Config.HearingReactionEnabled)
+            _hearingReaction.ClearRuntimeState();
 
         if (!Config.VisionEnhancementEnabled)
             _visionEnhancement.ClearRuntimeState();
@@ -2157,6 +2283,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"aimNativeAvailable={_aimNative.Available}; aimHooked={_aimNative.Hooked}; " +
             $"visionMonitor={(Config.VisionMonitorEnabled ? "enabled" : "disabled")}; visionDistance={Config.VisionMonitorDistance:0}; " +
             $"hearingMonitor={(Config.HearingMonitorEnabled ? "enabled" : "disabled")}; " +
+            $"hearingReaction={(Config.HearingReactionEnabled ? "enabled" : "disabled")}; " +
+            $"hearingReactionDelay={Config.HearingReactionMinSeconds:0.###}.." +
+            $"{Config.HearingReactionMaxSeconds:0.###}s; " +
+            $"hearingReactionHold={Config.HearingReactionHoldSeconds:0.###}s; " +
+            $"hearingReactionDistance={Config.HearingReactionMaxDistance:0.#}; " +
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +
             $"lookScan={(Config.HumanLookScanEnabled ? "enabled" : "disabled")}; " +
@@ -2184,6 +2315,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] visionStats {_visionMonitor.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] hearingStats {_hearingMonitor.StatisticsSummary}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] hearingReactionStats {_hearingReaction.StatisticsSummary}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] visionEnhanceStats {_visionEnhancement.StatisticsSummary}.");
         command.ReplyToCommand(

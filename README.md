@@ -32,6 +32,8 @@ gamedata entry is required.
 - `css_ggbotai_aim 0|1` — enable/disable Stage 4 bounded targetSpot correction.
 - `css_ggbotai_aim_mode mixed|head|body` — choose Stage 4 point priority policy.
 - `css_ggbotai_vision_monitor 0|1` — enable/disable Stage 5 observation-only nearby-enemy vision diagnostics.
+- `css_ggbotai_hearing_monitor 0|1` — enable/disable Stage 6A observation-only hearing monitoring.
+- `css_ggbotai_hearing_debug 0|1` — enable/disable detailed sound-event/Valve-Noise correlation logs.
 - `css_ggbotai_enemy_reaction 0|1` — enable/disable the bounded visible-enemy reaction controller.
 - `css_ggbotai_enemy_reaction_delay <minSeconds> <maxSeconds>` — tune the human-like reaction delay range.
 - `css_ggbotai_knife_chance 0..100` — set the one-roll Knife Rush chance.
@@ -89,6 +91,12 @@ live opponents at a bounded rate and records cases where a point trace says the
 opponent is physically visible while Valve has not yet acquired that pawn as a
 visible enemy. It records acquisition delay, view angle, movement state and
 behaviour mode, but performs no vision, enemy, view or movement writes.
+
+Stage 6A adds `HearingMonitorService`. When explicitly enabled it correlates
+`player_footstep`, `weapon_fire` and `weapon_reload` events with Valve's native
+`CCSBot.Noise*` state. It records source team relationship, native travel
+distance, noise-position error and bent-noise availability, but performs no
+hearing, enemy, view, navigation, movement or attack writes.
 
 `EnemyReactionService` is the single production path for visible-enemy
 aggression. Detection uses real physical LOS across the full 360 degrees

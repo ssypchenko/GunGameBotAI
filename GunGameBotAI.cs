@@ -112,12 +112,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     candidate,
                     now),
             (slot, enemyEntityIndex, now) =>
-                _visionMonitor.MarkForcedAcquisition(
+                _visionMonitor.MarkPluginAcquisition(
                     slot,
                     enemyEntityIndex,
                     now),
             (slot, enemyEntityIndex) =>
-                _visionMonitor.ClearForcedAcquisitionMarker(
+                _visionMonitor.ClearPluginAcquisitionMarker(
                     slot,
                     enemyEntityIndex),
             message => Logger.LogInformation("[GunGameBotAI][EnemyReaction] {Message}", message));

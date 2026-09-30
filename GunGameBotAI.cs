@@ -545,6 +545,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         "learned physical ladder traversal owns movement");
 
                     _stuckMonitor.RemoveSlot(slot);
+                    _hearingReaction.RemoveSlot(
+                        slot);
                     _visionEnhancement.RemoveSlot(slot);
                     _humanLookScan.RemoveSlot(slot);
                     _enemyReaction.RemoveSlot(

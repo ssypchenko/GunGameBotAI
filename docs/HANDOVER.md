@@ -1,6 +1,6 @@
 # GunGameBotAI development handover
 
-Last updated: 2026-09-30
+Last updated: 2026-10-01
 
 This file is the working handover for continuing GunGameBotAI development in a
 new chat/session without reconstructing the vision/attack investigation from
@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.3
-ConfigVersion 44
+GunGameBotAI 0.8.4
+ConfigVersion 45
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```
@@ -55,12 +55,46 @@ It may call the validated native `CCSBot::Attack(CCSPlayerPawn*)` once after
 the configured human-like reaction delay. There is still no raw
 `IsAttacking=true` write and no Fire/PrimaryAttack injection.
 
-## Stage 6A hearing diagnostics awaiting live evidence
+## Stage 6A hearing diagnostics accepted; Stage 6B awaiting live evidence
 
-Stage 6A is implemented on the `stage-6a-hearing-diagnostics` branch as an
-observation-only experiment.
+Stage 6A live evidence is accepted. The three-bot
+`aim_fiffy_gg1` test showed 1669 native noise changes, all attributed to enemy
+sources in that run; footsteps, weapon fire and reload all produced useful
+Valve hearing state. `NoisePosition` was intentionally imprecise and
+`BentNoisePosition` could remain stale, so active behaviour must use the
+copied `NoisePosition` rather than hidden source coordinates.
 
-New runtime pieces:
+Stage 6B is implemented on `stage-6b-hearing-reaction` and is awaiting live
+acceptance. It adds `HearingReactionService` with a bounded look-only reaction:
+
+```text
+Services/HearingReactionService.cs
+HearingReactionEnabled=false
+css_ggbotai_hearing_reaction 0|1
+```
+
+The service validates that `NoiseSource` is an enemy, copies only Valve
+`NoisePosition`, waits 0.10..0.25 s by default, then briefly holds
+`EyeAngles.Y` toward that approximate sound position. It never reads the
+source pawn's current position, assigns Enemy, or writes navigation/movement.
+
+Arbitration is ladder > Knife/special > visible EnemyReaction > HearingReaction
+> Human Look Scan. Visible combat cancels hearing immediately. Repeated noise
+may refresh the target during one lease but never extends the lease deadline.
+
+For the Stage 6B live test use:
+
+```text
+css_ggbotai_enable 1
+css_ggbotai_hearing_reaction 1
+css_ggbotai_hearing_debug 1
+css_ggbotai_status
+```
+
+The Stage 6A monitor may stay disabled unless detailed event/native
+correlation is wanted. See `docs/capabilities/hearing-reaction.md`.
+
+Stage 6A diagnostic pieces remain available:
 
 ```text
 Services/HearingMonitorService.cs

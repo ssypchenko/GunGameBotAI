@@ -142,7 +142,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.0";
+    public override string ModuleVersion => "0.8.1";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -1608,7 +1608,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"delay={Config.EnemyReactionMinSeconds:0.###}.." +
             $"{Config.EnemyReactionMaxSeconds:0.###}s; " +
             $"distance={Config.EnemyReactionDistance:0.#}; " +
-            $"maxViewAngle={Config.EnemyReactionMaxViewAngleDegrees:0.#}deg; " +
+            "awareness=360deg-physical-LOS; targetPolicy=ValveEnemyElseNearestVisible; " +
             $"hold={Config.EnemyReactionHoldSeconds:0.###}s; " +
             $"native={Config.EnemyReactionNativeAttackEnabled}; " +
             $"nativeAvailable={_nativeAttack.Available}.");
@@ -2046,7 +2046,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"enemyReactionDelay={Config.EnemyReactionMinSeconds:0.###}.." +
             $"{Config.EnemyReactionMaxSeconds:0.###}s; " +
             $"enemyReactionDistance={Config.EnemyReactionDistance:0.#}; " +
-            $"enemyReactionAngle={Config.EnemyReactionMaxViewAngleDegrees:0.#}deg; " +
+            "enemyReactionAwareness=360deg-physical-LOS; " +
             $"enemyReactionHold={Config.EnemyReactionHoldSeconds:0.###}s; " +
             $"nativeAttackAvailable={_nativeAttack.Available}; " +
             $"verboseCorrections={(Config.VerboseCorrectionDebug ? "enabled" : "disabled")}; " +

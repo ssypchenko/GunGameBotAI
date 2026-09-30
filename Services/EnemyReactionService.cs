@@ -903,9 +903,6 @@ public sealed class EnemyReactionService
         _onPluginAcquisitionEnded(
             state.BotSlot,
             state.TargetEntityIndex);
-        _onPluginAcquisitionEnded(
-            state.BotSlot,
-            state.TargetEntityIndex);
         LogEnd(state, reason);
         _states.Remove(slot);
     }
@@ -915,6 +912,9 @@ public sealed class EnemyReactionService
         ReactionState state,
         string reason)
     {
+        _onPluginAcquisitionEnded(
+            state.BotSlot,
+            state.TargetEntityIndex);
         LogEnd(state, reason);
         _states.Remove(slot);
     }

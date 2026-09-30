@@ -370,9 +370,6 @@ public sealed class HumanLookScanService
                         startYaw +
                         randomRelativeAngle),
                     randomRelativeAngle,
-                    null,
-                    float.NaN,
-                    null,
                     float.NaN,
                     0);
         }
@@ -416,12 +413,6 @@ public sealed class HumanLookScanService
             sector;
         state.DirectionSource =
             selection.Source;
-        state.HintEnemyEntityIndex =
-            selection.EnemyEntityIndex;
-        state.HintEnemyDistance =
-            selection.EnemyDistance;
-        state.HintVisiblePoint =
-            selection.VisiblePoint;
         state.GeometryClearDistance =
             selection.GeometryClearDistance;
         state.GeometryTraceCount =
@@ -693,9 +684,6 @@ public sealed class HumanLookScanService
                 $"control=EyeAngles.Y-fast-hold; outcome={outcome}; directionSource={state.DirectionSource}; " +
                 $"requestedSector={state.RequestedSector}; requestedDelta={state.RelativeAngle:0.0}; " +
                 $"startYaw={state.StartEyeYaw:0.0}; targetYaw={state.TargetYaw:0.0}; " +
-                $"hintEnemy={FormatOptional(state.HintEnemyEntityIndex)}; " +
-                $"hintDistance={FormatOptional(state.HintEnemyDistance)}; " +
-                $"hintPoint={FormatOptional(state.HintVisiblePoint)}; " +
                 $"geometryClear={FormatOptional(state.GeometryClearDistance)}; " +
                 $"geometryTraces={state.GeometryTraceCount}; observedDelta={observed:0.0}; " +
                 $"duration={MathF.Max(0.0f, now - state.StartedAt):0.000}; writes={state.Writes}; " +
@@ -714,9 +702,6 @@ public sealed class HumanLookScanService
         state.FastCorrections = 0;
         state.FastWithinTolerance = 0;
         state.DirectionSource = "unknown";
-        state.HintEnemyEntityIndex = null;
-        state.HintEnemyDistance = float.NaN;
-        state.HintVisiblePoint = null;
         state.GeometryClearDistance = float.NaN;
         state.GeometryTraceCount = 0;
     }
@@ -1076,13 +1061,6 @@ public sealed class HumanLookScanService
 
         public string DirectionSource { get; set; } =
             "unknown";
-
-        public int? HintEnemyEntityIndex { get; set; }
-
-        public float HintEnemyDistance { get; set; } =
-            float.NaN;
-
-        public AimPointKind? HintVisiblePoint { get; set; }
 
         public float GeometryClearDistance { get; set; } =
             float.NaN;

@@ -24,6 +24,8 @@ public sealed class EnemyReactionService
     private readonly VisibilityTraceService _visibility;
     private readonly NativeAttackService _nativeAttack;
     private readonly Func<CCSPlayerController, float, bool> _isBotInSpawnGrace;
+    private readonly Action<int, int, float> _onPluginAcquisition;
+    private readonly Action<int, int> _onPluginAcquisitionEnded;
     private readonly Action<string> _info;
     private readonly Dictionary<int, ReactionState> _states = new();
 
@@ -40,11 +42,15 @@ public sealed class EnemyReactionService
         VisibilityTraceService visibility,
         NativeAttackService nativeAttack,
         Func<CCSPlayerController, float, bool> isBotInSpawnGrace,
+        Action<int, int, float> onPluginAcquisition,
+        Action<int, int> onPluginAcquisitionEnded,
         Action<string> info)
     {
         _visibility = visibility;
         _nativeAttack = nativeAttack;
         _isBotInSpawnGrace = isBotInSpawnGrace;
+        _onPluginAcquisition = onPluginAcquisition;
+        _onPluginAcquisitionEnded = onPluginAcquisitionEnded;
         _info = info;
     }
 
@@ -94,6 +100,9 @@ public sealed class EnemyReactionService
     {
         if (_states.TryGetValue(slot, out ReactionState? state))
         {
+            _onPluginAcquisitionEnded(
+                state.BotSlot,
+                state.TargetEntityIndex);
             LogEnd(state, reason);
             _states.Remove(slot);
         }
@@ -103,6 +112,9 @@ public sealed class EnemyReactionService
                      .Where(pair => pair.Value.TargetSlot == slot)
                      .ToArray())
         {
+            _onPluginAcquisitionEnded(
+                state.BotSlot,
+                state.TargetEntityIndex);
             LogEnd(state, $"target-{reason}");
             _states.Remove(botSlot);
         }
@@ -402,6 +414,9 @@ public sealed class EnemyReactionService
                 $"nativeAccepted={state.NativeAccepted}");
         }
 
+        _onPluginAcquisitionEnded(
+            state.BotSlot,
+            state.TargetEntityIndex);
         _states.Remove(botSlot);
     }
 
@@ -439,6 +454,11 @@ public sealed class EnemyReactionService
             Config.EnemyReactionHoldSeconds;
 
         _committed++;
+
+        _onPluginAcquisition(
+            state.BotSlot,
+            state.TargetEntityIndex,
+            now);
 
         NativeAttackInvocationResult nativeResult =
             NativeAttackInvocationResult.NotInvoked(
@@ -880,6 +900,12 @@ public sealed class EnemyReactionService
         string reason)
     {
         _cancelled++;
+        _onPluginAcquisitionEnded(
+            state.BotSlot,
+            state.TargetEntityIndex);
+        _onPluginAcquisitionEnded(
+            state.BotSlot,
+            state.TargetEntityIndex);
         LogEnd(state, reason);
         _states.Remove(slot);
     }

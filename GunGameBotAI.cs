@@ -559,6 +559,17 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _enemyReaction.IsTracking(
                         slot);
 
+                if (enemyReactionTracking)
+                {
+                    // A newly detected enemy must immediately stop any ambient
+                    // look-around lease, even during the human-like reaction
+                    // delay before EnemyReaction starts writing yaw.
+                    _visionEnhancement.RemoveSlot(
+                        slot);
+                    _humanLookScan.RemoveSlot(
+                        slot);
+                }
+
                 if (_enemyReaction.IsActive(slot))
                 {
                     _registry.ActivateActuator(

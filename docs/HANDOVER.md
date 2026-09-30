@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.2
-ConfigVersion 43
+GunGameBotAI 0.8.3
+ConfigVersion 44
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```
@@ -54,6 +54,42 @@ The production vision-to-combat correction is now `EnemyReactionService`.
 It may call the validated native `CCSBot::Attack(CCSPlayerPawn*)` once after
 the configured human-like reaction delay. There is still no raw
 `IsAttacking=true` write and no Fire/PrimaryAttack injection.
+
+## Stage 6A hearing diagnostics awaiting live evidence
+
+Stage 6A is implemented on the `stage-6a-hearing-diagnostics` branch as an
+observation-only experiment.
+
+New runtime pieces:
+
+```text
+Services/HearingMonitorService.cs
+HearingMonitorEnabled=false
+HearingDebug=false
+css_ggbotai_hearing_monitor 0|1
+css_ggbotai_hearing_debug 0|1
+```
+
+The monitor correlates `player_footstep`, `weapon_fire` and
+`weapon_reload` events with the current Valve `CCSBot.Noise*` schema state.
+It records enemy/friendly/self source relationship, native noise position,
+travel distance, bent-noise availability and event/native position error.
+
+Stage 6A performs no hearing, enemy, view, navigation, movement, button, weapon
+or attack writes. Do not add active investigation until the first controlled
+live log has answered the questions in
+`docs/capabilities/hearing-monitor.md`.
+
+Recommended test commands:
+
+```text
+css_ggbotai_enable 1
+css_ggbotai_hearing_monitor 1
+css_ggbotai_hearing_debug 1
+css_ggbotai_status
+```
+
+Retain the full console log and a final `css_ggbotai_status` result.
 
 ## Stable/accepted systems
 

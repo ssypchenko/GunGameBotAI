@@ -5,8 +5,8 @@ configuration mechanism. Numeric values are validated when loaded or reloaded;
 invalid values are clamped to safe bounds and a warning is logged.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
-to enabled and reacts only to a live enemy with real physical LOS inside the
-configured view sector. It never writes `IsAttacking` and never presses Fire.
+to enabled and reacts to a live enemy with real physical LOS anywhere around
+the bot inside the configured distance. It never writes `IsAttacking` and never presses Fire.
 After a short human-like delay it briefly turns yaw toward the enemy, seeds or
 refreshes Valve perception state, and may call the validated native
 `CCSBot::Attack` transition once.
@@ -79,17 +79,16 @@ The default profile is conservative:
   "EnemyReactionMinSeconds": 0.20,
   "EnemyReactionMaxSeconds": 0.50,
   "EnemyReactionDistance": 1000.0,
-  "EnemyReactionMaxViewAngleDegrees": 120.0,
   "EnemyReactionHoldSeconds": 0.35,
   "EnemyReactionYawToleranceDegrees": 6.0,
   "EnemyReactionNativeAttackEnabled": true,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 41
+  "ConfigVersion": 42
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; the unified Enemy Reaction profile uses version `41`.
+`ConfigVersion` is migrated by the plugin; full 360-degree Enemy Reaction uses version `42`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -127,14 +126,15 @@ suppressed.
 
 `EnemyReactionEnabled` controls the production visible-enemy correction and
 defaults to `true`. Eligible opponents must be alive, on the opposing team,
-physically trace-visible, within `EnemyReactionDistance` (default 1000), and
-within `EnemyReactionMaxViewAngleDegrees` (default 120°) of the bot's current
-yaw at detection.
+physically trace-visible, within `EnemyReactionDistance` (default 1000). Detection is 360 degrees:
+view angle never excludes an otherwise physically visible target.
 
 `EnemyReactionMinSeconds` and `EnemyReactionMaxSeconds` define the reaction
 window (default 0.20..0.50 s). The selected delay is random but weighted by view
-angle, so targets nearer the centre tend to receive faster reactions than
-peripheral targets.
+angle, so targets in front tend to receive faster reactions while targets
+directly behind tend toward the upper part of the delay range. If Valve has no
+current target, the nearest physically visible opponent is selected; angle is
+only the tie-breaker for effectively equal distances.
 
 At commit, the controller writes only the selected enemy/perception fields and
 `EyeAngles.Y`. `EnemyReactionHoldSeconds` (default 0.35 s) bounds the yaw/focus

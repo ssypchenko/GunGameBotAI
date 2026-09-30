@@ -29,10 +29,12 @@ CounterStrikeSharp.API 1.0.375
 target framework net10.0
 ```
 
-Local verification:
+Local verification for the current Stage 6B branch:
 
 ```bash
-git pull --ff-only origin main
+git fetch origin
+git switch stage-6b-hearing-reaction
+git pull --ff-only origin stage-6b-hearing-reaction
 dotnet build -c Release
 ```
 
@@ -109,21 +111,10 @@ The monitor correlates `player_footstep`, `weapon_fire` and
 It records enemy/friendly/self source relationship, native noise position,
 travel distance, bent-noise availability and event/native position error.
 
-Stage 6A performs no hearing, enemy, view, navigation, movement, button, weapon
-or attack writes. Do not add active investigation until the first controlled
-live log has answered the questions in
-`docs/capabilities/hearing-monitor.md`.
-
-Recommended test commands:
-
-```text
-css_ggbotai_enable 1
-css_ggbotai_hearing_monitor 1
-css_ggbotai_hearing_debug 1
-css_ggbotai_status
-```
-
-Retain the full console log and a final `css_ggbotai_status` result.
+Stage 6A remains observation-only and performs no hearing, enemy, view,
+navigation, movement, button, weapon or attack writes. Its first controlled
+live gate is complete; keep it available for future regression diagnostics.
+See `docs/capabilities/hearing-monitor.md` for the original evidence contract.
 
 ## Stable/accepted systems
 

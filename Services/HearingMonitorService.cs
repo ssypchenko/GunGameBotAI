@@ -23,8 +23,6 @@ public sealed class HearingMonitorService
     private readonly Dictionary<int, BotHearingState> _states = new();
     private readonly List<SoundEventRecord> _pendingEvents = new();
 
-    private string _mapName = "unknown";
-
     private long _footstepEvents;
     private long _weaponFireEvents;
     private long _reloadEvents;
@@ -91,7 +89,6 @@ public sealed class HearingMonitorService
         string mapName)
     {
         Reset();
-        _mapName = SafeName(mapName);
     }
 
     public void LogMapSummary(
@@ -132,7 +129,6 @@ public sealed class HearingMonitorService
         _sourceDistanceTotal = 0.0;
         _positionErrorTotal = 0.0;
         _positionErrorSamples = 0;
-        _mapName = "unknown";
     }
 
     public void ClearRuntimeState()
@@ -228,7 +224,6 @@ public sealed class HearingMonitorService
             state =
                 new BotHearingState
                 {
-                    HasBaseline = true,
                     LastNoiseTimestamp = noiseTimestamp
                 };
 
@@ -561,6 +556,16 @@ public sealed class HearingMonitorService
                 candidate.SourceEntityIndex ==
                     noise.SourceEntityIndex;
 
+            // When Valve supplies a concrete NoiseSource, do not correlate the
+            // episode to a different public-event source merely because it was
+            // nearby in time. Source identity is stronger evidence than
+            // position, which may already contain Valve uncertainty.
+            if (noise.SourceEntityIndex > 0 &&
+                !exactSource)
+            {
+                continue;
+            }
+
             float positionError =
                 candidate.HasOrigin
                     ? NativeValueReader.Distance3D(
@@ -869,7 +874,6 @@ public sealed class HearingMonitorService
 
     private sealed class BotHearingState
     {
-        public bool HasBaseline { get; set; }
         public float LastNoiseTimestamp { get; set; }
     }
 

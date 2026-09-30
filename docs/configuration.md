@@ -13,11 +13,12 @@ refreshes Valve perception state, and may call the validated native
 
 The default profile is production-oriented:
 
-The ConfigVersion 43 production profile keeps `EnabledOnLoad=false` as the
+The ConfigVersion 44 production profile keeps `EnabledOnLoad=false` as the
 master runtime gate. Behaviour-changing bot features default to enabled, while
 debug/observation-only facilities default to disabled. In particular:
 `Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
 `VisionDebug=false`, `VisionMonitorEnabled=false`,
+`HearingMonitorEnabled=false`, `HearingDebug=false`,
 `StuckMonitorEnabled=false`, `GeometrySafetyDetectionEnabled=false`,
 `LadderMapDebug=false`, and `LadderHumanMovementDiagnostics=false`.
 
@@ -71,6 +72,8 @@ debug/observation-only facilities default to disabled. In particular:
   "VisionMonitorEnabled": false,
   "VisionMonitorDistance": 800.0,
   "VisionDebug": false,
+  "HearingMonitorEnabled": false,
+  "HearingDebug": false,
   "VisionEnhancementEnabled": true,
   "VisionLookAroundRestartIntervalSeconds": 0.75,
   "HumanLookScanEnabled": true,
@@ -92,11 +95,11 @@ debug/observation-only facilities default to disabled. In particular:
   "EnemyReactionNativeAttackEnabled": true,
   "MaxWeaponSwitchRetries": 5,
   "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 43
+  "ConfigVersion": 44
 }
 ```
 
-`ConfigVersion` is migrated by the plugin; the production-default profile uses version `43`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `44`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -115,6 +118,14 @@ vision-gap events are controlled by the separate `VisionDebug` flag, not by
 the broad `Debug` flag. Aggregate statistics remain available through
 `css_ggbotai_status`. A per-map `MAP-SUMMARY` is written automatically when
 the map ends.
+
+`HearingMonitorEnabled` controls the Stage 6A observation-only hearing monitor
+and defaults to `false`. The service correlates `player_footstep`, `weapon_fire`
+and `weapon_reload` with Valve `CCSBot.NoisePosition`, `NoiseTravelDistance`,
+`NoiseTimestamp`, `NoiseSource`, `BentNoisePosition` and
+`BendNoisePositionValid`. `HearingDebug` controls detailed correlation logging.
+Stage 6A never writes hearing, enemy, view, navigation, movement or attack
+state. Aggregate hearing statistics are included in `css_ggbotai_status`.
 
 `VisionEnhancementEnabled` controls managed Valve look-around support and defaults to `true` in the production profile. Stage 6 v2 retains the v1
 `CCSBot.InhibitLookAroundTimestamp` release and may also reset

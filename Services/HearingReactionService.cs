@@ -23,6 +23,9 @@ public sealed class HearingReactionService
 {
     private const float TimestampEpsilonSeconds = 0.0005f;
     private const float EffectiveTurnThresholdDegrees = 20.0f;
+    private const float SuppressedRequestedThresholdDegrees = 20.0f;
+    private const float SuppressedObservedThresholdDegrees = 5.0f;
+    private const int SuppressedMinimumWrites = 10;
 
     private readonly Random _random = new();
     private readonly Action<string> _info;
@@ -47,9 +50,17 @@ public sealed class HearingReactionService
     private long _writes;
     private long _withinTolerance;
     private long _effectiveTurns;
+    private long _suppressedTurns;
+    private long _lookSnapshots;
+    private long _lookSnapshotFailures;
+    private long _writeReadbackChecks;
+    private long _writeReadbackSurvived;
+    private long _writeReadbackLost;
     private long _failures;
 
     private double _totalReactionMilliseconds;
+    private double _totalReadbackErrorDegrees;
+    private float _maximumReadbackErrorDegrees;
     private double _totalRequestedDegrees;
     private double _totalObservedDegrees;
     private float _maximumObservedDegrees;
@@ -109,11 +120,22 @@ public sealed class HearingReactionService
                 $"combatInterrupted={_combatInterrupted}; modeInterrupted={_modeInterrupted}; " +
                 $"pathfinderInterrupted={_pathfinderInterrupted}; writes={_writes}; " +
                 $"withinTolerance={_withinTolerance}; effectiveTurns={_effectiveTurns}; " +
+                $"suppressedTurns={_suppressedTurns}; lookSnapshots={_lookSnapshots}; " +
+                $"lookSnapshotFailures={_lookSnapshotFailures}; readbackChecks={_writeReadbackChecks}; " +
+                $"readbackSurvived={_writeReadbackSurvived}; readbackLost={_writeReadbackLost}; " +
+                $"avgReadbackErrorDeg={AverageReadbackErrorDegrees:0.0}; " +
+                $"maxReadbackErrorDeg={_maximumReadbackErrorDegrees:0.0}; " +
                 $"avgReactionMs={averageReactionMs:0.0}; avgRequestedDeg={averageRequested:0.0}; " +
                 $"avgObservedDeg={averageObserved:0.0}; maxObservedDeg={_maximumObservedDegrees:0.0}; " +
                 $"tracked={tracking}; failures={_failures}";
         }
     }
+
+    private double AverageReadbackErrorDegrees =>
+        _writeReadbackChecks > 0
+            ? _totalReadbackErrorDegrees /
+              _writeReadbackChecks
+            : 0.0;
 
     public void BeginMap() =>
         Reset();
@@ -141,12 +163,20 @@ public sealed class HearingReactionService
         _writes = 0;
         _withinTolerance = 0;
         _effectiveTurns = 0;
+        _suppressedTurns = 0;
+        _lookSnapshots = 0;
+        _lookSnapshotFailures = 0;
+        _writeReadbackChecks = 0;
+        _writeReadbackSurvived = 0;
+        _writeReadbackLost = 0;
         _failures = 0;
 
         _totalReactionMilliseconds = 0.0;
         _totalRequestedDegrees = 0.0;
         _totalObservedDegrees = 0.0;
+        _totalReadbackErrorDegrees = 0.0;
         _maximumObservedDegrees = 0.0f;
+        _maximumReadbackErrorDegrees = 0.0f;
     }
 
     public void ClearRuntimeState() =>
@@ -195,6 +225,7 @@ public sealed class HearingReactionService
                 Finish(
                     controller,
                     pawn,
+                    bot,
                     gatedState,
                     now,
                     "mode",
@@ -299,6 +330,7 @@ public sealed class HearingReactionService
                 Finish(
                     controller,
                     pawn,
+                    bot,
                     state,
                     now,
                     "combat-before-start",
@@ -321,6 +353,7 @@ public sealed class HearingReactionService
                 Finish(
                     controller,
                     pawn,
+                    bot,
                     state,
                     now,
                     "pathfinder-before-start",
@@ -452,6 +485,12 @@ public sealed class HearingReactionService
         state.Writes = 0;
         state.FastChecks = 0;
         state.WithinTolerance = 0;
+        state.HasPendingWriteReadback = false;
+        state.LastWrittenYaw = 0.0f;
+        state.ReadbackChecks = 0;
+        state.ReadbackSurvived = 0;
+        state.ReadbackLost = 0;
+        state.MaxReadbackError = 0.0f;
 
         _started++;
         _totalRequestedDegrees +=
@@ -465,7 +504,8 @@ public sealed class HearingReactionService
                 $"noiseTimestamp={noiseTimestamp:0.000}; targetPos={FormatVector(noise.Position)}; " +
                 $"distance={straightLineDistance:0.0}; travel={FormatOptional(noise.TravelDistance)}; " +
                 $"startYaw={currentYaw:0.0}; targetYaw={targetYaw:0.0}; requestedDelta={requestedDelta:0.0}; " +
-                $"delay={reactionDelay:0.000}s; hold={Config.HearingReactionHoldSeconds:0.000}s");
+                $"delay={reactionDelay:0.000}s; hold={Config.HearingReactionHoldSeconds:0.000}s; " +
+                $"look={ReadAndFormatLookSnapshot(bot)}");
         }
     }
 
@@ -502,6 +542,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "fast-mode",
@@ -516,6 +557,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "combat",
@@ -531,6 +573,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "pathfinder-read-failure",
@@ -544,6 +587,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "pathfinder-eye-control",
@@ -558,6 +602,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "completed",
@@ -581,6 +626,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "yaw-read-failure",
@@ -589,6 +635,10 @@ public sealed class HearingReactionService
         }
 
         ObserveTurn(
+            currentYaw,
+            state);
+
+        ObserveWriteReadback(
             currentYaw,
             state);
 
@@ -614,7 +664,8 @@ public sealed class HearingReactionService
                     $"sourceEntity={state.NoiseSourceEntityIndex}; targetPos={FormatVector(state.TargetPosition)}; " +
                     $"reaction={MathF.Max(0.0f, now - state.DetectedAt):0.000}s; " +
                     $"currentYaw={currentYaw:0.0}; targetYaw={state.TargetYaw:0.0}; " +
-                    $"requestedDelta={state.RequestedDelta:0.0}");
+                    $"requestedDelta={state.RequestedDelta:0.0}; " +
+                    $"look={ReadAndFormatLookSnapshot(bot)}");
             }
         }
 
@@ -640,6 +691,9 @@ public sealed class HearingReactionService
 
             _writes++;
             state.Writes++;
+            state.HasPendingWriteReadback = true;
+            state.LastWrittenYaw =
+                state.TargetYaw;
         }
         catch
         {
@@ -647,6 +701,7 @@ public sealed class HearingReactionService
             Finish(
                 controller,
                 pawn,
+                bot,
                 state,
                 now,
                 "yaw-write-failure",
@@ -660,6 +715,7 @@ public sealed class HearingReactionService
     private void Finish(
         CCSPlayerController controller,
         CCSPlayerPawn pawn,
+        CCSBot bot,
         ReactionState state,
         float now,
         string outcome,
@@ -690,6 +746,18 @@ public sealed class HearingReactionService
             _effectiveTurns++;
         }
 
+        bool suppressed =
+            state.Committed &&
+            state.RequestedDelta >=
+                SuppressedRequestedThresholdDegrees &&
+            state.Writes >=
+                SuppressedMinimumWrites &&
+            observed <
+                SuppressedObservedThresholdDegrees;
+
+        if (suppressed)
+            _suppressedTurns++;
+
         if (observed >
             _maximumObservedDegrees)
         {
@@ -706,8 +774,12 @@ public sealed class HearingReactionService
                 $"REACTION-END bot={SafeName(controller.PlayerName)}; slot={controller.Slot}; " +
                 $"outcome={outcome}; committed={state.Committed}; sourceEntity={state.NoiseSourceEntityIndex}; " +
                 $"targetPos={FormatVector(state.TargetPosition)}; requestedDelta={state.RequestedDelta:0.0}; " +
-                $"observedDelta={observed:0.0}; duration={MathF.Max(0.0f, now - state.DetectedAt):0.000}s; " +
-                $"writes={state.Writes}; fastChecks={state.FastChecks}; withinTolerance={state.WithinTolerance}");
+                $"observedDelta={observed:0.0}; suppressed={suppressed}; " +
+                $"duration={MathF.Max(0.0f, now - state.DetectedAt):0.000}s; " +
+                $"writes={state.Writes}; fastChecks={state.FastChecks}; withinTolerance={state.WithinTolerance}; " +
+                $"readbackChecks={state.ReadbackChecks}; readbackSurvived={state.ReadbackSurvived}; " +
+                $"readbackLost={state.ReadbackLost}; maxReadbackError={state.MaxReadbackError:0.0}; " +
+                $"look={ReadAndFormatLookSnapshot(bot)}");
         }
 
         state.Tracking = false;
@@ -731,6 +803,134 @@ public sealed class HearingReactionService
         state.Writes = 0;
         state.FastChecks = 0;
         state.WithinTolerance = 0;
+        state.HasPendingWriteReadback = false;
+        state.LastWrittenYaw = 0.0f;
+        state.ReadbackChecks = 0;
+        state.ReadbackSurvived = 0;
+        state.ReadbackLost = 0;
+        state.MaxReadbackError = 0.0f;
+    }
+
+    private void ObserveWriteReadback(
+        float currentYaw,
+        ReactionState state)
+    {
+        if (!state.HasPendingWriteReadback)
+            return;
+
+        state.HasPendingWriteReadback =
+            false;
+
+        float error =
+            MathF.Abs(
+                AngleDelta(
+                    currentYaw,
+                    state.LastWrittenYaw));
+
+        state.ReadbackChecks++;
+        _writeReadbackChecks++;
+        _totalReadbackErrorDegrees +=
+            error;
+
+        if (error >
+            state.MaxReadbackError)
+        {
+            state.MaxReadbackError =
+                error;
+        }
+
+        if (error >
+            _maximumReadbackErrorDegrees)
+        {
+            _maximumReadbackErrorDegrees =
+                error;
+        }
+
+        if (error <=
+            Config.HearingReactionYawToleranceDegrees)
+        {
+            state.ReadbackSurvived++;
+            _writeReadbackSurvived++;
+        }
+        else
+        {
+            state.ReadbackLost++;
+            _writeReadbackLost++;
+        }
+    }
+
+    private string ReadAndFormatLookSnapshot(
+        CCSBot bot)
+    {
+        if (!TryReadLookSnapshot(
+                bot,
+                out ValveLookSnapshot snapshot))
+        {
+            _lookSnapshotFailures++;
+            return "unavailable";
+        }
+
+        _lookSnapshots++;
+
+        return
+            $"[spot={FormatVector(snapshot.LookAtSpot)}," +
+            $"duration={snapshot.LookAtSpotDuration:0.000}," +
+            $"timestamp={snapshot.LookAtSpotTimestamp:0.000}," +
+            $"tolerance={snapshot.LookAtSpotAngleTolerance:0.0}," +
+            $"clearIfClose={snapshot.LookAtSpotClearIfClose}," +
+            $"attack={snapshot.LookAtSpotAttack}," +
+            $"desc={SafeToken(snapshot.LookAtDesc)}," +
+            $"lookYaw={snapshot.LookYaw:0.0}," +
+            $"lookYawVel={snapshot.LookYawVelocity:0.0}," +
+            $"pathfinderEye={snapshot.EyeAnglesUnderPathFinderControl}," +
+            $"lookAroundTs={snapshot.LookAroundStateTimestamp:0.000}," +
+            $"inhibitLookAroundTs={snapshot.InhibitLookAroundTimestamp:0.000}]";
+    }
+
+    private static bool TryReadLookSnapshot(
+        CCSBot bot,
+        out ValveLookSnapshot snapshot)
+    {
+        snapshot = default;
+
+        try
+        {
+            if (!NativeValueReader.TryCopy(
+                    bot.LookAtSpot,
+                    out Vector3 lookAtSpot))
+            {
+                return false;
+            }
+
+            snapshot =
+                new ValveLookSnapshot(
+                    lookAtSpot,
+                    bot.LookAtSpotDuration,
+                    bot.LookAtSpotTimestamp,
+                    bot.LookAtSpotAngleTolerance,
+                    bot.LookAtSpotClearIfClose,
+                    bot.LookAtSpotAttack,
+                    bot.LookAtDesc ?? string.Empty,
+                    bot.LookYaw,
+                    bot.LookYawVel,
+                    bot.EyeAnglesUnderPathFinderControl,
+                    bot.LookAroundStateTimestamp,
+                    bot.InhibitLookAroundTimestamp);
+
+            return
+                float.IsFinite(snapshot.LookAtSpotDuration) &&
+                float.IsFinite(snapshot.LookAtSpotTimestamp) &&
+                float.IsFinite(snapshot.LookAtSpotAngleTolerance) &&
+                float.IsFinite(snapshot.LookYaw) &&
+                float.IsFinite(snapshot.LookYawVelocity) &&
+                float.IsFinite(snapshot.LookAroundStateTimestamp) &&
+                float.IsFinite(snapshot.InhibitLookAroundTimestamp);
+        }
+        catch
+        {
+            snapshot = default;
+            return false;
+        }
     }
 
     private static bool TryReadEnemyNoise(
@@ -1056,6 +1256,38 @@ public sealed class HearingReactionService
                 .Trim();
     }
 
+    private static string SafeToken(
+        string? value)
+    {
+        if (string.IsNullOrWhiteSpace(
+                value))
+        {
+            return "empty";
+        }
+
+        return
+            value
+                .Replace(
+                    ';',
+                    '_')
+                .Replace(
+                    ',',
+                    '_')
+                .Replace(
+                    '[',
+                    '(')
+                .Replace(
+                    ']',
+                    ')')
+                .Replace(
+                    '\n',
+                    ' ')
+                .Replace(
+                    '\r',
+                    ' ')
+                .Trim();
+    }
+
     private sealed class ReactionState
     {
         public float LastNoiseTimestamp { get; set; }
@@ -1078,7 +1310,27 @@ public sealed class HearingReactionService
         public int Writes { get; set; }
         public int FastChecks { get; set; }
         public int WithinTolerance { get; set; }
+        public bool HasPendingWriteReadback { get; set; }
+        public float LastWrittenYaw { get; set; }
+        public int ReadbackChecks { get; set; }
+        public int ReadbackSurvived { get; set; }
+        public int ReadbackLost { get; set; }
+        public float MaxReadbackError { get; set; }
     }
+
+    private readonly record struct ValveLookSnapshot(
+        Vector3 LookAtSpot,
+        float LookAtSpotDuration,
+        float LookAtSpotTimestamp,
+        float LookAtSpotAngleTolerance,
+        bool LookAtSpotClearIfClose,
+        bool LookAtSpotAttack,
+        string LookAtDesc,
+        float LookYaw,
+        float LookYawVelocity,
+        bool EyeAnglesUnderPathFinderControl,
+        float LookAroundStateTimestamp,
+        float InhibitLookAroundTimestamp);
 
     private readonly record struct EnemyNoiseSnapshot(
         Vector3 Position,

@@ -161,6 +161,59 @@ Important status counters include:
 - average measured reaction time;
 - average requested and observed turn angle.
 
+## Stage 6B.1 Valve look ownership diagnostic
+
+The first 6B live test accepted hearing detection/arbitration but showed that
+direct `EyeAngles.Y` writes are frequently overwritten or otherwise fail to
+produce the requested turn. Stage 6B.1 keeps the exact same behaviour and adds
+observation-only diagnostics; it does **not** write any additional Valve state.
+
+With `HearingDebug=true`, `REACTION-DETECT`, `REACTION-COMMIT` and
+`REACTION-END` now include a `look=[...]` snapshot containing:
+
+```text
+LookAtSpot
+LookAtSpotDuration
+LookAtSpotTimestamp
+LookAtSpotAngleTolerance
+LookAtSpotClearIfClose
+LookAtSpotAttack
+LookAtDesc
+LookYaw
+LookYawVel
+EyeAnglesUnderPathFinderControl
+LookAroundStateTimestamp
+InhibitLookAroundTimestamp
+```
+
+The service also verifies each `EyeAngles.Y` write on the next fast actuator
+tick. The status line adds:
+
+```text
+suppressedTurns
+lookSnapshots
+lookSnapshotFailures
+readbackChecks
+readbackSurvived
+readbackLost
+avgReadbackErrorDeg
+maxReadbackErrorDeg
+```
+
+A `suppressedTurn` is a diagnostic classification only: the requested turn
+was at least 20 degrees, the service issued at least 10 yaw writes, and the
+maximum observed turn remained below 5 degrees.
+
+The readback counters distinguish a direct overwrite from a later Valve look
+decision:
+
+- `readbackSurvived` — the next fast tick is still within the configured yaw
+  tolerance of the last plugin-written yaw;
+- `readbackLost` — the next fast tick is already outside that tolerance.
+
+No `LookAtSpot`, `LookYaw`, look timer or other Valve field is written in
+6B.1.
+
 ## First live test
 
 Enable the normal runtime and Stage 6B:

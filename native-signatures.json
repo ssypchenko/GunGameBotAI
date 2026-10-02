@@ -1,0 +1,143 @@
+{
+  "binary": "/Users/sergeysypchenko/Downloads/cs2-lib/game/csgo/bin/linuxsteamrt64/libserver.so",
+  "size": 41749016,
+  "sha256": "acfb37875451ce309028313ea79f3687eee9a87dbde54bfda79bf1e5384ba329",
+  "targets": [
+    {
+      "name": "CCSBot::PickNewAimSpot",
+      "runtime_role": "Stage 4 AimService PostHook; runtime-critical when AimService is enabled",
+      "production": [
+        {
+          "name": "CCSBot::PickNewAimSpot",
+          "source": "Services/AimNativeService.cs:LinuxPickNewAimSpotSignatures",
+          "runtime_role": "Stage 4 AimService PostHook; runtime-critical when AimService is enabled",
+          "pattern": "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F D8 59 00 00 83 F9 FF",
+          "matches": [
+            12547792
+          ],
+          "status": "OK"
+        },
+        {
+          "name": "CCSBot::PickNewAimSpot",
+          "source": "Services/AimNativeService.cs:LinuxPickNewAimSpotSignatures",
+          "runtime_role": "Stage 4 AimService PostHook; runtime-critical when AimService is enabled",
+          "pattern": "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E0 59 00 00 83 F9 FF",
+          "matches": [],
+          "status": "MISSING"
+        },
+        {
+          "name": "CCSBot::PickNewAimSpot",
+          "source": "Services/AimNativeService.cs:LinuxPickNewAimSpotSignatures",
+          "runtime_role": "Stage 4 AimService PostHook; runtime-critical when AimService is enabled",
+          "pattern": "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E8 59 00 00 83 F9 FF",
+          "matches": [],
+          "status": "MISSING"
+        }
+      ],
+      "discovery_pattern": "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC ?? 8B 8F ?? ?? ?? ?? 83 F9 FF",
+      "discovery_matches": [],
+      "candidate_contexts": [],
+      "suggested_pattern": null,
+      "note": null
+    },
+    {
+      "name": "CCSBot::Attack",
+      "runtime_role": "Stage 6.7 guarded native attack-state transition; runtime-critical only when NativeAttackAssistEnabled=true",
+      "production": [
+        {
+          "name": "CCSBot::Attack",
+          "source": "Services/NativeAttackService.cs:LinuxAttackSignatures",
+          "runtime_role": "Stage 6.7 guarded native attack-state transition; runtime-critical only when NativeAttackAssistEnabled=true",
+          "pattern": "48 85 F6 74 0D 48 8B 05 AC AB C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
+          "matches": [],
+          "status": "MISSING"
+        },
+        {
+          "name": "CCSBot::Attack",
+          "source": "Services/NativeAttackService.cs:LinuxAttackSignatures",
+          "runtime_role": "Stage 6.7 guarded native attack-state transition; runtime-critical only when NativeAttackAssistEnabled=true",
+          "pattern": "48 85 F6 74 0D 48 8B 05 EC 92 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
+          "matches": [],
+          "status": "MISSING"
+        }
+      ],
+      "discovery_pattern": "48 85 F6 74 ?? 48 8B 05 ?? ?? ?? ?? 80 78 58 00 74 ?? C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
+      "discovery_matches": [
+        12721632
+      ],
+      "candidate_contexts": [
+        "48 85 F6 74 0D 48 8B 05 EC 75 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18 48 8B B8 F0 0D 00 00 E8 97 21 9C 00 84 C0 74 13 48 83 C4 10 5B 41 5C 5D C3 66 2E 0F 1F 84 00 00 00 00 00 4C 89 E6 48 89 DF E8 75 C3 FD FF 80 BB C4 05 00"
+      ],
+      "suggested_pattern": "48 85 F6 74 0D 48 8B 05 EC 75 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
+      "note": "Unique discovery candidate. For NativeAttackService, review the surrounding bytes and add this as another exact Linux signature; do not replace the array with the discovery mask."
+    },
+    {
+      "name": "LadderFSM::SetLadderState",
+      "runtime_role": "Ladder post-exit native DISMOUNT transition; fail-closed to fallback",
+      "production": [
+        {
+          "name": "LadderFSM::SetLadderState",
+          "source": "Services/LadderMapService.cs:LinuxSetLadderStateSignature",
+          "runtime_role": "Ladder post-exit native DISMOUNT transition; fail-closed to fallback",
+          "pattern": "55 48 89 E5 41 54 49 89 FC 53 89 F3 89 5F 08 48 8B 3F E8 ?? ?? ?? ?? 89 C7 E8 ?? ?? ?? ?? F3 41 0F 11 44 24 0C 83 FB 08",
+          "matches": [
+            13230176
+          ],
+          "status": "OK"
+        }
+      ],
+      "discovery_pattern": "55 48 89 E5 41 54 49 89 FC 53 89 F3 89 5F ?? 48 8B 3F E8 ?? ?? ?? ?? 89 C7 E8 ?? ?? ?? ?? F3 41 0F 11 44 24 ?? 83 FB 08",
+      "discovery_matches": [],
+      "candidate_contexts": [],
+      "suggested_pattern": null,
+      "note": null
+    },
+    {
+      "name": "CCSPlayer_WeaponServices::SelectItem",
+      "runtime_role": "SelectItem signature safety probe; actual weapon switch uses the platform vtable slot and is runtime-critical for Knife Rush switching",
+      "production": [
+        {
+          "name": "CCSPlayer_WeaponServices::SelectItem",
+          "source": "Services/WeaponSwitchNative.cs:LinuxSelectItemSignatures",
+          "runtime_role": "SelectItem signature safety probe; actual weapon switch uses the platform vtable slot and is runtime-critical for Knife Rush switching",
+          "pattern": "55 48 89 E5 41 57 41 56 41 55 49 89 F5 41 54 53 48 89 FB 48 81 EC ?? ?? ?? ?? 48 8B 7F",
+          "matches": [
+            23016080
+          ],
+          "status": "OK"
+        }
+      ],
+      "discovery_pattern": "55 48 89 E5 41 57 41 56 41 55 ?? ?? ?? 41 54 53 48 89 FB 48 81 EC ?? ?? ?? ?? 48 8B 7F",
+      "discovery_matches": [],
+      "candidate_contexts": [],
+      "suggested_pattern": null,
+      "note": null
+    }
+  ],
+  "gamedata_contract_warning": null,
+  "external_selectitem_offsets": [],
+  "ladder_layout": {
+    "status": "STATIC_OK",
+    "function_offset": 13230176,
+    "function_source": "production",
+    "expected": {
+      "schema_delta_ladder_end_from_waiting": 44,
+      "fsm_before_ladder_end": 36,
+      "owner_from_fsm": 0,
+      "state_from_fsm": 8,
+      "active_from_fsm": 20,
+      "path_ladder_from_fsm": 24,
+      "dismount_state": 8
+    },
+    "binary_evidence": {
+      "owner_at_fsm_plus_0x00": true,
+      "state_write_matches_expected": true,
+      "dismount_compare_matches_expected": true
+    },
+    "context": "55 48 89 E5 41 54 49 89 FC 53 89 F3 89 5F 08 48 8B 3F E8 09 AC F4 FF 89 C7 E8 92 19 6B 00 F3 41 0F 11 44 24 0C 83 FB 08 77 57 48 8D 15 63 A8 B3 FF 49 8B 3C 24 48 63 04 9A 48 01 D0 FF E0 66 90 48 8D 35 7E 54 C6 FF 31 C0 E8 72 FE F5 FF 49 8B 04 24 48 8B 90 C8 00 00 00 B8 10 00 00 00 F6 C2",
+    "limitations": [
+      "The SetLadderState function can statically confirm the embedded FSM owner/state shape and DISMOUNT value, but it cannot prove CCSBot schema-field positions.",
+      "active_from_fsm and path_ladder_from_fsm remain runtime-validated contracts in LadderMapService; they are not marked as confirmed from this function alone."
+    ]
+  }
+}

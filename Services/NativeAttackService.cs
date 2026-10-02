@@ -28,6 +28,11 @@ public sealed class NativeAttackService
     // broader discovery mask used after a CS2 update.
     private static readonly string[] LinuxAttackSignatures =
     [
+        // 2026-10-02
+        // SHA256 acfb37875451ce309028313ea79f3687eee9a87dbde54bfda79bf1e5384ba329
+        // RVA    0x00C21DE0
+        "48 85 F6 74 0D 48 8B 05 EC 75 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
+
         "48 85 F6 74 0D 48 8B 05 AC AB C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18",
         "48 85 F6 74 0D 48 8B 05 EC 92 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18"
     ];

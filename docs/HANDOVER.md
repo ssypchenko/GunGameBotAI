@@ -1,6 +1,6 @@
 # GunGameBotAI development handover
 
-Last updated: 2026-10-01
+Last updated: 2026-10-02
 
 This file is the working handover for continuing GunGameBotAI development in a
 new chat/session without reconstructing the vision/attack investigation from
@@ -23,7 +23,7 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.4
+GunGameBotAI 0.8.5
 ConfigVersion 45
 CounterStrikeSharp.API 1.0.375
 target framework net10.0
@@ -66,8 +66,18 @@ Valve hearing state. `NoisePosition` was intentionally imprecise and
 `BentNoisePosition` could remain stale, so active behaviour must use the
 copied `NoisePosition` rather than hidden source coordinates.
 
-Stage 6B is implemented on `stage-6b-hearing-reaction` and is awaiting live
-acceptance. It adds `HearingReactionService` with a bounded look-only reaction:
+Stage 6B detection/arbitration passed its first live test, but the direct
+`EyeAngles.Y` actuator is not yet accepted: many reactions issued repeated yaw
+writes while the observed turn stayed near zero. Stage 6B.1 is now implemented
+on `stage-6b-hearing-reaction` to identify the competing Valve look owner
+without changing behaviour.
+
+The diagnostic records raw Valve `LookAtSpot*`, `LookYaw`, `LookYawVel`,
+look-around timestamps and pathfinder-eye ownership at DETECT / COMMIT / END.
+It also performs next-fast-tick readback of each plugin yaw write and counts
+`readbackSurvived`, `readbackLost` and `suppressedTurns`.
+
+Stage 6B still uses `HearingReactionService` with a bounded look-only reaction:
 
 ```text
 Services/HearingReactionService.cs
@@ -84,14 +94,18 @@ Arbitration is ladder > Knife/special > visible EnemyReaction > HearingReaction
 > Human Look Scan. Visible combat cancels hearing immediately. Repeated noise
 may refresh the target during one lease but never extends the lease deadline.
 
-For the Stage 6B live test use:
+For the Stage 6B.1 live diagnostic use:
 
 ```text
 css_ggbotai_enable 1
+css_ggbotai_hearing_monitor 0
 css_ggbotai_hearing_reaction 1
 css_ggbotai_hearing_debug 1
 css_ggbotai_status
 ```
+
+Keep `HearingDebug=1` for the whole capture; the decisive evidence is in the
+`look=[...]` fields and next-tick readback counters.
 
 The Stage 6A monitor may stay disabled unless detailed event/native
 correlation is wanted. See `docs/capabilities/hearing-reaction.md`.

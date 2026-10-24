@@ -1030,10 +1030,10 @@ def print_report(
             print()
 
             if report.name == "CCSBot::PickNewAimSpot":
-                print("SOURCE SNIPPET (append to LinuxPickNewAimSpotSignatures):")
+                print("SOURCE SNIPPET (replace current entry in LinuxPickNewAimSpotSignatures):")
                 print(f'    "{report.suggested_pattern}",')
             elif report.name == "CCSBot::Attack":
-                print("SOURCE SNIPPET (append to LinuxAttackSignatures):")
+                print("SOURCE SNIPPET (replace current entry in LinuxAttackSignatures):")
                 print(f'    "{report.suggested_pattern}",')
             elif report.name == "LadderFSM::SetLadderState":
                 print("SOURCE SNIPPET (replace LinuxSetLadderStateSignature):")
@@ -1042,7 +1042,7 @@ def print_report(
                     f'        "{report.suggested_pattern}";'
                 )
             elif report.name == "CCSPlayer_WeaponServices::SelectItem":
-                print("SOURCE SNIPPET (append to LinuxSelectItemSignatures):")
+                print("SOURCE SNIPPET (replace current entry in LinuxSelectItemSignatures):")
                 print(f'    "{report.suggested_pattern}",')
 
         if report.note:

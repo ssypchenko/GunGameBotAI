@@ -22,12 +22,13 @@ Stage 4 AimService PostHook
 
 Linux production policy:
 
-- keep explicit exact signatures for known builds;
+- keep one exact Linux signature for the current tested CS2 build;
 - do not use the broad discovery mask in production;
 - if no known signature resolves, AimService remains unavailable and Valve aim
   is left unchanged.
 
-Current 23 September 2026 variant uses the CCSBot displacement `0x59D8`.
+The current tested Linux variant uses the CCSBot displacement `0x59D8`.
+A future CS2 update can change this value.
 
 ### 2. Ladder FSM SetLadderState
 
@@ -148,29 +149,18 @@ return = void
 
 Production policy:
 
-- exact known signatures only;
+- one exact Linux signature for the current reviewed CS2 build;
 - Linux-only for the first experiment;
 - missing signature disables Native Attack Assist;
 - do not substitute a broad discovery mask into production;
 - do not fall back to a raw `IsAttacking=true` write.
 
-Known exact production variants:
+Current Linux candidate (static uniqueness verified; runtime unverified):
 
 ```text
-2026-09-28
-SHA256 d81faffb3e3a5f2001932b3b55a96c4ac05c2ed4b99702b06fc416b6e9bb5300
-RVA    0x00C233A0
-
-2026-09-27
-BuildID 0f28e3d6ef09e99cade6a972a5e3efbff3131370
-SHA256 23373cfdb96dee1f2da858274c03346c952faff2942b5e7923525e187366e87f
-RVA    0x00C24060
+SHA256 ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7
+File offset 0x00C33D20
 ```
-
-The 28 September update preserved the discovery shape and changed only bytes
-inside the RIP-relative displacement in the exact entry signature. The unique
-discovery candidate was therefore accepted as a new exact production variant,
-with the older exact signature retained.
 
 After a CS2 update, the scanner checks the exact production signature and, when
 missing, uses the registered `CCSBot::Attack` discovery mask to emit an exact
@@ -289,6 +279,26 @@ no longer a GunGameBotAI runtime dependency.
 The output includes the binary SHA256 so reports from different server builds
 cannot be confused.
 
+## Summary output
+
+The scanner prints a `NATIVE SIGNATURE AUDIT SUMMARY` after the detailed
+results. The JSON report contains the same information under `summary`.
+
+- `PASS`: a production signature matches uniquely in the scanned binary.
+- `REVIEW_REQUIRED`: the production signature is missing, but a unique
+  discovery candidate needs code/ABI review.
+- `MISSING`: neither production nor discovery finds a unique candidate.
+- `AMBIGUOUS`: more than one possible match needs manual review.
+- `PASS_STATIC_RUNTIME_UNVERIFIED`: all production byte patterns pass,
+  but running the plugin on the server has not been tested.
+- `ACTION_REQUIRED`: at least one signature or checked ladder layout needs
+  review before relying on native operation.
+
+The scanner does not validate native ABI, the deployed CounterStrikeSharp
+runtime, or real bot behaviour. Treat `runtime_acceptance=NOT_TESTED` as a
+separate test requirement. A saved JSON report describes the binary and source
+tree at the time of that scan; regenerate it after changing a signature.
+
 ## Result meanings
 
 ### OK
@@ -301,7 +311,7 @@ production[1] OK: matches=1; offsets=0xBF8950
 
 The current production signature exists exactly once.
 
-For Aim, any one known exact signature resolving uniquely is sufficient.
+For Aim, the current exact signature must resolve uniquely.
 
 ### MISSING + one discovery match
 
@@ -340,19 +350,16 @@ signature.
 
 The scanner emits an **exact** candidate for this target.
 
-Add it as another entry to:
+Replace the current entry with the reviewed exact signature:
 
 ```csharp
 private static readonly string[] LinuxPickNewAimSpotSignatures =
 [
-    "NEW EXACT SIGNATURE",
-    "older signature",
-    ...
+    "NEW EXACT SIGNATURE"
 ];
 ```
 
-Prefer newest first. Keep older known exact signatures unless there is a reason
-to remove them.
+Do not keep signatures for old CS2 builds in the runtime array.
 
 Do not copy the broad discovery pattern into this array.
 
@@ -361,18 +368,16 @@ Do not copy the broad discovery pattern into this array.
 The scanner emits an **exact** candidate when the registered discovery mask
 finds one unique reviewed target.
 
-Append the reviewed signature to:
+Replace the current signature with the reviewed exact candidate:
 
 ```csharp
 private static readonly string[] LinuxAttackSignatures =
 [
-    "NEW EXACT SIGNATURE",
-    "older exact signature",
-    ...
+    "NEW EXACT SIGNATURE"
 ];
 ```
 
-Prefer newest first. Do not copy the wildcard discovery mask into production.
+Do not copy the wildcard discovery mask into production.
 
 Before enabling the assist after an update, confirm:
 
@@ -403,13 +408,12 @@ cannot validate the hidden FSM offsets.
 ### SelectItem
 
 If the current SelectItem production signature fails and the discovery mask
-finds exactly one reviewed candidate, append the accepted pattern to:
+finds exactly one reviewed candidate, replace the current pattern with the accepted pattern:
 
 ```csharp
 private static readonly string[] LinuxSelectItemSignatures =
 [
-    "NEW REVIEWED SIGNATURE",
-    ...
+    "NEW REVIEWED SIGNATURE"
 ];
 ```
 
@@ -425,7 +429,8 @@ After every CS2 server update:
 4. If all runtime production patterns are `OK`, do not change signatures.
 5. For a missing pattern, accept a candidate only when discovery has one match
    and its surrounding bytes/function semantics make sense.
-6. Update the relevant source signature.
+6. Replace the current signature with the reviewed candidate; do not
+   retain obsolete CS2 signatures.
 7. Build locally.
 8. Start the server with behavioural native features disabled where possible.
 9. Verify startup resolution.

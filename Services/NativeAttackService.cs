@@ -13,23 +13,15 @@ namespace GunGameBotAI.Services;
 /// </summary>
 public sealed class NativeAttackService
 {
-    // Exact production signatures, newest first.
-    //
-    // 2026-09-28 CS2 update:
-    // SHA256  d81faffb3e3a5f2001932b3b55a96c4ac05c2ed4b99702b06fc416b6e9bb5300
-    // RVA     0x00C233A0
-    //
-    // 2026-09-27 previous production build:
-    // BuildID 0f28e3d6ef09e99cade6a972a5e3efbff3131370
-    // SHA256  23373cfdb96dee1f2da858274c03346c952faff2942b5e7923525e187366e87f
-    // RVA     0x00C24060
-    //
-    // Keep production signatures exact. The maintenance scanner owns the
-    // broader discovery mask used after a CS2 update.
+    // Current Linux CS2 build:
+    // SHA256 ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7
+    // File offset 0x00C33D20; unique discovery candidate pending live acceptance.
+    // Use an exact production signature. Never use the broad discovery mask
+    // to invoke a native function.
     private static readonly string[] LinuxAttackSignatures =
-[
-    "48 85 F6 74 0D 48 8B 05 4C 26 C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18"
-];
+    [
+        "48 85 F6 74 0D 48 8B 05 6C 2F C1 01 80 78 58 00 74 06 C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB 48 83 EC 10 48 8B 47 18"
+    ];
 
     private readonly Action<string> _info;
     private readonly Action<string> _warning;

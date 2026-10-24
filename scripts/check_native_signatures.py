@@ -1058,6 +1058,99 @@ def print_report(
         print()
 
 
+def build_audit_summary(
+    reports: Iterable[TargetReport],
+    ladder_layout: Optional[LadderLayoutReport],
+) -> dict[str, object]:
+    """Summarise static evidence; runtime safety remains unverified."""
+    targets: list[dict[str, object]] = []
+    required_changes: list[str] = []
+
+    for report in reports:
+        production_unique = any(
+            len(item.matches) == 1 for item in report.production
+        )
+        production_ambiguous = any(
+            len(item.matches) > 1 for item in report.production
+        )
+
+        if production_unique:
+            status = "PASS"
+        elif production_ambiguous or len(report.discovery_matches) > 1:
+            status = "AMBIGUOUS"
+            required_changes.append(
+                f"{report.name}: review ambiguous native matches before use."
+            )
+        elif len(report.discovery_matches) == 1:
+            status = "REVIEW_REQUIRED"
+            required_changes.append(
+                f"{report.name}: review the discovery candidate, update the "
+                "exact production signature and repeat the scan."
+            )
+        else:
+            status = "MISSING"
+            required_changes.append(
+                f"{report.name}: locate and review the changed native function."
+            )
+
+        targets.append({
+            "name": report.name,
+            "status": status,
+            "production_match_count": sum(
+                len(item.matches) for item in report.production
+            ),
+            "discovery_match_count": len(report.discovery_matches),
+        })
+
+    if ladder_layout is None:
+        ladder_status = "NOT_CHECKED"
+    elif ladder_layout.status == "STATIC_OK":
+        ladder_status = "STATIC_PASS_RUNTIME_UNVERIFIED"
+    else:
+        ladder_status = f"{ladder_layout.status}_RUNTIME_UNVERIFIED"
+        required_changes.append(
+            "Ladder FSM: review the static layout evidence before native use."
+        )
+
+    action_required = bool(required_changes)
+    return {
+        "overall": (
+            "ACTION_REQUIRED" if action_required
+            else "PASS_STATIC_RUNTIME_UNVERIFIED"
+        ),
+        "targets": targets,
+        "ladder_layout": ladder_status,
+        "required_changes": required_changes,
+        "runtime_acceptance": "NOT_TESTED",
+    }
+
+
+def print_audit_summary(
+    summary: dict[str, object],
+    sha256: str,
+) -> None:
+    print("=" * 78)
+    print("NATIVE SIGNATURE AUDIT SUMMARY")
+    print("-" * 78)
+    print(f"Binary SHA256: {sha256}")
+    for target in summary["targets"]:
+        print(f"{target['name']}: {target['status']}")
+    print(f"Ladder layout: {summary['ladder_layout']}")
+    print(f"Overall: {summary['overall']}")
+    print()
+    print("Required changes:")
+    changes = summary["required_changes"]
+    if changes:
+        for change in changes:
+            print(f"- {change}")
+    else:
+        print("- None for the signatures checked in this build.")
+    print()
+    print("Runtime acceptance: NOT TESTED by this scanner.")
+    print("Rebuild and test enabled native features on the CS2 server.")
+    print()
+
+
 def exit_code(
     reports: Iterable[TargetReport],
 ) -> int:
@@ -1189,6 +1282,45 @@ def run_self_test() -> int:
     }
     if not all(ladder_evidence.values()):
         print("SELF-TEST FAILED: ladder binary evidence probe mismatch")
+        return 1
+
+    passed = TargetReport(
+        name="ExamplePass",
+        runtime_role="test",
+        production=[
+            PatternResult(
+                name="ExamplePass",
+                source="test",
+                runtime_role="test",
+                pattern="55",
+                matches=[1],
+                status="OK",
+            )
+        ],
+        discovery_pattern=None,
+        discovery_matches=[],
+        candidate_contexts=[],
+        suggested_pattern=None,
+        note=None,
+    )
+    review = TargetReport(
+        name="ExampleReview",
+        runtime_role="test",
+        production=[],
+        discovery_pattern="55 ??",
+        discovery_matches=[3],
+        candidate_contexts=[],
+        suggested_pattern="55 48",
+        note=None,
+    )
+    sample_summary = build_audit_summary([passed, review], None)
+    if (
+        sample_summary["overall"] != "ACTION_REQUIRED"
+        or sample_summary["targets"][0]["status"] != "PASS"
+        or sample_summary["targets"][1]["status"] != "REVIEW_REQUIRED"
+        or sample_summary["ladder_layout"] != "NOT_CHECKED"
+    ):
+        print("SELF-TEST FAILED: audit summary")
         return 1
 
     print("SELF-TEST OK")
@@ -1354,8 +1486,18 @@ def main() -> int:
             )
         print()
 
+    summary = build_audit_summary(
+        reports,
+        ladder_layout_report,
+    )
+    print_audit_summary(
+        summary,
+        hashlib.sha256(data).hexdigest(),
+    )
+
     if args.json_report:
         payload = {
+            "summary": summary,
             "binary": str(binary),
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),

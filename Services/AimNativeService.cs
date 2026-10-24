@@ -15,14 +15,11 @@ namespace GunGameBotAI.Services;
 /// </summary>
 public sealed class AimNativeService
 {
-    // Known Linux signatures from public 2026 builds. Keep these exact:
-    // a broad wildcard native signature is more likely to hook the wrong
-    // function than to fail safely after a game update.
+    // Keep only the exact signature verified for the current Linux build.
+    // After a CS2 update, use the discovery scanner and review the candidate.
     private static readonly string[] LinuxPickNewAimSpotSignatures =
     [
-        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F D8 59 00 00 83 F9 FF",
-        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E0 59 00 00 83 F9 FF",
-        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F E8 59 00 00 83 F9 FF"
+        "55 48 89 E5 41 55 41 54 53 48 89 FB 48 83 EC 58 8B 8F D8 59 00 00 83 F9 FF"
     ];
 
     // Current public Windows pattern necessarily contains instruction

@@ -44,6 +44,7 @@ public sealed class BotRuntimeState
 
     // The low-health open-corridor pursuit yields to nearby combat.
     public bool KnifeRecoveryActive { get; set; }
+    public float KnifeRecoveryNextUpdateAt { get; set; }
 
     public bool KnifeRushDecisionMade { get; set; }
 
@@ -205,6 +206,7 @@ public sealed class BotRuntimeState
         NextKnifeAttackAt = 0.0f;
         ResetKnifeCombo();
         KnifeRecoveryActive = false;
+        KnifeRecoveryNextUpdateAt = 0.0f;
         KnifeRushZigZagSign = 1;
         KnifeRushNextZigZagAt = 0.0f;
     }

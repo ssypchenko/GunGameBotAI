@@ -66,9 +66,6 @@ public sealed class KnifeRecoveryService
     public void ApplyDecision(
         CCSPlayerPawn pawn, BotRuntimeState state, EnemySnapshot? enemy, float now)
     {
-        state.KnifeRecoveryActive = false;
-        _control.CancelOwner(state.Slot, LeaseOwner, pawn);
-
         if (!Config.KnifeLowHealthSeekFireEnabled ||
             state.LevelWeaponClass != WeaponClass.Knife ||
             pawn.Health > Config.KnifeLowHealthThreshold ||
@@ -78,20 +75,32 @@ public sealed class KnifeRecoveryService
              enemy is { Distance2D: var close } &&
              close < Config.KnifeLowHealthNearbyEnemyDistance) ||
             !NativeValueReader.TryGetOrigin(pawn, out Vector3 origin))
+        {
+            Cancel(state, pawn);
+            return;
+        }
+
+        if (state.KnifeRecoveryActive && now < state.KnifeRecoveryNextUpdateAt)
             return;
 
         int opposingTeam = pawn.TeamNum == 2 ? 3 : pawn.TeamNum == 3 ? 2 : -1;
         if (!_recentFire.TryGetValue(opposingTeam, out FireRecord fire) ||
             now - fire.At < 0.0f ||
             now - fire.At > Config.KnifeGunfireMaxAgeSeconds)
+        {
+            Cancel(state, pawn);
             return;
+        }
 
         Vector3 delta = fire.Position - origin;
         delta.Z = 0.0f;
         float distance = delta.Length();
         if (distance < Config.KnifeLowHealthNearbyEnemyDistance ||
             distance > Config.KnifeGunfireMaxDistance)
+        {
+            Cancel(state, pawn);
             return;
+        }
 
         Vector3 aim = delta / distance;
         float baseYaw = MathF.Atan2(aim.Y, aim.X) * (180.0f / MathF.PI);
@@ -127,7 +136,10 @@ public sealed class KnifeRecoveryService
         }
 
         if (!float.IsFinite(bestScore))
+        {
+            Cancel(state, pawn);
             return;
+        }
 
         Vector3 facing = Facing(pawn.EyeAngles.Y);
         Vector3 lateral = new(-facing.Y, facing.X, 0.0f);
@@ -137,9 +149,13 @@ public sealed class KnifeRecoveryService
                 durationTicks: 32,
                 forwardMove: Vector3.Dot(bestDirection, facing) * MoveCommand,
                 leftMove: Vector3.Dot(bestDirection, lateral) * MoveCommand))
+        {
+            Cancel(state, pawn);
             return;
+        }
 
         state.KnifeRecoveryActive = true;
+        state.KnifeRecoveryNextUpdateAt = now + 0.25f;
         GuidedDecisions++;
     }
 
@@ -147,6 +163,7 @@ public sealed class KnifeRecoveryService
     {
         _control.CancelOwner(state.Slot, LeaseOwner, pawn);
         state.KnifeRecoveryActive = false;
+        state.KnifeRecoveryNextUpdateAt = 0.0f;
     }
 
     public void Reset()

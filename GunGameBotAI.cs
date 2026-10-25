@@ -777,9 +777,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             state,
             now);
 
-        state.KnifeRecoveryActive = false;
         bool mandatoryKnife =
             state.LevelWeaponClass == WeaponClass.Knife;
+        if (!mandatoryKnife)
+            _knifeRecovery.Cancel(state, pawn);
 
         bool grenadeLevel =
             state.LevelWeaponClass == WeaponClass.Grenade;

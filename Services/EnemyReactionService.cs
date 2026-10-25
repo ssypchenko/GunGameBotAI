@@ -106,29 +106,31 @@ public sealed class EnemyReactionService
         _states.Clear();
     }
 
+    // Remove only this bot's own reaction. A bot changing mode, climbing a
+    // ladder or already attacking must not cancel another bot's pending
+    // reaction against it: that target is still alive and valid.
     public void RemoveSlot(
         int slot,
         string reason = "slot-removed")
     {
         if (_states.TryGetValue(slot, out ReactionState? state))
         {
-            _onPluginAcquisitionEnded(
-                state.BotSlot,
-                state.TargetEntityIndex);
-            LogEnd(state, reason);
-            _states.Remove(slot);
+            Cancel(slot, state, reason);
         }
+    }
 
-        foreach ((int botSlot, ReactionState targetState) in
+    // Target-side cleanup is reserved for actual lifecycle invalidation.
+    // Ordinary bot mode/attack transitions must never call this method.
+    public void CancelTargetingSlot(
+        int targetSlot,
+        string reason)
+    {
+        foreach ((int botSlot, ReactionState state) in
                  _states
-                     .Where(pair => pair.Value.TargetSlot == slot)
+                     .Where(pair => pair.Value.TargetSlot == targetSlot)
                      .ToArray())
         {
-            _onPluginAcquisitionEnded(
-                targetState.BotSlot,
-                targetState.TargetEntityIndex);
-            LogEnd(targetState, $"target-{reason}");
-            _states.Remove(botSlot);
+            Cancel(botSlot, state, $"target-{reason}");
         }
     }
 

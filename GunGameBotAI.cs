@@ -1255,6 +1255,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _enemyReaction.RemoveSlot(
             playerSlot,
             "disconnect");
+        _enemyReaction.CancelTargetingSlot(
+            playerSlot,
+            "disconnect");
         _aimDiagnostics.RemoveSlot(playerSlot);
         _aimNative.RemoveSlot(playerSlot);
         _transientControl.CancelSlot(playerSlot);
@@ -1339,6 +1342,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _visionEnhancement.RemoveSlot(slot);
             _humanLookScan.RemoveSlot(slot);
             _enemyReaction.RemoveSlot(
+                slot,
+                "player-death");
+            _enemyReaction.CancelTargetingSlot(
                 slot,
                 "player-death");
             _aimDiagnostics.RemoveSlot(slot);

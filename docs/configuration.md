@@ -23,7 +23,7 @@ they immediately affect the running plugin and do **not** call
 
 This policy applies to all operator commands, including Aim, Hearing,
 Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
-settings. The schema version remains `45` because no configuration
+settings. The schema version is now `46` because grenade assistance adds configuration
 properties have changed.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
@@ -46,7 +46,7 @@ debug/observation-only facilities default to disabled. In particular:
 
 ```json
 {
-  "ConfigVersion": 45,
+  "ConfigVersion": 46,
   "EnabledOnLoad": false,
   "Debug": false,
   "VerboseCorrectionDebug": false,
@@ -108,7 +108,7 @@ live tests on 25 October 2026. The mode 3 native integration is
 build-sensitive, remains disabled by default and must be revalidated
 after server updates.
 
-`ConfigVersion` is migrated by the plugin; the production-default profile uses version `45`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `46`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and
@@ -191,3 +191,19 @@ never injects Fire.
 `LadderAssist` is deliberately bounded. It uses the public ladder state and the
 bot's current goal, then sends a short jump pulse only before ladder entry. It
 does not teleport the bot or replace the game's navigation mesh.
+
+## HE grenade control (ConfigVersion 46)
+
+`GrenadeLevelEnabled=true` retains the existing movement behaviour.
+`GrenadeThrowAssistEnabled=true` adds HE selection, physical target checks,
+short lead, elevated aim and bounded Attack pulses. Pistol defence is used
+against close knife threats. The new grenade must be granted by GunGame.
+
+Defaults: `GrenadeMinThrowDistance=220`, `GrenadeMaxThrowDistance=850`,
+`GrenadeKnifeDefenceDistance=230`, `GrenadeKnifeApproachDistance=340`,
+`GrenadeLeadSeconds=0.16`, `GrenadeArcFactor=0.20`,
+`GrenadeReadyDelaySeconds=0.60`, `GrenadeAimToleranceDegrees=8`,
+`GrenadeThrowCooldownSeconds=1.80`. These require live tuning.
+
+Set `GrenadeThrowAssistEnabled=false` in the configuration to disable
+new aim/throw control while keeping the old grenade-level movement.

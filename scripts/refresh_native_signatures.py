@@ -131,7 +131,7 @@ def main() -> int:
         print(f"error: reading {binary}: {exc}", file=sys.stderr)
         return 1
 
-    if data[:5] != b"\\x7fELF\\x02":
+    if data[:5] != b"\x7fELF\x02":
         print("error: expected a 64-bit Linux ELF file", file=sys.stderr)
         return 2
 

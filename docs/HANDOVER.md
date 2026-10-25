@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.6
-ConfigVersion 45
+GunGameBotAI 0.8.7
+ConfigVersion 46
 CounterStrikeSharp.API 1.0.378
 target framework net10.0
 ```
@@ -45,6 +45,91 @@ Source-level review is distinct from build and live server verification.
 The assistant development environment used for these changes does not have the
 project's .NET SDK/runtime available, so Sergey performs the authoritative
 compile and live-server test locally.
+
+## HE grenade control — Stage 10/11 (25 October 2026)
+
+**Source implemented in branch; Release build and live server tests pending.**
+The new logic is in `GrenadeLevelService` with pure policy in
+`GrenadeThrowPolicy`. The existing WeaponActivationService,
+VisibilityTraceService and ButtonPulseService are reused.
+
+- The operator verified that three bots were in `mode=GrenadeLevel`
+  with `weapon=Grenade`. This is the GunGame *level weapon*, not the
+  current ActiveWeapon. Runtime detection therefore already worked.
+- On the HE level, the service checks for a real owned `weapon_hegrenade`.
+  It prefers a physically visible Valve enemy. If Valve has no suitable
+  enemy, it considers live opponents with a visible chest point and
+  selects the nearest candidate in the configured range.
+- The throw uses short velocity lead and bounded elevation. The
+  high-frequency actuator holds HE selection, checks angle read-back,
+  waits for deployment and sends one bounded Attack pulse. This is an
+  initial direct-throw approximation, not a physics trajectory solver.
+- If an opponent visibly carries a knife at close range or approaches
+  quickly, the controller holds an owned pistol instead. It returns
+  to HE intent when the threat ends and a grenade remains.
+- A confirmed `grenade_thrown` event marks that HE as consumed. The
+  service never reselects it. A new inventory handle or an observed
+  absence followed by a new HE clears the consumed state. This is
+  important when a pistol frag awards a fresh HE without respawn.
+- If no HE exists, ordinary Valve pistol behaviour continues. The
+  plugin does not grant grenades or alter GunGame progression.
+- Ladder ownership, mandatory knife, player takeover and lifecycle
+  cleanup retain priority. No additional native signatures are used.
+- `css_ggbotai_status` adds grenade target, switch, throw attempt and
+  confirmed throw counters, plus per-bot grenade intent fields.
+
+Configuration schema version `46` adds:
+`GrenadeThrowAssistEnabled` (true), `GrenadeMinThrowDistance` (220),
+`GrenadeMaxThrowDistance` (850), `GrenadeKnifeDefenceDistance` (230),
+`GrenadeKnifeApproachDistance` (340), `GrenadeLeadSeconds` (0.16),
+`GrenadeArcFactor` (0.20), `GrenadeReadyDelaySeconds` (0.60),
+`GrenadeAimToleranceDegrees` (8), `GrenadeThrowCooldownSeconds` (1.80).
+The old `GrenadeLevelEnabled` continues to gate the legacy movement.
+All new values are initial tuning parameters, not live-accepted values.
+
+### Verification and remaining risks
+
+- The standalone test project is `Tests/GrenadePolicySmoke/`.
+  It covers range, knife threat, angle calculation and yaw wrap.
+- Source-level integration was inspected against the existing
+  CounterStrikeSharp API, native SelectItem backend and event contracts.
+- **Not yet executed:** .NET Release build, smoke test binary, in-game
+  projectile test, knife defence, grenade refill test and hot reload.
+- The authoring environment has no .NET SDK. Tests need to run in a
+  local checkout before deploy. Do not call this feature accepted yet.
+- Check `throwAttempts` vs `confirmedThrows`. If attempts increase but
+  confirmed throws do not, inspect engine button timing and grenade
+  deployment before changing aim or the native weapon selector.
+- Verify the elevation and lead against real HE trajectories. The
+  current approximation does not predict bounces, ceilings or arcs
+  through openings. Some physically visible targets may still be
+  unreachable by a grenade trajectory.
+- Confirm Valve does not overwrite grenade aim or weapon selection
+  between fast frames. Valve native interaction cannot be simulated
+  in an isolated policy smoke test.
+
+Build and checks from repository root:
+
+```bash
+dotnet restore GunGameBotAI.csproj
+dotnet build GunGameBotAI.csproj -c Release --no-restore
+dotnet run --project Tests/GrenadePolicySmoke/GrenadePolicySmoke.csproj -c Release
+python3 scripts/check_native_signatures.py --self-test
+```
+
+Suggested live checklist: activate GunGameBotAI; force HE level;
+verify grenades in inventory and physical throw; attempt a knife rush
+towards the bot; verify pistol defence; throw one HE; kill an enemy
+with the pistol; verify new HE selection; change level, die, respawn,
+restart map, unload and hot reload; inspect status counters each time.
+
+Dependencies: the official NuGet publisher `roflmuffin` lists
+`CounterStrikeSharp.API 1.0.378` as the latest stable as at
+25 October 2026. It supports `net10.0`. The 2.0 release is alpha.
+Keep 1.0.378 for this limited implementation. Existing logging
+version range is not changed without a separate compatibility review.
+
+---
 
 ## Core design rule
 

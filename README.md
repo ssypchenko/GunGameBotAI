@@ -44,6 +44,17 @@ gamedata entry is required.
   verify the active weapon on the next frame.
 
 The enable, debug, tuning, reload, and diagnostic commands are server-only.
+**All operator console tuning is runtime-only:** commands apply immediately
+to the in-memory configuration and do **not** save to the plugin JSON/TOML.
+A plugin/server restart restores the configured defaults from disk. Use
+`css_ggbotai_reload` to discard runtime adjustments and re-read the
+configuration file without restarting the server. To change defaults
+permanently, edit the configuration file directly.
+
+Manual ladder teaching is a separate, explicitly armed process and can
+still persist learned ladder-map JSON; this policy does not affect ladder
+geometry records.
+
 Other plugins may use `Server.ExecuteCommand("css_ggbotai_enable 1")` for a
 server-side integration.
 

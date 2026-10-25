@@ -23,8 +23,8 @@ they immediately affect the running plugin and do **not** call
 
 This policy applies to all operator commands, including Aim, Hearing,
 Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
-settings. The schema version is now `46` because grenade assistance adds configuration
-properties have changed.
+settings. The schema version is `46` following the addition of HE grenade
+assistance settings.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
 to enabled and reacts to a live enemy with real physical LOS anywhere around

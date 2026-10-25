@@ -42,6 +42,7 @@ AIM_SOURCE = ROOT / "Services" / "AimNativeService.cs"
 ATTACK_SOURCE = ROOT / "Services" / "NativeAttackService.cs"
 LADDER_SOURCE = ROOT / "Services" / "LadderMapService.cs"
 WEAPON_SOURCE = ROOT / "Services" / "WeaponSwitchNative.cs"
+LOOK_AT_SOURCE = ROOT / "Services" / "NativeLookAtService.cs"
 GAMEDATA_DIR = ROOT / "gamedata"
 
 
@@ -66,6 +67,12 @@ DISCOVERY_PATTERNS = {
         "48 85 F6 74 ?? 48 8B 05 ?? ?? ?? ?? 80 78 58 00 74 ?? "
         "C3 0F 1F 44 00 00 55 48 89 E5 41 54 49 89 F4 53 48 89 FB "
         "48 83 EC 10 48 8B 47 18"
+    ),
+    # Candidate discovery only: confirm SetLookAt xrefs and ABI in disassembler.
+    "CCSBot::SetLookAt": (
+        "55 48 89 E5 41 57 49 89 FF 41 56 45 89 C6 "
+        "41 55 49 89 D5 41 54 41 89 CC 53 48 83 EC ?? "
+        "48 8B 5F ?? 48 89 75 ??"
     ),
 }
 
@@ -251,12 +258,14 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
     attack_text = ATTACK_SOURCE.read_text(encoding="utf-8")
     ladder_text = LADDER_SOURCE.read_text(encoding="utf-8")
     weapon_text = WEAPON_SOURCE.read_text(encoding="utf-8")
+    look_at_text = LOOK_AT_SOURCE.read_text(encoding="utf-8")
 
     result: dict[str, list[Pattern]] = {
         "CCSBot::PickNewAimSpot": [],
         "CCSBot::Attack": [],
         "LadderFSM::SetLadderState": [],
         "CCSPlayer_WeaponServices::SelectItem": [],
+        "CCSBot::SetLookAt": [],
     }
 
     registered_csharp_variables = {
@@ -264,6 +273,7 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
         ("Services/NativeAttackService.cs", "LinuxAttackSignatures"),
         ("Services/LadderMapService.cs", "LinuxSetLadderStateSignature"),
         ("Services/WeaponSwitchNative.cs", "LinuxSelectItemSignatures"),
+        ("Services/NativeLookAtService.cs", "LinuxSetLookAtSignature"),
     }
 
     for value in extract_csharp_string_array(
@@ -290,7 +300,7 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
                 value=value,
                 runtime_role=(
                     "Stage 6.7 guarded native attack-state transition; "
-                    "runtime-critical only when NativeAttackAssistEnabled=true"
+                    "runtime-critical when EnemyReactionNativeAttackEnabled=true"
                 ),
             )
         )
@@ -324,6 +334,20 @@ def load_production_patterns() -> dict[str, list[Pattern]]:
                 ),
             )
         )
+
+    result["CCSBot::SetLookAt"].append(
+        Pattern(
+            name="CCSBot::SetLookAt",
+            source="Services/NativeLookAtService.cs:LinuxSetLookAtSignature",
+            value=extract_csharp_const_string(
+                look_at_text, "LinuxSetLookAtSignature",
+            ),
+            runtime_role=(
+                "Stage 6B.3 native hearing look; runtime-critical on Linux "
+                "when HearingReactionEnabled=true and HearingReactionLookMode=3"
+            ),
+        )
+    )
 
     # Automatically inventory future Linux C# signature variables so the
     # maintenance tool cannot silently miss a newly added native integration.
@@ -895,23 +919,23 @@ def build_report(
             if len(discovery_matches) == 1:
                 offset = discovery_matches[0]
 
-                if name in {"CCSBot::PickNewAimSpot", "CCSBot::Attack"}:
-                    # Aim and native Attack production signatures are intentionally exact.
+                if name in {"CCSBot::PickNewAimSpot", "CCSBot::Attack", "CCSBot::SetLookAt"}:
+                    # Native function entry production signatures are intentionally exact.
                     discovery_len = len(parse_pattern(discovery_pattern))
                     suggested = exact_candidate(
                         data,
                         offset,
                         discovery_len,
                     )
-                    service_name = (
-                        "AimNativeService"
-                        if name == "CCSBot::PickNewAimSpot"
-                        else "NativeAttackService"
-                    )
+                    service_name = {
+                        "CCSBot::PickNewAimSpot": "AimNativeService",
+                        "CCSBot::Attack": "NativeAttackService",
+                        "CCSBot::SetLookAt": "NativeLookAtService",
+                    }[name]
                     note = (
                         f"Unique discovery candidate. For {service_name}, review "
-                        "the surrounding bytes and add this as another exact Linux "
-                        "signature; do not replace the array with the discovery mask."
+                        "function identity and native ABI before replacing the "
+                        "production signature; never deploy the discovery mask."
                     )
                 elif patterns:
                     # Preserve only the wildcard positions that were already
@@ -1035,6 +1059,9 @@ def print_report(
             elif report.name == "CCSBot::Attack":
                 print("SOURCE SNIPPET (replace current entry in LinuxAttackSignatures):")
                 print(f'    "{report.suggested_pattern}",')
+            elif report.name == "CCSBot::SetLookAt":
+                print("SOURCE SNIPPET (replace LinuxSetLookAtSignature after ABI review):")
+                print(f'    "{report.suggested_pattern}";')
             elif report.name == "LadderFSM::SetLadderState":
                 print("SOURCE SNIPPET (replace LinuxSetLadderStateSignature):")
                 print(
@@ -1163,19 +1190,22 @@ def exit_code(
         "CCSBot::Attack",
         "LadderFSM::SetLadderState",
         "CCSPlayer_WeaponServices::SelectItem",
+        "CCSBot::SetLookAt",
     }
 
+    observed: set[str] = set()
     for report in reports:
         if report.name not in required:
             continue
 
+        observed.add(report.name)
         if not any(
             len(item.matches) == 1
             for item in report.production
         ):
             return 2
 
-    return 0
+    return 0 if observed == required else 2
 
 
 def run_self_test() -> int:
@@ -1193,12 +1223,20 @@ def run_self_test() -> int:
         print("SELF-TEST FAILED: no native Attack production signatures extracted")
         return 1
 
+    if len(production.get("CCSBot::SetLookAt", [])) != 1:
+        print("SELF-TEST FAILED: SetLookAt production signature extraction mismatch")
+        return 1
+
     if len(production.get("LadderFSM::SetLadderState", [])) != 1:
         print("SELF-TEST FAILED: Ladder production signature extraction mismatch")
         return 1
 
     if len(production.get("CCSPlayer_WeaponServices::SelectItem", [])) < 1:
         print("SELF-TEST FAILED: no SelectItem production signatures extracted")
+        return 1
+
+    if "CCSBot::SetLookAt" not in DISCOVERY_PATTERNS:
+        print("SELF-TEST FAILED: no SetLookAt discovery mask")
         return 1
 
     weapon_text = WEAPON_SOURCE.read_text(encoding="utf-8")

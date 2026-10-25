@@ -1310,6 +1310,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
     private void OnClientDisconnect(int playerSlot)
     {
+        if (_registry.TryGet(playerSlot, out BotRuntimeState? disconnectState) &&
+            disconnectState != null)
+            _postKillRegroup.Cancel(disconnectState, reason: "disconnect");
+
         ReleaseButtonPulse(playerSlot);
 
         _botSpawnGrace.Remove(playerSlot);
@@ -1345,7 +1349,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         // are round-scoped even though aggregate diagnostics may survive.
         _transientControl.Clear();
         foreach (BotRuntimeState state in _registry.States.Values)
+        {
+            _postKillRegroup.Cancel(state, reason: "round-end");
             state.ResetRegroup(clearCooldown: true);
+        }
         _visionMonitor.ClearRuntimeState();
         _hearingMonitor.ClearRuntimeState();
         _hearingReaction.ClearRuntimeState();
@@ -1641,6 +1648,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             state != null)
         {
             state.HasBeenControlledByPlayerThisRound = true;
+            _postKillRegroup.Cancel(state, reason: "human-takeover");
             state.ResetRegroup(clearCooldown: true);
 
             ReleaseButtonPulse(slot);
@@ -2412,6 +2420,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _corrections.ClearThrottleState();
         ReleaseAllKnownButtonPulses();
         _buttonPulses.CancelAll();
+        foreach (BotRuntimeState state in _registry.States.Values)
+            _postKillRegroup.Cancel(state, reason: "runtime-reset");
         _registry.ResetAll();
         _botSpawnGrace.Clear();
         _ladderMap?.ResetRuntimeTracking();

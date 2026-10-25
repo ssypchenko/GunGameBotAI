@@ -23,7 +23,7 @@ they immediately affect the running plugin and do **not** call
 
 This policy applies to all operator commands, including Aim, Hearing,
 Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
-settings. The schema version is `48`. Updated startup defaults do not replace
+settings. The schema version is `49`. Updated startup defaults do not replace
 values already saved in an existing server configuration.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
@@ -35,7 +35,7 @@ refreshes Valve perception state, and may call the validated native
 
 The default profile is production-oriented:
 
-The ConfigVersion 48 production profile keeps `EnabledOnLoad=false` as the
+The ConfigVersion 49 production profile keeps `EnabledOnLoad=false` as the
 master runtime gate. Behaviour-changing bot features default to enabled, while
 debug/observation-only facilities default to disabled. In particular:
 `Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
@@ -46,7 +46,7 @@ debug/observation-only facilities default to disabled. In particular:
 
 ```json
 {
-  "ConfigVersion": 48,
+  "ConfigVersion": 49,
   "EnabledOnLoad": false,
   "Debug": false,
   "VerboseCorrectionDebug": false,
@@ -55,6 +55,7 @@ debug/observation-only facilities default to disabled. In particular:
   "IdleRepathEnabled": true,
   "IdleRepathSeconds": 2,
   "PostKillRegroupEnabled": true,
+  "PostKillRegroupDebug": false,
   "PostKillRegroupHealthThreshold": 55,
   "PostKillRegroupSpawnRadius": 650,
   "PostKillRegroupRetreatDistance": 160,
@@ -71,6 +72,7 @@ debug/observation-only facilities default to disabled. In particular:
   "CombatStrafeEnabled": true,
   "CounterStrafeEnabled": true,
   "SniperPeekEnabled": true,
+  "KnifeAttackDebug": false,
   "KnifeRushEnabled": true,
   "KnifeRushChancePercent": 50,
   "GrenadeLevelEnabled": true,
@@ -121,6 +123,48 @@ The existing `KnifeRushSecondaryAttackChancePercent` is now ignored but kept
 in the schema for compatibility. Valve's own autonomous swings may interleave;
 verify the actual pattern in a server test.
 
+### Tactical behaviour diagnostics
+
+Use the server console (not the client chat) to enable focused, independent
+diagnostic streams for the current runtime session:
+
+```text
+css_ggbotai_regroup_debug 1
+css_ggbotai_knife_attack_debug 1
+css_ggbotai_status
+```
+
+Set either option back to `0` when recording is complete. A command with no
+argument reports the current state. Neither command saves the configuration
+file. The persistent keys are `PostKillRegroupDebug` and
+`KnifeAttackDebug`, and both default to `false`.
+
+Regroup diagnostic lines use the `[GunGameBotAI][Regroup]` logger scope:
+
+- `REGROUP-SKIP`: no attempt (cooldown, eligibility or geometry).
+- `REGROUP-START`: the planned movement direction and start position.
+- `REGROUP-MOVE`: actual sampled 2D displacement (`net`),
+  accumulated sampled distance (`path`) and movement along the
+  initially planned retreat direction (`along`).
+- `REGROUP-END`: elapsed time, final observed movement and interruption
+  reason. `movedAway=yes` means `along >= 24` units, not cover reached.
+
+Knife diagnostic lines use `[GunGameBotAI][KnifeAttack]`:
+
+- `KNIFE-REQUEST`: intended primary or secondary attack.
+- `KNIFE-INPUT-QUEUED`: an input bit was newly queued with immediate
+  readback. This does not prove that an actual swing occurred.
+- `KNIFE-WEAPON-FIRE`: game event, if emitted for a knife.
+- `KNIFE-HURT-EVENT`: confirmed damage from a knife.
+- `KNIFE-HIT-MATCH`/`KNIFE-HIT-UNMATCHED`: correlation with the plugin's
+  pending request (not guaranteed causation).
+- `KNIFE-KILL-EVENT`: knife kill reported by the game.
+
+CounterStrikeSharp's `player_hurt` and `weapon_fire` event contracts do
+not expose a primary/secondary attack marker. The recorded sequence can
+detect missed button writes, damage and unexpected outcomes. It cannot
+distinguish every autonomous Valve knife swing from a plugin-issued one.
+
 ### Diagnostic monitors vs behaviour-changing features
 
 - `VisionMonitorEnabled` enables the Stage 5 **passive** comparison of
@@ -145,7 +189,7 @@ default on the reviewed Linux server profile, but remains build-sensitive
 and must be revalidated after CS2 updates. An unavailable signature
 disables the native path rather than falling back to direct yaw writes.
 
-`ConfigVersion` is migrated by the plugin; the production-default profile uses version `48`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `49`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and

@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.9
-ConfigVersion 48
+GunGameBotAI 0.8.10
+ConfigVersion 49
 CounterStrikeSharp.API 1.0.378
 target framework net10.0
 ```
@@ -45,6 +45,77 @@ Source-level review is distinct from build and live server verification.
 The assistant development environment used for these changes does not have the
 project's .NET SDK/runtime available, so Sergey performs the authoritative
 compile and live-server test locally.
+
+## Post-kill and knife-attack diagnostics — 25 October 2026
+
+**Source implemented on main; build and live game tests pending.** Two
+independent diagnostics are OFF by default. They do not change behaviour and
+require the main GunGameBotAI runtime to be enabled.
+
+In the dedicated server console:
+
+```text
+css_ggbotai_regroup_debug 1
+css_ggbotai_knife_attack_debug 1
+css_ggbotai_status
+```
+
+Commands without arguments display the corresponding diagnostic state.
+Disable using the same commands with `0`. The commands change only live
+in-memory configuration, never the saved JSON. A new config can persist
+`PostKillRegroupDebug=true` or `KnifeAttackDebug=true` if needed.
+
+### Post-kill: observed movement, not intended movement
+
+`[GunGameBotAI][Regroup]` entries:
+
+- `REGROUP-SKIP` — qualifying kill did not create a retreat (including
+  cooldown or no safe direction).
+- `REGROUP-START` — accepted plan with origin and world direction.
+- `REGROUP-MOVE` — sampled actual pawn position no more often than
+  every 0.35 seconds; `net` is the 2D displacement from the initial position,
+  `path` is the sampled travelled distance, and `along` is signed
+  progress along the **initial planned retreat direction**.
+- `REGROUP-UPGRADE` — a pistol kill was followed by the GunGame HE level.
+- `REGROUP-END` — completed/interrupted and final actual displacement.
+  `movedAway=yes` means at least 24 units along the initially selected
+  direction were observed; it does not assert safety or cover.
+
+`path` can be larger than `net` if Valve made the bot move back and forth.
+An accepted lease with near-zero `along` means the retreat was not effective.
+Only actual pawn positions supply these displacement values.
+
+### Knife: distinguish requested buttons from server evidence
+
+`[GunGameBotAI][KnifeAttack]` entries:
+
+- `KNIFE-REQUEST`: the plugin scheduled primary or secondary input.
+- `KNIFE-INPUT-QUEUED`: the button bit was newly written to the movement
+  input queue and confirmed by an immediate queued-mask readback. This is
+  **not** proof of an in-game swing or its animation.
+- `KNIFE-WEAPON-FIRE`: `weapon_fire` event, if Valve emits it for this
+  knife; the event does **not** identify primary/secondary.
+- `KNIFE-HURT-EVENT`: real server `player_hurt` and damage/target.
+- `KNIFE-HIT-MATCH` or `KNIFE-HIT-UNMATCHED`: time/target correlation
+  between a plugin request and damage. A matched hit does **not** prove that
+  the plugin caused it; Valve may have attacked itself.
+- `KNIFE-KILL-EVENT`: real server `player_death` with a knife weapon.
+
+`css_ggbotai_status` includes requested primary/secondary counts and
+matched/unmatched hit counts. These are **observational** counters, not
+authoritative proof of the physical left/left/right swing sequence.
+
+Recommended tests: make several bot kills close to an opposing spawn and
+compare `REGROUP-START` to `REGROUP-END` for the same slot. On the knife
+level capture the entire `KNIFE-REQUEST` -> `INPUT-QUEUED` ->
+`HURT-EVENT` sequence from one target. Test both normal and grenade kills,
+a visible-enemy interruption, and a knife kill that advances GunGame.
+
+Validation not run here: `dotnet restore GunGameBotAI.csproj`,
+`dotnet build GunGameBotAI.csproj -c Release --no-restore`,
+`dotnet run --project Tests/KnifeComboSmoke/KnifeComboSmoke.csproj -c Release`
+and a dedicated server gameplay test. No local .NET SDK is available in the
+authoring environment. Neither diagnostic requires a new native signature.
 
 ## Grenade regroup, crouch and low-health knife tactics — 25 October 2026
 

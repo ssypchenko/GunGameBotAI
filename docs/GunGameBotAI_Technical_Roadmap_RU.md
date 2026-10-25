@@ -335,44 +335,52 @@ Live-тест на `aim_fiffy_gg1` подтвердил:
 - `NoiseTravelDistance` на этой карте обычно близок к straight-line distance и
   пока остаётся диагностическим полем.
 
-#### 6B. Bounded hearing look reaction — реализован, ожидает live acceptance
+#### 6B. Bounded hearing look reaction — завершён (live acceptance 2026-10-25)
+
+Stage 6B.1/6B.2 проверяли прямое управление `EyeAngles.Y`,
+`LookAtSpot` и `LookYaw`. Поля сами по себе нередко сохранялись, но
+Valve AI не выполнял ожидаемый поворот; эти режимы сохранены для сравнения.
+
+**Принятый рабочий вариант Stage 6B.3 — Linux native
+`CCSBot::SetLookAt`, `HearingReactionLookMode=3`.**
+Функция найдена и ABI исследован по `libserver.so`
+SHA-256 `ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7`.
+Exact signature fail-closed; при несовпадении функция не вызывается.
+Нативный вызов задаёт точку взгляда и приоритет 2, не назначает
+`Enemy`, не управляет навигацией, передвижением, выстрелом и атаками.
 
 `HearingReactionService`:
+- использует только новый шум Valve с проверенным вражеским `NoiseSource`;
+- копирует неточную `NoisePosition`, а не настоящую позицию врага;
+- задержка реакции 0.10–0.25 с, удержание 0.25 с, дистанция 1400;
+- проверяет Valve combat / Pathfinder / ladder / Knife ownership до поворота;
+- прекращает реакцию при начале видимого боя; повторные звуки не продлевают
+  срок текущего управления;
+- при повторах нативной команды соблюдает ограничение частоты 50 мс.
 
-- реагирует только на новый положительный `NoiseTimestamp`;
-- требует live opposing-team `NoiseSource`;
-- копирует только Valve `NoisePosition`;
-- `NoiseSource` использует только для team/entity validation и **никогда** не
-  читает текущую позицию source pawn;
-- после короткой human-like задержки временно удерживает только
-  `CCSPlayerPawn.EyeAngles.Y` в сторону `NoisePosition`;
-- не присваивает `Enemy`, не меняет hearing/perception/nav/movement/fire;
-- repeated noise может уточнить target внутри текущего lease, но не продлевает
-  его deadline;
-- visible combat, ladder и Knife/special ownership имеют более высокий
-  приоритет;
-- feature отдельно выключается через `HearingReactionEnabled`.
+**Последний отдельный игровой тест режима 3:** 211 enemy noise changes,
+76 started, 68 committed, 55 раз достигнуто направление звука
+(`valveLookReached`), 179 принятых вызовов из 183,
+13 остановок по бою. Средние запрошенный/наблюдаемый поворот
+42.5° / 42.4°. Пользователь оценил поведение как достаточно адекватное.
+Четыре начальных false-negative результата возникали из-за слишком
+строгой проверки позиции; теперь проверка следует правилу Valve
+с допуском 10 единиц по каждой оси. Это исправление требует
+повторной выборки после развёртывания.
 
-Default 6B:
+**Acceptance:** Stage 6A и Stage 6B (реакция взглядом) закрыты на основании
+живых тестов. Это не означает, что закончены все будущие Hearing-функции:
+6C navigation/investigation и GunGame respawn/death memory ещё не реализованы.
+Совместный soak-test с одновременно включёнными AimEnhancement,
+VisionEnhancement, EnemyReaction и HumanLookScan остаётся отдельной
+интеграционной проверкой. Native mode 3 по умолчанию не включён
+(`HearingReactionEnabled=false`, `HearingReactionLookMode=0`), его следует
+явно выбирать в конфигурации для проверенного Linux binary.
 
-```text
-HearingReactionEnabled = false
-HearingReactionMinSeconds = 0.10
-HearingReactionMaxSeconds = 0.25
-HearingReactionHoldSeconds = 0.25
-HearingReactionYawToleranceDegrees = 6
-HearingReactionMaxDistance = 1400
-HearingReactionCooldownSeconds = 0.20
-```
-
-Критерии приёмки 6B:
-
-- enemy sound без LOS вызывает короткий поворот к approximate `NoisePosition`;
-- friendly sound не вызывает поворот;
-- при появлении visible enemy hearing lease немедленно прекращается;
-- ladder/Knife ownership не нарушается;
-- repeated noise не создаёт постоянный yaw hold;
-- выключение `HearingReactionEnabled` полностью убирает Stage 6B writes.
+Оперативные console-команды меняют только память и **не сохраняют**
+параметры в JSON; рестарт или `css_ggbotai_reload` возвращает значения
+из файла. `HearingMonitorEnabled` и `VisionMonitorEnabled` — пассивные
+наблюдатели, не требуются для активной Hearing Reaction.
 
 #### 6C и далее — после принятия 6B
 

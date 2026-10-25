@@ -167,9 +167,11 @@ remain future work and are **not** part of this acceptance.
   locally. Behaviour on a live CS2 server, including the generated config and
   game-side weapon activation, must still be tested by the server operator.
 
-After a CS2 server update, audit the plugin's native integration points with:
+After a CS2 server update, test the signature tooling and audit the plugin's native integration points with:
 
 ```bash
+python3 scripts/check_native_signatures.py --self-test
+python3 scripts/test_native_signature_tools.py
 python3 scripts/check_native_signatures.py /path/to/libserver.so
 ```
 

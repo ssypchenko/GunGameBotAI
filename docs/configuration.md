@@ -4,6 +4,28 @@ The plugin creates its configuration through CounterStrikeSharp's normal plugin
 configuration mechanism. Numeric values are validated when loaded or reloaded;
 invalid values are clamped to safe bounds and a warning is logged.
 
+## Configuration on disk vs. live console tuning
+
+The JSON/TOML file contains the **default startup values**. The
+`css_ggbotai_*` operator commands change the **in-memory values only**;
+they immediately affect the running plugin and do **not** call
+`Config.Update()` or otherwise write the plugin's configuration file.
+
+- Restarting the plugin or server restores settings from the config file.
+- `css_ggbotai_reload` explicitly re-reads the config file and replaces
+  all temporary console adjustments, without persisting them.
+- `css_ggbotai_enable 0|1` controls the current runtime only;
+  `EnabledOnLoad` remains the persistent default on disk.
+- For a permanent change, edit the config file directly.
+- `css_ggbotai_ladder_teach` is different: when manually armed,
+  it saves **ladder geometry data** to its own map JSON, not to this
+  configuration file.
+
+This policy applies to all operator commands, including Aim, Hearing,
+Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
+settings. The schema version remains `45` because no configuration
+properties have changed.
+
 The production visible-enemy correction is `EnemyReactionService`. It defaults
 to enabled and reacts to a live enemy with real physical LOS anywhere around
 the bot inside the configured distance. It never writes `IsAttacking` and never presses Fire.

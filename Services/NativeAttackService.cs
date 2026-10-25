@@ -15,7 +15,8 @@ public sealed class NativeAttackService
 {
     // Current Linux CS2 build:
     // SHA256 ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7
-    // File offset 0x00C33D20; unique discovery candidate pending live acceptance.
+    // File offset 0x00C33D20; reviewed exact production signature.
+    // Native Attack was subsequently exercised on the live test server.
     // Use an exact production signature. Never use the broad discovery mask
     // to invoke a native function.
     private static readonly string[] LinuxAttackSignatures =

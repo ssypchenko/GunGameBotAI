@@ -341,8 +341,14 @@ identified `CCSBot::SetLookAt` from its embedded
 The plugin's new `HearingReactionLookMode=3` uses this native transition
 with priority **2**, `clearIfClose=false`, `attack=false`, and the same
 Valve-imprecise NoisePosition (+32 Z). A higher priority Valve target can
-refuse the request. The native wrapper validates that the returned target
-matches the requested point before marking it accepted.
+refuse the request. The native wrapper validates that the returned target is equivalent to
+the requested point before marking it accepted. The verified Linux function
+checks **each axis independently within 10 world units** when deciding
+whether to retain an existing goal: therefore the managed readback uses
+that same acceptance window instead of a stricter 1-unit 3D distance.
+This is goal equivalence, **not proof of native priority ownership**.
+The separate strict release check remains in place: a slightly different
+Valve-owned spot will not be expired by the plugin.
 
 Commands:
 

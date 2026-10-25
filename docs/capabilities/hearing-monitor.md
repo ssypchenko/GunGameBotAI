@@ -1,4 +1,20 @@
-# Stage 6A hearing monitor
+# Stage 6A hearing monitor — accepted
+
+**Status (25 October 2026): COMPLETE.** Stage 6A is preserved as a
+diagnostic-only service, not a prerequisite for Hearing Reaction. The
+three-bot live test on `aim_fiffy_gg1` captured 1,669 native noise
+updates, all from enemy sources in that run. Footsteps, weapon fire and
+reload appeared in Valve's `CCSBot.Noise*` state. `NoisePosition` is
+already imprecise; `BentNoisePosition` can be stale. Stage 6B therefore
+uses only the copied Valve noise position and the source's team identity.
+This single test is not proof that friendly noises never affect Valve
+bots on other maps.
+
+In regular operation keep `HearingMonitorEnabled=false`; switching it
+on collects correlated game-event diagnostics and adds observation work.
+`HearingDebug` controls detailed log messages independently. Console
+toggles are temporary and do not persist to the configuration file.
+The test protocol below is retained for future CS2 regression checks.
 
 ## Purpose
 
@@ -213,5 +229,7 @@ The first live evidence should answer:
 6. Are silenced shots represented differently from ordinary shots?
 7. Does reload produce a native noise update in current CS2?
 
-Only after these are measured should Stage 6B/6C add GunGame-specific hearing
-priority, investigation and navigation.
+Stage 6A's initial acceptance is complete; Stage 6B bounded look reaction
+was subsequently tested and accepted with native `CCSBot::SetLookAt`.
+The questions above remain useful for checking Valve behaviour after game
+updates. Stage 6C investigation/navigation remains future work.

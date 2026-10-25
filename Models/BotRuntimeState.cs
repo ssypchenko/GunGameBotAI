@@ -82,6 +82,7 @@ public sealed class BotRuntimeState
     public float GrenadeTargetPitch { get; set; }
     public float GrenadeTargetYaw { get; set; }
     public bool GrenadeDefending { get; set; }
+    public bool GrenadeHoldingHe { get; set; }
     public bool GrenadeConsumed { get; set; }
     public bool GrenadeMissingObserved { get; set; }
     public nint GrenadeOwnedHandle { get; set; }
@@ -184,6 +185,7 @@ public sealed class BotRuntimeState
         GrenadeTargetPitch = 0.0f;
         GrenadeTargetYaw = 0.0f;
         GrenadeDefending = false;
+        GrenadeHoldingHe = false;
         GrenadeConsumed = false;
         GrenadeMissingObserved = false;
         GrenadeOwnedHandle = nint.Zero;

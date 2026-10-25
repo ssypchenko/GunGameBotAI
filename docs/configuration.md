@@ -46,88 +46,67 @@ debug/observation-only facilities default to disabled. In particular:
 
 ```json
 {
+  "ConfigVersion": 45,
   "EnabledOnLoad": false,
   "Debug": false,
-  "DecisionIntervalSeconds": 0.10,
-  "FastActuatorEveryTicks": 2,
-  "AggressiveStateEnabled": true,
-  "DisablePanic": true,
-  "DisableSurprise": true,
-  "DisableIgnoreEnemies": true,
-  "PreventSleeping": true,
-  "PreventPoliteWaiting": true,
+  "VerboseCorrectionDebug": false,
+  "DecisionIntervalSeconds": 0.1,
+  "FastActuatorEveryTicks": 1,
   "IdleRepathEnabled": true,
-  "IdleRepathSeconds": 4.0,
-  "StuckRecoveryEnabled": true,
-  "StuckHardSeconds": 1.0,
-  "StuckSoftSeconds": 3.0,
-  "StuckMinProgress": 75.0,
-  "LadderAssistEnabled": true,
-  "LadderAssistCooldownSeconds": 0.35,
-  "LadderAssistMaxAttempts": 3,
-  "LadderAssistEntryDistance": 150.0,
-  "LadderAssistVerticalThreshold": 24.0,
-  "LadderAssistForwardMove": 200.0,
-  "LadderAssistSideMove": 80.0,
+  "IdleRepathSeconds": 4,
+  "LadderEntryJumpEnabled": true,
   "CombatStrafeEnabled": true,
   "CounterStrafeEnabled": true,
   "SniperPeekEnabled": true,
   "KnifeRushEnabled": true,
   "KnifeRushChancePercent": 50,
-  "KnifeRushTriggerDistance": 400.0,
-  "KnifeRushAbortDistance": 700.0,
-  "KnifeRushTimeoutSeconds": 5.0,
-  "KnifeRushLostSightSeconds": 1.25,
-  "KnifeRushCooldownSeconds": 8.0,
-  "KnifeRushZigZagMinInterval": 0.16,
-  "KnifeRushZigZagMaxInterval": 0.30,
-  "KnifeRushLateralImpulse": 160.0,
-  "KnifeRushForwardBoost": 40.0,
-  "KnifeRushAttackDistance": 78.0,
-  "KnifeRushSecondaryAttackDistance": 60.0,
-  "KnifeRushSecondaryAttackChancePercent": 35,
-  "KnifeRushAllowOnGrenadeLevel": false,
   "GrenadeLevelEnabled": true,
   "AimEnhancementEnabled": true,
   "AimMode": "Mixed",
-  "AimDebug": false,
   "VisionMonitorEnabled": false,
-  "VisionMonitorDistance": 800.0,
   "VisionDebug": false,
   "HearingMonitorEnabled": false,
   "HearingDebug": false,
   "HearingReactionEnabled": false,
   "HearingReactionLookMode": 0,
-  "HearingReactionMinSeconds": 0.10,
-  "HearingReactionMaxSeconds": 0.25,
-  "HearingReactionHoldSeconds": 0.25,
-  "HearingReactionYawToleranceDegrees": 6.0,
-  "HearingReactionMaxDistance": 1400.0,
-  "HearingReactionCooldownSeconds": 0.20,
   "VisionEnhancementEnabled": true,
-  "VisionLookAroundRestartIntervalSeconds": 0.75,
   "HumanLookScanEnabled": true,
-  "HumanLookScanMinIntervalSeconds": 2.50,
-  "HumanLookScanMaxIntervalSeconds": 4.50,
-  "HumanLookScanHoldSeconds": 0.30,
-  "HumanLookScanYawToleranceDegrees": 7.5,
-  "HumanLookScanGeometryFallbackEnabled": true,
-  "HumanLookScanGeometryTraceDistance": 1200.0,
-  "HumanLookScanGeometryMinimumClearDistance": 160.0,
-  "HumanLookScanMinimumSpeed": 30.0,
-  "HumanLookScanRecentFireGraceSeconds": 0.75,
   "EnemyReactionEnabled": true,
-  "EnemyReactionMinSeconds": 0.20,
-  "EnemyReactionMaxSeconds": 0.50,
-  "EnemyReactionDistance": 1000.0,
-  "EnemyReactionHoldSeconds": 0.35,
-  "EnemyReactionYawToleranceDegrees": 6.0,
   "EnemyReactionNativeAttackEnabled": true,
-  "MaxWeaponSwitchRetries": 5,
-  "WeaponSwitchRetryIntervalSeconds": 0.10,
-  "ConfigVersion": 45
+  "StuckMonitorEnabled": false,
+  "GeometrySafetyDetectionEnabled": false
 }
 ```
+
+This is a **partial example** of valid current properties, not a
+replacement for the full generated file. The authoritative complete
+schema/default values are in `Config/GunGameBotAIConfig.cs`.
+The default `FastActuatorEveryTicks` is **1**, not 2, and the obsolete
+StuckRecovery/LadderAssist knobs used in earlier example configs are
+not part of the current schema.
+
+### Diagnostic monitors vs behaviour-changing features
+
+- `VisionMonitorEnabled` enables the Stage 5 **passive** comparison of
+  nearby physical LOS with Valve's observed enemy-acquisition state.
+  It records acquisition timing and statistics but does not change aim
+  or bot behaviour.
+- `HearingMonitorEnabled` enables the Stage 6A **passive** correlation
+  of footstep/fire/reload game events with `CCSBot.Noise*`.
+  It records diagnostic counters but does not turn bots.
+- `HearingDebug` enables detailed `REACTION-*`/hearing log records.
+  For normal play it should remain `false`.
+- `HearingReactionEnabled` is the separate **active** sound-driven
+  turning feature. For the reviewed Linux CS2 build, set
+  `HearingReactionLookMode=3` to use native `CCSBot::SetLookAt`.
+- `VisionEnhancementEnabled`, `HumanLookScanEnabled` and
+  `EnemyReactionEnabled` change bot look/perception behaviour and
+  are not required for either passive monitor.
+
+Hearing 6A diagnostics and Hearing 6B look reactions were accepted in
+live tests on 25 October 2026. The mode 3 native integration is
+build-sensitive, remains disabled by default and must be revalidated
+after server updates.
 
 `ConfigVersion` is migrated by the plugin; the production-default profile uses version `45`.
 Existing installations which never had the Stage 5/6 properties receive

@@ -269,6 +269,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool HearingReactionEnabled { get; set; } = false;
     // 0 = EyeAngles.Y corrections; 1 = bounded LookAtSpot feedback;
     // 2 = the same plus bounded LookYaw corrections. Both are experimental.
+    // 3 = call native CCSBot::SetLookAt with priority/state (Linux only).
     // Neither Valve mode repeats EyeAngles writes. Default stays at 0.
     public int HearingReactionLookMode { get; set; } = 0;
     public float HearingReactionMinSeconds { get; set; } = 0.10f;
@@ -330,7 +331,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         HearingReactionLookMode = Clamp(
             HearingReactionLookMode,
             0,
-            2,
+            3,
             0,
             nameof(HearingReactionLookMode),
             warn);

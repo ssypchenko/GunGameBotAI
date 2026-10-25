@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.8
-ConfigVersion 47
+GunGameBotAI 0.8.9
+ConfigVersion 48
 CounterStrikeSharp.API 1.0.378
 target framework net10.0
 ```
@@ -46,17 +46,58 @@ The assistant development environment used for these changes does not have the
 project's .NET SDK/runtime available, so Sergey performs the authoritative
 compile and live-server test locally.
 
+## Grenade regroup, crouch and low-health knife tactics — 25 October 2026
+
+**Source implemented; .NET compile and live testing pending.**
+
+- The grenade level always qualifies for the post-kill retreat, including
+  pistol kills that award another HE. A normal-level kill which promotes
+  the bot onto the HE level upgrades an ongoing short retreat to the
+  defensive distance/duration. During retreat no HE throw control runs;
+  grenade target selection resumes once regroup finishes or is interrupted.
+  There is no Reload pulse when the current level is HE or knife.
+- The default stationary hold for new configurations is 0.30 seconds,
+  with a **separately configurable** 0.16-second crouch inside it.
+  Settings are `PostKillRegroupHoldSeconds` and
+  `PostKillRegroupCrouchSeconds`. Existing explicit hold values, including
+  an earlier 0.80-second hold, are preserved during config migration.
+- With `KnifeLowHealthSeekFireEnabled=true`, health at most 35 and no
+  visible/nearby Valve enemy, a knife-level bot uses recent opposing gunfire
+  to request bounded movement towards the sound (up to 1400 units away and
+  4 seconds old). Candidate directions must have a clear world corridor and
+  a supporting floor; side openness is preferred. At most one expensive
+  direction selection occurs every 0.25 seconds per affected bot.
+  This does **not** provide full navmesh route finding, cannot guarantee
+  reaching distant gunfire and does not forcibly kill or respawn the bot.
+  Normal melee combat takes precedence when an enemy is seen or close.
+- Knife Rush and the mandatory knife level now issue two primary attacks
+  with **confirmed** knife damage before one secondary attack. A miss
+  retries the same step. The secondary is postponed until close enough.
+  The hit sequence resets after a confirmed secondary hit, enemy change,
+  death, round reset or weapon-level change. Existing Valve autonomous
+  attacks may still interleave; strict ownership of all swings has not
+  been demonstrated. Legacy `KnifeRushSecondaryAttackChancePercent` is
+  retained for config compatibility but is no longer used.
+- The new pure test suite is `Tests/KnifeComboSmoke`. Run:
+  `dotnet run --project Tests/KnifeComboSmoke/KnifeComboSmoke.csproj -c Release`.
+  Also build `GunGameBotAI.csproj` and test on a live game server.
+  Verify EventPlayerHurt delivery and that Attack/Attack2 pulses are not
+  overridden by Valve, as well as fresh HE awards during a retreat.
+
+No new native signature, dependency or library major-version change was needed.
+Existing .NET 10 and CounterStrikeSharp.API 1.0.378 are retained.
+
 ## Post-kill regroup — 25 October 2026
 
 **Source implemented, build and live tests pending.** A GunGame-connected
 bot that scores a valid opposing-team kill attempts a small regroup.
 Normally it retreats at most 96 units / 0.75 seconds and pauses for
-0.25 seconds. With health at most 55 or an opposing team spawn within 650
-units, it retreats at most 160 units / 1.35 seconds and pauses for
-0.80 seconds. It uses a geometry-clear direction away from a nearby spawn,
+at most 0.20 seconds. With health at most 55, an opposing team spawn within
+650 units, or the grenade level, it retreats at most 160 units / 1.35 seconds
+and pauses for 0.30 seconds by default, crouching for only 0.16 seconds. It uses a geometry-clear direction away from a nearby spawn,
 the last kill or its previous facing direction. Corridor and destination
 floor probes must succeed. A single Reload pulse is sent after a
-0.40-second weapon-settle delay. The cooldown is 4 seconds.
+0.40-second weapon-settle delay on normal gun levels only. The cooldown is 4 seconds.
 
 The shared TransientControlService owns only bounded movement leases; Valve
 retains navigation, target selection and fire. A newly visible enemy or incoming damage interrupts the

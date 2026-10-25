@@ -23,7 +23,7 @@ they immediately affect the running plugin and do **not** call
 
 This policy applies to all operator commands, including Aim, Hearing,
 Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
-settings. The schema version is `47`. Updated startup defaults do not replace
+settings. The schema version is `48`. Updated startup defaults do not replace
 values already saved in an existing server configuration.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
@@ -35,7 +35,7 @@ refreshes Valve perception state, and may call the validated native
 
 The default profile is production-oriented:
 
-The ConfigVersion 47 production profile keeps `EnabledOnLoad=false` as the
+The ConfigVersion 48 production profile keeps `EnabledOnLoad=false` as the
 master runtime gate. Behaviour-changing bot features default to enabled, while
 debug/observation-only facilities default to disabled. In particular:
 `Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
@@ -46,7 +46,7 @@ debug/observation-only facilities default to disabled. In particular:
 
 ```json
 {
-  "ConfigVersion": 47,
+  "ConfigVersion": 48,
   "EnabledOnLoad": false,
   "Debug": false,
   "VerboseCorrectionDebug": false,
@@ -59,8 +59,14 @@ debug/observation-only facilities default to disabled. In particular:
   "PostKillRegroupSpawnRadius": 650,
   "PostKillRegroupRetreatDistance": 160,
   "PostKillRegroupMoveSeconds": 1.35,
-  "PostKillRegroupHoldSeconds": 0.8,
+  "PostKillRegroupHoldSeconds": 0.3,
+  "PostKillRegroupCrouchSeconds": 0.16,
   "PostKillRegroupCooldownSeconds": 4,
+  "KnifeLowHealthSeekFireEnabled": true,
+  "KnifeLowHealthThreshold": 35,
+  "KnifeLowHealthNearbyEnemyDistance": 350,
+  "KnifeGunfireMaxAgeSeconds": 4,
+  "KnifeGunfireMaxDistance": 1400,
   "LadderEntryJumpEnabled": true,
   "CombatStrafeEnabled": true,
   "CounterStrafeEnabled": true,
@@ -92,6 +98,29 @@ The default `FastActuatorEveryTicks` is **1**, not 2, and the obsolete
 StuckRecovery/LadderAssist knobs used in earlier example configs are
 not part of the current schema.
 
+### Post-kill and knife-level behaviour
+
+On the HE grenade level, a successful pistol kill triggers regroup. Normal
+grenade target selection is suspended during the move and resumes afterwards.
+Reload is not sent on the grenade level.
+
+`PostKillRegroupCrouchSeconds` controls the **short Duck pulse** during the
+stationary hold. It is independent of `PostKillRegroupHoldSeconds`. Values
+already stored in an existing JSON configuration are not changed by a DLL
+upgrade; edit them directly for immediate new timings.
+
+`KnifeLowHealthSeekFireEnabled` permits an injured knife-level bot to move
+towards recent opposing gunfire when nobody is immediately nearby. It does
+not make the bot invulnerable, force death or override normal enemy pursuit
+when the enemy is visible. Static world and floor traces are an approximate
+safety check, not a guarantee of navmesh reachability.
+
+The knife attack helper prefers two confirmed primary hits followed by one
+confirmed secondary hit for the same enemy. Misses do not advance the step.
+The existing `KnifeRushSecondaryAttackChancePercent` is now ignored but kept
+in the schema for compatibility. Valve's own autonomous swings may interleave;
+verify the actual pattern in a server test.
+
 ### Diagnostic monitors vs behaviour-changing features
 
 - `VisionMonitorEnabled` enables the Stage 5 **passive** comparison of
@@ -116,7 +145,7 @@ default on the reviewed Linux server profile, but remains build-sensitive
 and must be revalidated after CS2 updates. An unavailable signature
 disables the native path rather than falling back to direct yaw writes.
 
-`ConfigVersion` is migrated by the plugin; the production-default profile uses version `47`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `48`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and

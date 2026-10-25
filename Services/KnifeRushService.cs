@@ -184,7 +184,8 @@ public sealed class KnifeRushService
 
         if (!mandatoryKnife || !state.KnifeRecoveryActive)
             ApplyKnifeChaseMovement(pawn, bot, state, enemy.Value.Origin, now);
-        if (_weaponActivation.IsKnifeActive(pawn) &&
+        if (enemy.Value.IsVisible &&
+            _weaponActivation.IsKnifeActive(pawn) &&
             (!state.KnifeRecoveryActive ||
              enemy.Value.Distance2D <= Config.KnifeLowHealthNearbyEnemyDistance))
             ApplyKnifeAttack(state, enemy.Value.EntityIndex, enemy.Value.Distance3D, now);
@@ -605,7 +606,8 @@ public sealed class KnifeRushService
         if (distance > Config.KnifeRushAttackDistance || now < state.NextKnifeAttackAt)
             return;
 
-        bool secondary = state.KnifeComboConfirmedPrimaryHits >= 2;
+        bool secondary = KnifeComboPolicy.ShouldUseSecondary(
+            state.KnifeComboConfirmedPrimaryHits);
         if (secondary && distance > Config.KnifeRushSecondaryAttackDistance)
             return;
 
@@ -622,15 +624,11 @@ public sealed class KnifeRushService
         BotRuntimeState state, int victimEntityIndex, float now)
     {
         if (state.KnifeComboTargetEntityIndex != victimEntityIndex ||
-            now - state.KnifeComboPendingAt < 0.0f ||
-            now - state.KnifeComboPendingAt > 0.80f)
+            !KnifeComboPolicy.IsTimelyConfirmation(now, state.KnifeComboPendingAt))
             return;
 
-        if (state.KnifeComboPendingSecondary)
-            state.KnifeComboConfirmedPrimaryHits = 0;
-        else
-            state.KnifeComboConfirmedPrimaryHits =
-                Math.Min(2, state.KnifeComboConfirmedPrimaryHits + 1);
+        state.KnifeComboConfirmedPrimaryHits = KnifeComboPolicy.OnConfirmedHit(
+            state.KnifeComboConfirmedPrimaryHits, state.KnifeComboPendingSecondary);
 
         state.KnifeComboPendingAt = float.NegativeInfinity;
     }

@@ -143,6 +143,12 @@ public sealed class KnifeRecoveryService
         GuidedDecisions++;
     }
 
+    public void Cancel(BotRuntimeState state, CCSPlayerPawn pawn)
+    {
+        _control.CancelOwner(state.Slot, LeaseOwner, pawn);
+        state.KnifeRecoveryActive = false;
+    }
+
     public void Reset()
     {
         _recentFire.Clear();

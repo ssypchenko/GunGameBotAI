@@ -145,6 +145,16 @@ public sealed class PostKillRegroupService
 
         state.RegroupLastHealth = Math.Max(state.RegroupLastHealth, pawn.Health);
 
+        // A normal pistol kill can promote the bot to the HE level shortly
+        // after player_death. Upgrade the ongoing retreat before targeting HE.
+        if (state.LevelWeaponClass == WeaponClass.Grenade &&
+            state.RegroupRetreatDistance < Config.PostKillRegroupRetreatDistance)
+        {
+            state.RegroupRetreatDistance = Config.PostKillRegroupRetreatDistance;
+            state.RegroupMoveUntil = now + Config.PostKillRegroupMoveSeconds;
+            state.RegroupHoldSeconds = Config.PostKillRegroupHoldSeconds;
+        }
+
         if (!state.RegroupReloadIssued &&
             now - state.RegroupStartedAt >= ReloadDelaySeconds &&
             state.LevelWeaponClass is not (WeaponClass.Unknown or WeaponClass.Grenade or WeaponClass.Knife))

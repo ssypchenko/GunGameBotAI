@@ -604,6 +604,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     _enemyReaction.IsTracking(
                         slot);
 
+                if (enemyReactionTracking && state.KnifeRecoveryActive)
+                    _knifeRecovery.Cancel(state, pawn);
+
                 if (enemyReactionTracking)
                 {
                     // Real physical LOS / Valve combat always outranks hearing.

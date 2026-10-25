@@ -257,6 +257,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float KnifeRushForwardBoost { get; set; } = 40.0f;
     public float KnifeRushAttackDistance { get; set; } = 78.0f;
     public float KnifeRushSecondaryAttackDistance { get; set; } = 60.0f;
+    // Legacy setting retained for existing configuration files. The
+    // hit-confirmed primary-primary-secondary combo now takes precedence.
     public int KnifeRushSecondaryAttackChancePercent { get; set; } = 35;
     public bool KnifeRushAllowOnGrenadeLevel { get; set; } = false;
 

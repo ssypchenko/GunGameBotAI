@@ -486,3 +486,30 @@ this function still has the same semantics and ABI
 For that reason the script automates discovery, uniqueness checking, context
 extraction and ready-to-review pattern generation, but deliberately does not
 rewrite production native hooks by itself.
+
+
+### Stage 6B.3 CCSBot::SetLookAt (experimental Linux native)
+
+Source: `Services/NativeLookAtService.cs`, `LinuxSetLookAtSignature`.
+
+Verified binary SHA-256:
+`ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7`.
+Unstripped symbols are absent; the target was recovered from the embedded
+SetLookAt debug message at `0x98EBA0`, its unique code reference and
+20 direct calls to virtual address `0xC11320` (file offset `0xC10320`).
+The 37-byte exact entry pattern matches the provided binary once.
+
+The Linux System V ABI and observed native call sites establish the ordered
+arguments: bot pointer, persistent UTF-8 description pointer, Vector pointer,
+integer priority, float duration, boolean clearIfClose, float tolerance,
+boolean attack. Stage 6B uses priority 2 and never requests attack.
+
+The existing `scripts/check_native_signatures.py` automatically inventories
+`LinuxSetLookAtSignature` as an additional native integration. Regenerate
+`native-signatures.json` locally using the exact binary before release.
+
+There is **no** validated Windows signature. If the exact Linux signature
+cannot be resolved, the plugin must reject mode-3 calls without substituting
+any old or discovery-only signature. Static ABI analysis does not replace
+in-server smoke tests; crashes caused by a wrong native ABI cannot be
+caught by C# exception handling.

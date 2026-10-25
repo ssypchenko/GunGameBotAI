@@ -35,6 +35,16 @@ public sealed class BotRuntimeState
     /// True after the one-roll Knife Rush decision has been made for the
     /// current encounter.
     /// </summary>
+    // Verified hit sequence for controlled knife swings: primary, primary,
+    // secondary. Unconfirmed/missed attacks do not advance this sequence.
+    public int KnifeComboTargetEntityIndex { get; set; } = -1;
+    public int KnifeComboConfirmedPrimaryHits { get; set; }
+    public bool KnifeComboPendingSecondary { get; set; }
+    public float KnifeComboPendingAt { get; set; } = float.NegativeInfinity;
+
+    // The low-health open-corridor pursuit yields to nearby combat.
+    public bool KnifeRecoveryActive { get; set; }
+
     public bool KnifeRushDecisionMade { get; set; }
 
     /// <summary>
@@ -193,6 +203,8 @@ public sealed class BotRuntimeState
         LastKnifeSwitchRequestAt = float.NegativeInfinity;
 
         NextKnifeAttackAt = 0.0f;
+        ResetKnifeCombo();
+        KnifeRecoveryActive = false;
         KnifeRushZigZagSign = 1;
         KnifeRushNextZigZagAt = 0.0f;
     }
@@ -201,6 +213,14 @@ public sealed class BotRuntimeState
     /// Ends the current encounter and clears Knife Rush execution state while
     /// intentionally preserving KnifeRushCooldownUntil.
     /// </summary>
+    public void ResetKnifeCombo()
+    {
+        KnifeComboTargetEntityIndex = -1;
+        KnifeComboConfirmedPrimaryHits = 0;
+        KnifeComboPendingSecondary = false;
+        KnifeComboPendingAt = float.NegativeInfinity;
+    }
+
     public void ClearKnifeRushEncounter()
     {
         ClearEnemyEncounter();

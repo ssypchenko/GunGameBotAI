@@ -27,6 +27,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly IdleRecoveryService _idleRecovery;
     private readonly CombatMovementService _combatMovement;
     private readonly PostKillRegroupService _postKillRegroup;
+    private readonly KnifeRecoveryService _knifeRecovery;
     private readonly GrenadeLevelService _grenadeLevel;
     private readonly WeaponActivationService _weaponActivation;
     private readonly KnifeRushService _knifeRush;
@@ -92,6 +93,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             _aimPointProvider);
         _postKillRegroup = new PostKillRegroupService(
             _transientControl, _buttonPulses, _visibilityTrace, _corrections);
+        _knifeRecovery = new KnifeRecoveryService(
+            _transientControl, _visibilityTrace);
         _grenadeLevel = new GrenadeLevelService(_corrections, _weaponActivation,
             _visibilityTrace, _buttonPulses);
         _visionMonitor = new VisionMonitorService(
@@ -221,6 +224,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterEventHandler<EventRoundEnd>(OnRoundEnd);
         RegisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
+        RegisterEventHandler<EventPlayerHurt>(OnPlayerHurt);
         RegisterEventHandler<EventPlayerFootstep>(OnPlayerFootstep);
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
         RegisterEventHandler<EventWeaponReload>(OnWeaponReload);
@@ -287,6 +291,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _enemyReaction.Reset();
         _aimDiagnostics.Reset();
         _transientControl.Clear();
+        _knifeRecovery.Reset();
         ReleaseAllKnownButtonPulses();
         _enabled = false;
         _buttonPulses.CancelAll();
@@ -300,6 +305,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         DeregisterEventHandler<EventRoundEnd>(OnRoundEnd);
         DeregisterEventHandler<EventPlayerSpawn>(OnPlayerSpawn);
         DeregisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
+        DeregisterEventHandler<EventPlayerHurt>(OnPlayerHurt);
         DeregisterEventHandler<EventPlayerFootstep>(OnPlayerFootstep);
         DeregisterEventHandler<EventWeaponFire>(OnWeaponFire);
         DeregisterEventHandler<EventWeaponReload>(OnWeaponReload);
@@ -682,7 +688,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 if (state.Mode is
                     BotBehaviorMode.KnifeLevel or
-                    BotBehaviorMode.OpportunisticKnifeRush)
+                    BotBehaviorMode.OpportunisticKnifeRush &&
+                    !state.KnifeRecoveryActive)
                 {
                     _transientControl.CancelSlot(
                         slot,
@@ -767,6 +774,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             state,
             now);
 
+        state.KnifeRecoveryActive = false;
         bool mandatoryKnife =
             state.LevelWeaponClass == WeaponClass.Knife;
 
@@ -799,6 +807,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (mandatoryKnife)
         {
+            _knifeRecovery.ApplyDecision(pawn, state, enemy, now);
             SetMode(
                 state,
                 BotBehaviorMode.KnifeLevel,
@@ -1079,7 +1088,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                     ladderTraversalOwned ||
                     knifeActuatorOwned;
 
-                if (externalMovementOwner)
+                if (externalMovementOwner && !state.KnifeRecoveryActive)
                 {
                     _transientControl.CancelSlot(
                         slot,
@@ -1314,6 +1323,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _enemyReaction.ClearRuntimeState();
         _aimDiagnostics.Reset();
         _aimNative.ClearRuntimeState();
+        _knifeRecovery.Reset();
         return HookResult.Continue;
     }
 
@@ -1421,6 +1431,35 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         return HookResult.Continue;
     }
 
+    private HookResult OnPlayerHurt(
+        EventPlayerHurt @event,
+        GameEventInfo info)
+    {
+        if (!_enabled ||
+            @event.Attacker is not { IsValid: true, IsBot: true } attacker ||
+            @event.Userid is not { IsValid: true } victim ||
+            attacker.Slot == victim.Slot ||
+            @event.DmgHealth <= 0 ||
+            string.IsNullOrWhiteSpace(@event.Weapon) ||
+            !@event.Weapon.Contains("knife", StringComparison.OrdinalIgnoreCase) ||
+            !_registry.TryGet(attacker.Slot, out BotRuntimeState? state) ||
+            state == null)
+            return HookResult.Continue;
+
+        try
+        {
+            CCSPlayerPawn? pawn = victim.PlayerPawn.Value;
+            if (pawn != null && pawn.IsValid)
+                _knifeRush.OnKnifeHurt(state, checked((int)pawn.Index), Server.CurrentTime);
+        }
+        catch
+        {
+            // A victim can disappear between hit and event processing.
+        }
+
+        return HookResult.Continue;
+    }
+
     private HookResult OnPlayerFootstep(
         EventPlayerFootstep @event,
         GameEventInfo info)
@@ -1461,6 +1500,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 @event.Silenced,
                 _currentMapName,
                 Server.CurrentTime);
+            _knifeRecovery.RecordFire(@event.Userid, @event.Weapon, Server.CurrentTime);
         }
 
         if (!_enabled || @event.Userid is not { IsValid: true, IsBot: true } player || player.IsHLTV ||
@@ -1562,6 +1602,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         state.LevelWeaponClass = WeaponClass.Unknown;
         state.LevelWeaponDesignerName = null;
         state.ResetGrenadeState();
+        state.ResetKnifeCombo();
     }
 
     private void OnGunGameRestart()
@@ -2241,6 +2282,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimDiagnostics.Reset();
         _aimNative.Reset();
         _transientControl.Clear();
+        _knifeRecovery.Reset();
 
         if (!enabled)
         {
@@ -2272,6 +2314,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _knifeRush.ResetStatistics();
         _grenadeLevel.ResetStatistics();
         _postKillRegroup.ResetStatistics();
+        _knifeRecovery.Reset();
     }
 
     private bool SynchronizeAimHook()
@@ -2297,6 +2340,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _idleRecovery.Config = Config;
         _combatMovement.Config = Config;
         _postKillRegroup.Config = Config;
+        _knifeRecovery.Config = Config;
         _grenadeLevel.Config = Config;
         _knifeRush.Config = Config;
         _geometrySafety.Config = Config;
@@ -2404,6 +2448,9 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"traversal={Config.LadderEntryJumpEnabled}; " +
             $"geometrySafety={Config.GeometrySafetyDetectionEnabled}; geometryTracked={_geometrySafety.TrackedCount}; " +
             $"stuckMonitor={Config.StuckMonitorEnabled}; stuckTracked={_stuckMonitor.TrackedCount}; stuckActive={_stuckMonitor.ActiveEventCount}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] knifeLowHealth enabled={Config.KnifeLowHealthSeekFireEnabled}; " +
+            $"threshold={Config.KnifeLowHealthThreshold}; gunfireGuidedDecisions={_knifeRecovery.GuidedDecisions}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] regroup enabled={Config.PostKillRegroupEnabled}; started={_postKillRegroup.Started}; " +
             $"completed={_postKillRegroup.Completed}; interrupted={_postKillRegroup.Interrupted}; " +

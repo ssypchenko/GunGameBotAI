@@ -182,9 +182,12 @@ public sealed class KnifeRushService
             return;
         }
 
-        ApplyKnifeChaseMovement(pawn, bot, state, enemy.Value.Origin, now);
-        if (_weaponActivation.IsKnifeActive(pawn))
-            ApplyKnifeAttack(state, enemy.Value.Distance3D, now);
+        if (!mandatoryKnife || !state.KnifeRecoveryActive)
+            ApplyKnifeChaseMovement(pawn, bot, state, enemy.Value.Origin, now);
+        if (_weaponActivation.IsKnifeActive(pawn) &&
+            (!state.KnifeRecoveryActive ||
+             enemy.Value.Distance2D <= Config.KnifeLowHealthNearbyEnemyDistance))
+            ApplyKnifeAttack(state, enemy.Value.EntityIndex, enemy.Value.Distance3D, now);
     }
 
     public void Abort(
@@ -590,15 +593,46 @@ public sealed class KnifeRushService
         }
     }
 
-    private void ApplyKnifeAttack(BotRuntimeState state, float distance, float now)
+    private void ApplyKnifeAttack(
+        BotRuntimeState state, int enemyEntityIndex, float distance, float now)
     {
+        if (state.KnifeComboTargetEntityIndex != enemyEntityIndex)
+        {
+            state.ResetKnifeCombo();
+            state.KnifeComboTargetEntityIndex = enemyEntityIndex;
+        }
+
         if (distance > Config.KnifeRushAttackDistance || now < state.NextKnifeAttackAt)
             return;
 
-        bool secondary = distance <= Config.KnifeRushSecondaryAttackDistance &&
-                         _random.Next(100) < Config.KnifeRushSecondaryAttackChancePercent;
-        _buttonPulses.Pulse(state.Slot, secondary ? PlayerButtons.Attack2 : PlayerButtons.Attack, 1);
-        state.NextKnifeAttackAt = now + 0.25f;
+        bool secondary = state.KnifeComboConfirmedPrimaryHits >= 2;
+        if (secondary && distance > Config.KnifeRushSecondaryAttackDistance)
+            return;
+
+        _buttonPulses.Pulse(
+            state.Slot,
+            secondary ? PlayerButtons.Attack2 : PlayerButtons.Attack,
+            1);
+        state.KnifeComboPendingAt = now;
+        state.KnifeComboPendingSecondary = secondary;
+        state.NextKnifeAttackAt = now + (secondary ? 1.0f : 0.48f);
+    }
+
+    public void OnKnifeHurt(
+        BotRuntimeState state, int victimEntityIndex, float now)
+    {
+        if (state.KnifeComboTargetEntityIndex != victimEntityIndex ||
+            now - state.KnifeComboPendingAt < 0.0f ||
+            now - state.KnifeComboPendingAt > 0.80f)
+            return;
+
+        if (state.KnifeComboPendingSecondary)
+            state.KnifeComboConfirmedPrimaryHits = 0;
+        else
+            state.KnifeComboConfirmedPrimaryHits =
+                Math.Min(2, state.KnifeComboConfirmedPrimaryHits + 1);
+
+        state.KnifeComboPendingAt = float.NegativeInfinity;
     }
 
     private void SetMode(BotRuntimeState state, BotBehaviorMode mode, string reason)

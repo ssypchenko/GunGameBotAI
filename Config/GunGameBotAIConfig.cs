@@ -236,6 +236,14 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float PostKillRegroupCrouchSeconds { get; set; } = 0.16f;
     public float PostKillRegroupCooldownSeconds { get; set; } = 4.0f;
 
+    // With critically low health on the knife level, head towards recent
+    // opposing gunfire only along geometry-checked, reasonably open corridors.
+    public bool KnifeLowHealthSeekFireEnabled { get; set; } = true;
+    public int KnifeLowHealthThreshold { get; set; } = 35;
+    public float KnifeLowHealthNearbyEnemyDistance { get; set; } = 350.0f;
+    public float KnifeGunfireMaxAgeSeconds { get; set; } = 4.0f;
+    public float KnifeGunfireMaxDistance { get; set; } = 1400.0f;
+
     public bool KnifeRushEnabled { get; set; } = true;
     public int KnifeRushChancePercent { get; set; } = 50;
     public float KnifeRushTriggerDistance { get; set; } = 400.0f;
@@ -353,6 +361,10 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         PostKillRegroupMoveSeconds = Clamp(PostKillRegroupMoveSeconds, 0.30f, 3.0f, 1.35f, nameof(PostKillRegroupMoveSeconds), warn);
         PostKillRegroupHoldSeconds = Clamp(PostKillRegroupHoldSeconds, 0.0f, 2.0f, 0.30f, nameof(PostKillRegroupHoldSeconds), warn);
         PostKillRegroupCrouchSeconds = Clamp(PostKillRegroupCrouchSeconds, 0.04f, 0.35f, 0.16f, nameof(PostKillRegroupCrouchSeconds), warn);
+        KnifeLowHealthThreshold = Clamp(KnifeLowHealthThreshold, 1, 95, 35, nameof(KnifeLowHealthThreshold), warn);
+        KnifeLowHealthNearbyEnemyDistance = Clamp(KnifeLowHealthNearbyEnemyDistance, 150.0f, 650.0f, 350.0f, nameof(KnifeLowHealthNearbyEnemyDistance), warn);
+        KnifeGunfireMaxAgeSeconds = Clamp(KnifeGunfireMaxAgeSeconds, 0.5f, 8.0f, 4.0f, nameof(KnifeGunfireMaxAgeSeconds), warn);
+        KnifeGunfireMaxDistance = Clamp(KnifeGunfireMaxDistance, 300.0f, 2200.0f, 1400.0f, nameof(KnifeGunfireMaxDistance), warn);
         PostKillRegroupCooldownSeconds = Clamp(PostKillRegroupCooldownSeconds, 1.0f, 15.0f, 4.0f, nameof(PostKillRegroupCooldownSeconds), warn);
         GrenadeMinThrowDistance = Clamp(GrenadeMinThrowDistance, 150.0f, 450.0f, 220.0f, nameof(GrenadeMinThrowDistance), warn);
         GrenadeMaxThrowDistance = Clamp(GrenadeMaxThrowDistance, GrenadeMinThrowDistance, 1400.0f, 850.0f, nameof(GrenadeMaxThrowDistance), warn);

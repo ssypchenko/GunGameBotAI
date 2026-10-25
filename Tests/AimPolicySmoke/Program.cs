@@ -30,11 +30,16 @@ static void Expect(bool condition, string message)
 
 static AimPointKind? FirstVisible(
     IReadOnlyList<AimPointKind> order,
-    params AimPointKind[] visible) =>
-    order.FirstOrDefault(
-        kind => visible.Contains(kind),
-        (AimPointKind)(-1)) is AimPointKind picked &&
-    (int)picked >= 0 ? picked : null;
+    params AimPointKind[] visible)
+{
+    foreach (AimPointKind point in order)
+    {
+        if (visible.Contains(point))
+            return point;
+    }
+
+    return null;
+}
 
 AimPointKind[] headFirst =
 [

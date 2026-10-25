@@ -30,5 +30,25 @@ dotnet restore GunGameBotAI/GunGameBotAI.csproj
 dotnet build GunGameBotAI/GunGameBotAI.csproj -c Release --no-restore
 ```
 
+Native signature maintenance checks (Python standard library only):
+
+```text
+python3 GunGameBotAI/scripts/check_native_signatures.py --self-test
+python3 GunGameBotAI/scripts/test_native_signature_tools.py
+python3 GunGameBotAI/scripts/check_native_signatures.py /path/to/libserver.so --ladder-layout
+python3 GunGameBotAI/scripts/refresh_native_signatures.py /path/to/libserver.so
+```
+
+The last command is a dry run. A tracked manifest is written only after
+independent SHA-256 verification and `--write --expected-sha256 <digest>`.
+Discovery candidates must NEVER be applied automatically to executable
+native C# signatures. The scanner's successful static audit is not an
+ABI validation or a live server smoke test.
+
+Hearing Stage 6A/6B is accepted for the verified October 2026 Linux
+binary with `HearingReactionLookMode=3`; remain fail-closed after a game
+update. Stage 6C investigation/navigation and all-feature soak testing
+are separate future work.
+
 Live server verification remains a separate gate. It must cover enable/disable,
 round/map transitions, weapon activation, Knife Rush aborts, and bot takeover.

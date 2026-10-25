@@ -21,11 +21,6 @@ public sealed class AimService
     private const float DebugLogIntervalSeconds = 0.50f;
     private const float PerformanceLogIntervalSeconds = 60.0f;
 
-    // A tiny tolerance avoids pointless rewrites when Valve is already aiming
-    // at essentially the same preferred point. It must not treat a visible
-    // chest/neck aim as a head aim just because both are on the enemy hull.
-    private const float PreferredAimPointTolerance = 4.0f;
-
     private readonly VisibilityTraceService _visibility;
     private readonly AimPolicyService _policy;
     private readonly Action<string> _info;
@@ -245,11 +240,9 @@ public sealed class AimService
                     margin: 12.0f);
 
             if (valveTargetOnEnemy &&
-                Vector3.DistanceSquared(
+                AimPolicyService.IsNearPreferredPoint(
                     valveTarget,
-                    chosenPosition) <=
-                    PreferredAimPointTolerance *
-                    PreferredAimPointTolerance)
+                    chosenPosition))
             {
                 traces++;
 

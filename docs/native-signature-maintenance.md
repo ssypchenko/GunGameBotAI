@@ -151,11 +151,11 @@ Production policy:
 
 - one exact Linux signature for the current reviewed CS2 build;
 - Linux-only for the first experiment;
-- missing signature disables Native Attack Assist;
+- missing signature disables the EnemyReaction native Attack transition;
 - do not substitute a broad discovery mask into production;
 - do not fall back to a raw `IsAttacking=true` write.
 
-Current Linux candidate (static uniqueness verified; runtime unverified):
+Current Linux candidate (signature statically verified; invocation separately live-tested on the specified build):
 
 ```text
 SHA256 ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7
@@ -165,6 +165,40 @@ File offset 0x00C33D20
 After a CS2 update, the scanner checks the exact production signature and, when
 missing, uses the registered `CCSBot::Attack` discovery mask to emit an exact
 ready-to-review candidate.
+
+### 5. CCSBot::SetLookAt (Stage 6B.3)
+
+Source:
+
+```text
+Services/NativeLookAtService.cs
+LinuxSetLookAtSignature
+```
+
+Purpose: a bounded look reaction to Valve's **imprecise** enemy noise,
+using `HearingReactionEnabled=true` and `HearingReactionLookMode=3`
+on Linux. The mode is opt-in.
+
+For the live-tested Linux binary (SHA-256
+`ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7`)
+the exact 37-byte entry signature matches once at ELF file
+offset `0xC10320` (virtual address `0xC11320`).
+Identification was cross-checked against the `SetLookAt` diagnostic
+string and 20 direct call sites; the Linux System V ABI was reviewed.
+
+The first live mode 3 test logged 183 invocations, 179 accepted
+readbacks, 55 successful looked-at directions and 13 combat
+interruptions. Four rejected readbacks came from a stricter-than-Valve
+goal comparison and were corrected later. This is meaningful live
+evidence **for that build**, not a safety guarantee after an update.
+
+The checker now registers `CCSBot::SetLookAt` as an explicit fifth
+**required** signature; it no longer appears as an anonymous
+`CSharp::...` entry, and the exit status fails if it is absent.
+A discovery-only mask helps locate candidate bytes after an update,
+but **neither it nor an automatically suggested exact sequence is
+authorised for runtime use** without a fresh function/ABI review.
+On Windows and on signature mismatch the native integration fails closed.
 
 ## What does not currently use native signatures
 
@@ -214,14 +248,21 @@ python3 scripts/check_native_signatures.py \
   /path/to/game/csgo/bin/linuxsteamrt64/libserver.so
 ```
 
-Recommended with a saved machine-readable report:
+Recommended initial diagnostic report (write to a **review-only** file):
 
 ```bash
 python3 scripts/check_native_signatures.py \
   /path/to/libserver.so \
   --context 96 \
-  --json-report native-signatures.json
+  --ladder-layout \
+  --json-report native-signatures-review.json
 ```
+
+**Do not write to the tracked `native-signatures.json` on a
+failed or incomplete scan.** The checker is read-only with respect to
+the executable C# signatures, but `--json-report` always writes the
+specified path. Use the guarded refresher below to publish a tracked
+snapshot after successful static validation.
 
 For the additional hidden Ladder FSM static audit:
 
@@ -278,6 +319,47 @@ no longer a GunGameBotAI runtime dependency.
 
 The output includes the binary SHA256 so reports from different server builds
 cannot be confused.
+
+## Guarded report update (new)
+
+`scripts/refresh_native_signatures.py` is the **only recommended**
+script for updating tracked `native-signatures.json`. It imports the
+checker, reads the actual C# source, validates *all five native targets*,
+verifies the Ladder FSM static layout and checks the ELF/SHA digest.
+The default run does not write any files:
+
+```bash
+python3 scripts/refresh_native_signatures.py /path/to/libserver.so
+```
+
+Once the executable bytes and full SHA-256 have been independently
+identified and the static results are all green:
+
+```bash
+python3 scripts/refresh_native_signatures.py /path/to/libserver.so \
+  --expected-sha256 YOUR_VERIFIED_64_CHARACTER_SHA256 \
+  --write \
+  --output native-signatures.json
+```
+
+A missing/ambiguous production pattern, unmatched SHA, invalid ELF or
+failed Ladder static layout **blocks replacing the tracked report**.
+Use `--review-report native-signatures-review.json` for diagnostics on
+an otherwise unsuccessful static run; this is a separate file, never
+a replacement production manifest.
+
+These tools **never update C# executable signatures automatically**:
+1. Identify the changed function using disassembly, control-flow/caller
+   checks, current CS2 build provenance and ABI evidence.
+2. Review a candidate exact production signature; edit the corresponding
+   C# source manually and only if the review justifies it.
+3. Run `--self-test`, the checker, the guarded refresher, .NET restore
+   and build, then test runtime behaviour on the server.
+4. Commit the changed C# signature, validated manifest and evidence
+   together. Roll back the exact changes if a live regression occurs.
+
+Python 3.13+ and its standard library are sufficient for both tools;
+no Python packages are installed by these scripts.
 
 ## Summary output
 
@@ -488,7 +570,7 @@ extraction and ready-to-review pattern generation, but deliberately does not
 rewrite production native hooks by itself.
 
 
-### Stage 6B.3 CCSBot::SetLookAt (experimental Linux native)
+### Stage 6B.3 CCSBot::SetLookAt (live accepted Linux native)
 
 Source: `Services/NativeLookAtService.cs`, `LinuxSetLookAtSignature`.
 
@@ -504,9 +586,9 @@ arguments: bot pointer, persistent UTF-8 description pointer, Vector pointer,
 integer priority, float duration, boolean clearIfClose, float tolerance,
 boolean attack. Stage 6B uses priority 2 and never requests attack.
 
-The existing `scripts/check_native_signatures.py` automatically inventories
-`LinuxSetLookAtSignature` as an additional native integration. Regenerate
-`native-signatures.json` locally using the exact binary before release.
+The checker now identifies `CCSBot::SetLookAt` by name and treats it as
+a required production integration. Use `refresh_native_signatures.py`
+to publish its verified report after a successful binary audit.
 
 There is **no** validated Windows signature. If the exact Linux signature
 cannot be resolved, the plugin must reject mode-3 calls without substituting

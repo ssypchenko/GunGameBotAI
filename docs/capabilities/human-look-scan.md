@@ -52,7 +52,9 @@ Only yaw is changed. The current pitch and roll are preserved.
 
 ## Feature flag
 
-The feature defaults to disabled:
+This feature defaults to enabled in ConfigVersion 45, but the
+plugin-wide runtime defaults to off. For an isolated A/B test, first
+disable it:
 
 ```json
 "HumanLookScanEnabled": false

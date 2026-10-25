@@ -1,3 +1,4 @@
+using System.Numerics;
 using GunGameBotAI.Models;
 
 namespace GunGameBotAI.Services;
@@ -8,6 +9,19 @@ namespace GunGameBotAI.Services;
 /// </summary>
 public sealed class AimPolicyService
 {
+    // Only treat Valve's existing point as preferred when it is virtually
+    // identical. The caller separately verifies enemy hull and line of sight.
+    public const float PreferredAimPointTolerance = 4.0f;
+
+    public static bool IsNearPreferredPoint(
+        Vector3 valveTarget,
+        Vector3 preferredTarget) =>
+        Vector3.DistanceSquared(
+            valveTarget,
+            preferredTarget) <=
+        PreferredAimPointTolerance *
+        PreferredAimPointTolerance;
+
     private static readonly AimPointKind[] HeadFirst =
     [
         AimPointKind.Head,

@@ -104,6 +104,27 @@
       "candidate_contexts": [],
       "suggested_pattern": null,
       "note": null
+    },
+    {
+      "name": "CSharp::Services/NativeLookAtService.cs::LinuxSetLookAtSignature",
+      "runtime_role": "Additional Linux C# signature discovered automatically. No target-specific recovery mask is registered yet.",
+      "production": [
+        {
+          "name": "CSharp::Services/NativeLookAtService.cs::LinuxSetLookAtSignature",
+          "source": "Services/NativeLookAtService.cs:LinuxSetLookAtSignature",
+          "runtime_role": "Additional Linux C# signature discovered automatically. No target-specific recovery mask is registered yet.",
+          "pattern": "55 48 89 E5 41 57 49 89 FF 41 56 45 89 C6 41 55 49 89 D5 41 54 41 89 CC 53 48 83 EC 28 48 8B 5F 18 48 89 75 C0",
+          "matches": [
+            12649248
+          ],
+          "status": "OK"
+        }
+      ],
+      "discovery_pattern": null,
+      "discovery_matches": [],
+      "candidate_contexts": [],
+      "suggested_pattern": null,
+      "note": "Exact 37-byte entry matches once in verified SHA-256 binary. Function identity independently confirmed by SetLookAt diagnostic xref and 20 direct callers; native invocation is not yet live-tested."
     }
   ],
   "gamedata_contract_warning": null,

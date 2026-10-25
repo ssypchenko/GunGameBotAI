@@ -13,12 +13,14 @@ public sealed class AimPolicyService
         AimPointKind.Head,
         AimPointKind.UpperChest,
         AimPointKind.Chest,
-        AimPointKind.Gut
+        AimPointKind.Gut,
+        AimPointKind.Pelvis
     ];
 
     private static readonly AimPointKind[] BodyFirst =
     [
         AimPointKind.Chest,
+        AimPointKind.UpperChest,
         AimPointKind.Gut,
         AimPointKind.Pelvis,
         AimPointKind.Head

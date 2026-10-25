@@ -11,14 +11,20 @@ namespace GunGameBotAI.Services;
 /// Stage 4 managed aim correction.
 ///
 /// Valve still owns target acquisition, rotation, smoothing, prediction and
-/// firing. This service only replaces CCSBot.TargetSpot after Valve has picked
-/// a blocked point and only with a physically visible point on the same current
-/// enemy.
+/// firing. After Valve chooses an aim point, this service selects the
+/// highest-priority physically visible point for the current weapon and
+/// replaces only CCSBot.TargetSpot if Valve's choice is not already close
+/// to that preferred point.
 /// </summary>
 public sealed class AimService
 {
     private const float DebugLogIntervalSeconds = 0.50f;
     private const float PerformanceLogIntervalSeconds = 60.0f;
+
+    // A tiny tolerance avoids pointless rewrites when Valve is already aiming
+    // at essentially the same preferred point. It must not treat a visible
+    // chest/neck aim as a head aim just because both are on the enemy hull.
+    private const float PreferredAimPointTolerance = 4.0f;
 
     private readonly VisibilityTraceService _visibility;
     private readonly AimPolicyService _policy;
@@ -163,37 +169,10 @@ public sealed class AimService
                 return false;
             }
 
-            // "Valve point is good" means both geometrically visible and still
-            // located on/very near the live enemy hull. A stale/free-space
-            // target must not be accepted just because the line to it is clear.
-            bool valveTargetOnEnemy =
-                points.Contains(
-                    valveTarget,
-                    margin: 12.0f);
-
-            if (valveTargetOnEnemy)
-            {
-                traces++;
-
-                if (!_visibility.TryIsPointVisible(
-                        botPawn,
-                        valveTarget,
-                        enemyPawn,
-                        out bool valveTargetVisible))
-                {
-                    // Trace failure must never become a correction trigger.
-                    return false;
-                }
-
-                if (valveTargetVisible)
-                {
-                    outcome =
-                        AimOutcome.ValvePointKept;
-
-                    return false;
-                }
-            }
-
+            // Apply the weapon policy before accepting Valve's existing
+            // target. Previously ANY visible Valve point was kept, so a
+            // visible chest aim prevented the Mixed/head-first policy from
+            // ever choosing a visible HEAD point.
             (WeaponClass weaponClass, string? weaponDesignerName) =
                 ResolveWeapon(
                     botPawn,
@@ -254,6 +233,43 @@ public sealed class AimService
                     AimOutcome.NoVisibleCandidate;
 
                 return false;
+            }
+
+            // If Valve is already aiming virtually at the highest-priority
+            // visible candidate, preserve its aim point and smoothing.
+            // Otherwise prefer the candidate chosen by AimPolicyService even
+            // when Valve's lower-priority chest/body target is also visible.
+            bool valveTargetOnEnemy =
+                points.Contains(
+                    valveTarget,
+                    margin: 12.0f);
+
+            if (valveTargetOnEnemy &&
+                Vector3.DistanceSquared(
+                    valveTarget,
+                    chosenPosition) <=
+                    PreferredAimPointTolerance *
+                    PreferredAimPointTolerance)
+            {
+                traces++;
+
+                if (!_visibility.TryIsPointVisible(
+                        botPawn,
+                        valveTarget,
+                        enemyPawn,
+                        out bool valveTargetVisible))
+                {
+                    // A failed trace must not trigger an aim correction.
+                    return false;
+                }
+
+                if (valveTargetVisible)
+                {
+                    outcome =
+                        AimOutcome.ValvePointKept;
+
+                    return false;
+                }
             }
 
             if (!TryWriteTargetSpot(
@@ -395,9 +411,10 @@ public sealed class AimService
         _info(
             $"CORRECT map={SafeMap(mapName)}; bot={SafeName(controller.PlayerName)}; " +
             $"slot={slot}; weaponClass={weaponClass}; weapon={weaponDesignerName ?? "unknown"}; aimMode={Config.AimMode}; " +
-            $"ValveTarget={FormatVector(valveTarget)}; ValveTargetVisible=false; " +
+            $"ValveTarget={FormatVector(valveTarget)}; " +
+            "ValveTargetPreferred=false; " +
             $"chosen={chosenKind.ToString().ToUpperInvariant()}; target={FormatVector(chosenPosition)}; " +
-            $"traces={traces}; action=replace-targetSpot-only");
+            $"traces={traces}; action=replace-targetSpot-with-preferred-visible-point");
     }
 
     private static (

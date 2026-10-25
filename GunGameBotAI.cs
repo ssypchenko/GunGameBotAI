@@ -80,7 +80,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aggression = new AggressionService(_corrections);
         _idleRecovery = new IdleRecoveryService(_corrections);
         _combatMovement = new CombatMovementService(_corrections);
-        _grenadeLevel = new GrenadeLevelService(_corrections);
         _weaponActivation = new WeaponActivationService(new NativeSelectItemWeaponSwitchBackend(), _corrections);
         _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
         _geometrySafety = new GeometrySafetyService(
@@ -90,6 +89,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimPointProvider = new AabbAimPointProvider();
         _visibilityTrace = new VisibilityTraceService(
             _aimPointProvider);
+        _grenadeLevel = new GrenadeLevelService(_corrections, _weaponActivation,
+            _visibilityTrace, _buttonPulses);
         _visionMonitor = new VisionMonitorService(
             _visibilityTrace,
             (candidate, now) =>
@@ -148,7 +149,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.6";
+    public override string ModuleVersion => "0.8.7";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -220,6 +221,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         RegisterEventHandler<EventPlayerFootstep>(OnPlayerFootstep);
         RegisterEventHandler<EventWeaponFire>(OnWeaponFire);
         RegisterEventHandler<EventWeaponReload>(OnWeaponReload);
+        RegisterEventHandler<EventGrenadeThrown>(OnGrenadeThrown);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterEventHandler<EventBotTakeover>(OnBotTakeover);
 
@@ -298,6 +300,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         DeregisterEventHandler<EventPlayerFootstep>(OnPlayerFootstep);
         DeregisterEventHandler<EventWeaponFire>(OnWeaponFire);
         DeregisterEventHandler<EventWeaponReload>(OnWeaponReload);
+        DeregisterEventHandler<EventGrenadeThrown>(OnGrenadeThrown);
         DeregisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         DeregisterEventHandler<EventBotTakeover>(OnBotTakeover);
 
@@ -806,12 +809,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 BotBehaviorMode.GrenadeLevel,
                 "grenade level");
 
-            _registry.DeactivateActuator(state.Slot);
-            _grenadeLevel.Apply(
-                state.Slot,
-                pawn,
-                bot,
-                enemy);
+            _grenadeLevel.ApplyDecision(controller, pawn, bot, state, enemy, now);
+            if (_grenadeLevel.NeedsFastControl(state, now))
+                _registry.ActivateActuator(state.Slot);
+            else
+                _registry.DeactivateActuator(state.Slot);
 
             return;
         }
@@ -989,6 +991,14 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                         BotBehaviorMode.KnifeLevel or
                         BotBehaviorMode.OpportunisticKnifeRush;
 
+                bool grenadeActuatorOwned = false;
+                if (!ladderTraversalOwned && !knifeActuatorOwned &&
+                    state.Mode == BotBehaviorMode.GrenadeLevel)
+                {
+                    grenadeActuatorOwned = _grenadeLevel.ApplyFast(
+                        controller, pawn, state, now);
+                }
+
                 bool enemyReactionOwned =
                     false;
 
@@ -1070,6 +1080,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 // registry ownership does not starve them.
                 if (!ladderTraversalOwned &&
                     !knifeActuatorOwned &&
+                    !grenadeActuatorOwned &&
                     !enemyReactionOwned &&
                     !hearingReactionOwned &&
                     !lookScanOwned)
@@ -1415,6 +1426,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (state.Mode is
             BotBehaviorMode.KnifeLevel or
             BotBehaviorMode.OpportunisticKnifeRush or
+            BotBehaviorMode.GrenadeLevel or
             BotBehaviorMode.LadderTraversal)
         {
             return HookResult.Continue;
@@ -1426,6 +1438,18 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             @event.Weapon,
             Server.CurrentTime);
 
+        return HookResult.Continue;
+    }
+
+    private HookResult OnGrenadeThrown(EventGrenadeThrown @event, GameEventInfo info)
+    {
+        if (!_enabled || @event.Userid is not { IsValid: true, IsBot: true } player ||
+            player.IsHLTV ||
+            @event.Weapon is not ("hegrenade" or "weapon_hegrenade") ||
+            !_registry.TryGet(player.Slot, out BotRuntimeState? state) || state == null)
+            return HookResult.Continue;
+
+        _grenadeLevel.OnGrenadeThrown(state, Server.CurrentTime);
         return HookResult.Continue;
     }
 
@@ -1482,6 +1506,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         ReleaseButtonPulse(args.Killer);
         state.LevelWeaponClass = WeaponClass.Unknown;
         state.LevelWeaponDesignerName = null;
+        state.ResetGrenadeState();
     }
 
     private void OnGunGameRestart()
@@ -2163,7 +2188,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _transientControl.Clear();
 
         if (!enabled)
+        {
             _knifeRush.ResetStatistics();
+            _grenadeLevel.ResetStatistics();
+        }
     }
 
     private void ResetRuntimeState()
@@ -2186,6 +2214,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimNative.ClearRuntimeState();
         _transientControl.Clear();
         _knifeRush.ResetStatistics();
+        _grenadeLevel.ResetStatistics();
     }
 
     private bool SynchronizeAimHook()
@@ -2319,11 +2348,13 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"stuckMonitor={Config.StuckMonitorEnabled}; stuckTracked={_stuckMonitor.TrackedCount}; stuckActive={_stuckMonitor.ActiveEventCount}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] grenade targets={_grenadeLevel.Targets}; switches={_grenadeLevel.Switches}; defensiveSwitches={_grenadeLevel.DefensiveSwitches}; throwAttempts={_grenadeLevel.ThrowAttempts}; confirmedThrows={_grenadeLevel.ConfirmedThrows}; rejectedTraces={_grenadeLevel.RejectedTraces}; enabled={Config.GrenadeThrowAssistEnabled}.");
 
         foreach (BotRuntimeState state in _registry.States.Values)
         {
             command.ReplyToCommand(
-                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}.");
+                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; consumed={state.GrenadeConsumed}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
         }
     }
 

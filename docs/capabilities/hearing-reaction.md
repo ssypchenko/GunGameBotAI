@@ -265,25 +265,30 @@ Stage 6B is accepted when:
 
 The observation-only 6B.1 evidence showed frequent EyeAngles.Y readback loss.
 Stage 6B.2 adds two bounded, **disabled-by-default** experimental look control
-paths using schema-backed `CCSBot` fields rather than native call signatures:
+paths using schema-backed `CCSBot` fields rather than native call signatures.
+Both Valve modes reinforce the look request with bounded readback feedback:
 
 ```text
 css_ggbotai_hearing_look_mode 0  # unchanged: EyeAngles.Y repeated feedback
-css_ggbotai_hearing_look_mode 1  # one short LookAtSpot lease per COMMIT
-css_ggbotai_hearing_look_mode 2  # same lease plus one initial LookYaw seed
+css_ggbotai_hearing_look_mode 1  # bounded LookAtSpot feedback
+css_ggbotai_hearing_look_mode 2  # bounded LookAtSpot + LookYaw feedback
 ```
 
 The mode is persisted in `HearingReactionLookMode` (0..2, default 0).
 HearingReactionEnabled remains a separate required switch. The Valve modes
-do **not** write EyeAngles.Y on fast ticks, and never force a lease back into
-place after Valve overrides it. Each lease lasts at most the remaining
-HearingReactionHoldSeconds, currently capped by config validation at 0.75 s.
+do **not** write EyeAngles.Y on fast ticks. They check whether Valve
+kept the requested goal at the next fast tick, and reassert that goal no
+more frequently than **every 50 ms** while the yaw remains outside
+tolerance. When yaw reaches tolerance, feedback stops. If yaw later
+drifts, corrections resume until the original (never extended) `EndsAt`.
+Each correction sets the remaining duration only, capped by config
+validation at 0.75 s for the entire hold.
 The target X/Y is the copied imprecise Valve NoisePosition; Z is elevated by
 32 world units to avoid directing the look down at the floor. The active
 Valve target is kept fixed after COMMIT even if another sound arrives.
 
 On combat, completion, disable, mode change or reset, the service expires its
-own look lease when a live pawn and unchanged target/timestamp confirm
+own latest-written look lease when a live pawn and unchanged target/timestamp confirm
 ownership. It does not restore obsolete Valve state and never changes
 LookAtDesc (an unmanaged char pointer). If the pawn is already gone, the
 short duration provides a bounded fallback. The experiment cannot assert the
@@ -291,9 +296,12 @@ internal `CCSBot::SetLookAt` priority/state machine; whether these fields
 are sufficient requires a live test.
 
 New status counters: `valveLookApplied`, `valveLookOverrides`,
-`valveLookRetained`, `valveLookReleased`, `valveLookReached`.
-`valveLookRetained` checks the same target and timestamp at the first
-subsequent fast tick; `valveLookReached` counts a bot that subsequently gets
+`valveLookRetained`, `valveLookReasserted`, `valveLookReleased`,
+`valveLookReached`. `valveLookApplied` counts all writes,
+`valveLookReasserted` counts corrections after the initial COMMIT;
+readback retained/overridden are counted separately for each attempt.
+`valveLookRetained` checks the same target and timestamp at the next
+fast tick after each write; `valveLookReached` counts a bot that subsequently gets
 within the configured yaw tolerance of the requested noise direction.
 These are observations, **not proof of plugin causality**. The old EyeAngles
 readback counters apply only to mode 0.

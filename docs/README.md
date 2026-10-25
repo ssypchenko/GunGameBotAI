@@ -8,6 +8,7 @@ The plugin documentation is intentionally kept beside the project source.
 - `native-signature-maintenance.md` — five native signature targets, safe binary audit and guarded report refresh procedure.
 - `../scripts/check_native_signatures.py` — read-only scanner and candidate discovery.
 - `../scripts/refresh_native_signatures.py` — fail-closed, SHA-gated `native-signatures.json` report update.
+- `../scripts/test_native_signature_tools.py` — standard-library regression tests of scanner and refresh safety gates.
 - `shared-patterns.md` — CounterStrikeSharp and GunGame API boundaries.
 - `capabilities/knife-rush.md` — Knife Rush state machine and safety rules.
 - `capabilities/stuck-monitor.md` — Stage 1 observation-only stuck diagnostics.

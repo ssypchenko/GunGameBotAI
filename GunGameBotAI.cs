@@ -2354,7 +2354,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         foreach (BotRuntimeState state in _registry.States.Values)
         {
             command.ReplyToCommand(
-                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; consumed={state.GrenadeConsumed}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
+                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; holdingHe={state.GrenadeHoldingHe}; consumed={state.GrenadeConsumed}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
         }
     }
 

@@ -1,4 +1,27 @@
-# Stage 6B hearing reaction
+# Stage 6B hearing reaction — accepted
+
+**Status (25 October 2026): COMPLETE for bounded enemy-noise
+look reaction on the tested Linux build using mode 3.** Stage 6A is
+also complete. In the mode 3 live test `enemyNoise=211`,
+`started=76`, `committed=68`, `valveLookReached=55`,
+`nativeLookCalls=183`, `nativeLookAccepted=179`, and
+`combatInterrupted=13`. Mean requested and observed turns were
+42.5° and 42.4°. The operator reported broadly appropriate bot
+behaviour. Reaching a yaw tolerance is an outcome metric, not proof
+that every observed degree was caused only by the plugin.
+
+Four initial `nativeLookRejected` events were false negatives caused
+by the old 1-world-unit Euclidean goal-readback threshold: in all
+four cases Valve retained a near-identical goal differing by 3.5 in Z.
+The wrapper now follows Valve's 10-unit **per-axis** same-goal rule.
+This fix is source-verified but its post-fix live rejection count
+requires another sample.
+
+**The original Stage 6B.1/6B.2 notes below are retained for diagnosis
+and are historical.** Mode 3 remains opt-in; this acceptance does not
+cover an updated CS2 binary, Windows, long-running combined-feature
+soak, or the future Stage 6C navigation/investigation layer.
+
 
 ## Purpose
 
@@ -261,7 +284,7 @@ Stage 6B is accepted when:
 - repeated native noise does not create an unbounded hold;
 - disabling `HearingReactionEnabled` removes all Stage 6B writes.
 
-## Stage 6B.2 opt-in Valve look experiments (not yet live-validated)
+## Stage 6B.2 historical Valve look experiments (superseded by mode 3)
 
 The observation-only 6B.1 evidence showed frequent EyeAngles.Y readback loss.
 Stage 6B.2 adds two bounded, **disabled-by-default** experimental look control
@@ -274,7 +297,9 @@ css_ggbotai_hearing_look_mode 1  # bounded LookAtSpot feedback
 css_ggbotai_hearing_look_mode 2  # bounded LookAtSpot + LookYaw feedback
 ```
 
-The mode is persisted in `HearingReactionLookMode` (0..2, default 0).
+The mode is held in `HearingReactionLookMode` (0..3, default 0).
+Operator commands adjust it only in memory; the JSON startup defaults
+are unchanged until the file is edited explicitly.
 HearingReactionEnabled remains a separate required switch. The Valve modes
 do **not** write EyeAngles.Y on fast ticks. They check whether Valve
 kept the requested goal at the next fast tick, and reassert that goal no
@@ -316,11 +341,11 @@ css_ggbotai_hearing_look_mode 0
 css_ggbotai_hearing_reaction 0
 ```
 
-The implementation has not been built against the server installation or
-verified in game at the time of this change.
+These modes were live-tested during diagnosis and did not reliably turn the
+bots compared with the later native mode 3.
 
 
-## Stage 6B.3 opt-in native CCSBot::SetLookAt (Linux test only)
+## Stage 6B.3 native CCSBot::SetLookAt (Linux live accepted; opt-in)
 
 The direct-field experiments above show that a requested LookAtSpot can
 survive readback without producing a physical turn. Reverse engineering of
@@ -389,7 +414,10 @@ css_ggbotai_hearing_look_mode 0
 css_ggbotai_hearing_reaction 0
 ```
 
-**Verification status:** stripped binary analysed, entry pattern unique,
-register arguments independently checked at call sites. Integration
-compilation, live native execution, visual steering and cancellation after
-combat have **not** yet been tested. The experiment remains opt-in.
+**Verification status (25 October 2026):** entry pattern and Linux ABI were
+checked in the specified ELF; the operator built and deployed the
+plugin and supplied live logs that demonstrate 179 accepted SetLookAt
+calls, 55 reached directions and 13 combat interruptions. The subsequent
+goal-equivalence readback fix is committed, but no post-fix server
+run or all-features-enabled regression log has been verified here.
+The experiment remains opt-in with fail-closed signatures.

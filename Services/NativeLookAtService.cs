@@ -109,7 +109,21 @@ public sealed class NativeLookAtService
                 return false;
             }
 
-            return Vector3.DistanceSquared(applied, position) <= 1.0f;
+            // The verified Linux SetLookAt at 0xC11320 treats a new goal
+            // as the *same* goal when abs(delta) <= 10.0 on each axis.
+            // In that branch Valve updates duration/priority but deliberately
+            // retains the existing position. A 1-unit Euclidean readback
+            // check wrongly reports such valid calls as failures.
+            //
+            // This check validates goal equivalence, not proof that the
+            // plugin owns Valve's priority/state. HearingReactionService
+            // deliberately keeps its tighter ownership test for release,
+            // so we do not expire a slightly different pre-existing goal.
+            const float valveSameSpotTolerance = 10.0f;
+            return
+                MathF.Abs(applied.X - position.X) <= valveSameSpotTolerance &&
+                MathF.Abs(applied.Y - position.Y) <= valveSameSpotTolerance &&
+                MathF.Abs(applied.Z - position.Z) <= valveSameSpotTolerance;
         }
         catch (Exception exception)
         {

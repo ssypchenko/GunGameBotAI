@@ -74,6 +74,8 @@ VisibilityTraceService and ButtonPulseService are reused.
   service never reselects it. A new inventory handle or an observed
   absence followed by a new HE clears the consumed state. This is
   important when a pistol frag awards a fresh HE without respawn.
+- After a confirmed throw, a bounded weapon switch selects the pistol
+  if Valve has not done so already. A newly awarded HE takes priority.
 - If no HE exists, ordinary Valve pistol behaviour continues. The
   plugin does not grant grenades or alter GunGame progression.
 - Ladder ownership, mandatory knife, player takeover and lifecycle

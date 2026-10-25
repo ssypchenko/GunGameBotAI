@@ -1580,7 +1580,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         Config.LadderEntryJumpEnabled = enabled;
-        PersistConfig(command);
         command.ReplyToCommand(
             $"[GunGameBotAI] learned ladder traversal={(enabled ? "enabled" : "disabled")}.");
     }
@@ -1610,8 +1609,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (!enabled)
             _stuckMonitor.Reset();
 
-        PersistConfig(command);
-
         command.ReplyToCommand(
             $"[GunGameBotAI] stuck monitor={(enabled ? "enabled" : "disabled")}; " +
             "mode=observe-only.");
@@ -1634,8 +1631,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _visionMonitor.ClearRuntimeState();
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] vision monitor={(enabled ? "enabled" : "disabled")}; " +
@@ -1660,8 +1655,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _hearingMonitor.ClearRuntimeState();
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] hearing monitor={(enabled ? "enabled" : "disabled")}; " +
@@ -1691,9 +1684,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _hearingReaction.ClearRuntimeState();
-
-        PersistConfig(
-            command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] hearingReaction={(enabled ? "enabled" : "disabled")}; " +
@@ -1725,7 +1715,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _hearingReaction.ClearRuntimeState();
         Config.HearingReactionLookMode = mode;
         _hearingReaction.Config = Config;
-        PersistConfig(command);
         command.ReplyToCommand(
             $"[GunGameBotAI] hearingLookMode={mode}; " +
             "0=EyeAngles.Y-feedback; 1=Valve-LookAtSpot-feedback; " +
@@ -1749,8 +1738,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             Config;
         _hearingReaction.Config =
             Config;
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] hearingDebug={(enabled ? "enabled" : "disabled")}; " +
@@ -1779,8 +1766,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _enemyReaction.Config =
             Config;
 
-        PersistConfig(command);
-
         command.ReplyToCommand(
             $"[GunGameBotAI] visionDebug={(enabled ? "enabled" : "disabled")}; " +
             "events=vision-gap/acquired/lost plus EnemyReaction detection/commit/end.");
@@ -1803,8 +1788,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _visionEnhancement.ClearRuntimeState();
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] vision enhancement={(enabled ? "enabled" : "disabled")}; " +
@@ -1831,8 +1814,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _humanLookScan.ClearRuntimeState();
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] look scan={(enabled ? "enabled" : "disabled")}; " +
@@ -1869,9 +1850,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _enemyReaction.ClearRuntimeState();
-
-        PersistConfig(
-            command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] enemyReaction={(enabled ? "enabled" : "disabled")}; " +
@@ -1916,9 +1894,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _enemyReaction.Config =
             Config;
 
-        PersistConfig(
-            command);
-
         command.ReplyToCommand(
             $"[GunGameBotAI] enemy reaction delay={minimum:0.###}..{maximum:0.###}s.");
     }
@@ -1939,8 +1914,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!enabled)
             _aimDiagnostics.Reset();
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] aim diagnostics={(enabled ? "enabled" : "disabled")}; " +
@@ -1980,11 +1953,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             command.ReplyToCommand(
                 "[GunGameBotAI] AimService hook could not be enabled; feature remains disabled.");
 
-            PersistConfig(command);
             return;
         }
-
-        PersistConfig(command);
 
         command.ReplyToCommand(
             $"[GunGameBotAI] aimEnhancement={(Config.AimEnhancementEnabled ? "enabled" : "disabled")}; " +
@@ -2014,8 +1984,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimService.Config =
             Config;
 
-        PersistConfig(command);
-
         command.ReplyToCommand(
             $"[GunGameBotAI] aimMode={Config.AimMode}.");
     }
@@ -2031,8 +1999,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         Config.Debug = enabled;
-        PersistConfig(command);
-
         Logger.LogInformation(
             "[GunGameBotAI] Focused diagnostics {State}. Routine correction logs are {CorrectionState}.",
             Config.Debug ? "ENABLED" : "DISABLED",
@@ -2054,8 +2020,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         Config.LadderHumanMovementDiagnostics = enabled;
-        PersistConfig(command);
-
         command.ReplyToCommand(
             $"[GunGameBotAI] human ladder diagnostics={(enabled ? "enabled" : "disabled")}.");
     }
@@ -2071,7 +2035,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
 
         Config.KnifeRushChancePercent = chance;
-        PersistConfig(command);
         command.ReplyToCommand($"[GunGameBotAI] Knife Rush chance={chance}%.");
     }
 
@@ -2090,7 +2053,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         Config.KnifeRushTriggerDistance = distance;
         if (Config.KnifeRushAbortDistance < distance)
             Config.KnifeRushAbortDistance = distance;
-        PersistConfig(command);
         command.ReplyToCommand($"[GunGameBotAI] Knife Rush trigger distance={distance:0.###}.");
     }
 
@@ -2284,19 +2246,6 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (!Config.AimDebug)
             _aimDiagnostics.Reset();
-    }
-
-    private void PersistConfig(CommandInfo command)
-    {
-        try
-        {
-            Config.Update();
-        }
-        catch (Exception exception)
-        {
-            Logger.LogWarning(exception, "[GunGameBotAI] Could not persist the changed configuration.");
-            command.ReplyToCommand("[GunGameBotAI] Runtime value changed, but configuration could not be saved.");
-        }
     }
 
     private void PrintStatus(CommandInfo command)

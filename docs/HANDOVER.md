@@ -58,7 +58,7 @@ A single Reload pulse is sent after a 0.40-second weapon-settle delay.
 The cooldown is 4 seconds.
 
 The shared TransientControlService owns only bounded movement leases; Valve
-retains navigation, target selection and fire. Visible combat interrupts the
+retains navigation, target selection and fire. A newly visible enemy or incoming damage interrupts the
 manoeuvre. Knife, grenade, ladder, disabled runtime, takeover and round reset
 have priority. No extra native signature or dependency was added.
 

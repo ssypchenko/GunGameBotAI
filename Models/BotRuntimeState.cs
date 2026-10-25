@@ -79,6 +79,7 @@ public sealed class BotRuntimeState
     public float RegroupHoldUntil { get; set; }
     public float RegroupCooldownUntil { get; set; }
     public bool RegroupReloadIssued { get; set; }
+    public int RegroupLastHealth { get; set; }
 
     public void ResetRegroup(bool clearCooldown = false)
     {
@@ -89,6 +90,7 @@ public sealed class BotRuntimeState
         RegroupMoveUntil = 0.0f;
         RegroupHoldUntil = 0.0f;
         RegroupReloadIssued = false;
+        RegroupLastHealth = 0;
         if (clearCooldown)
             RegroupCooldownUntil = 0.0f;
     }

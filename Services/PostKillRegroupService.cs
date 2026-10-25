@@ -95,6 +95,7 @@ public sealed class PostKillRegroupService
         state.RegroupOrigin = origin;
         state.RegroupDirection = direction;
         state.RegroupReloadIssued = false;
+        state.RegroupLastHealth = pawn.Health;
         Started++;
 
         _corrections.Action(state.Slot, nameof(PostKillRegroupService), "regroup", "started",
@@ -123,13 +124,15 @@ public sealed class PostKillRegroupService
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER ||
             state.LevelWeaponClass is WeaponClass.Knife or WeaponClass.Grenade ||
             enemy is { IsVisible: true } ||
-            (bot.IsEnemyVisible && bot.IsAttacking) ||
+            pawn.Health < state.RegroupLastHealth ||
             pawn.MovementServices == null ||
             !NativeValueReader.TryGetOrigin(pawn, out Vector3 position))
         {
             Cancel(state, pawn);
             return false;
         }
+
+        state.RegroupLastHealth = Math.Max(state.RegroupLastHealth, pawn.Health);
 
         if (!state.RegroupReloadIssued &&
             now - state.RegroupStartedAt >= ReloadDelaySeconds &&
@@ -208,6 +211,7 @@ public sealed class PostKillRegroupService
             if (!_visibility.TryTraceHorizontalClearDistance(
                     pawn, baseYaw + offset, distance + 32.0f, out float clear) ||
                 clear < distance + 16.0f ||
+                !HasNearbyFloor(origin + candidate * (distance * 0.5f)) ||
                 !HasNearbyFloor(origin + candidate * distance))
             {
                 continue;

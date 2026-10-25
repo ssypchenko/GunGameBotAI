@@ -150,6 +150,18 @@ public sealed class PostKillRegroupService
         if (state.LevelWeaponClass == WeaponClass.Grenade &&
             state.RegroupRetreatDistance < Config.PostKillRegroupRetreatDistance)
         {
+            // Revalidate the longer corridor from the current position.
+            // The initial short retreat was never validated for 160 units.
+            if (!TryChooseSafeDirection(
+                    pawn, position, state.RegroupDirection,
+                    Config.PostKillRegroupRetreatDistance, out Vector3 direction))
+            {
+                Cancel(state, pawn);
+                return false;
+            }
+
+            state.RegroupOrigin = position;
+            state.RegroupDirection = direction;
             state.RegroupRetreatDistance = Config.PostKillRegroupRetreatDistance;
             state.RegroupMoveUntil = now + Config.PostKillRegroupMoveSeconds;
             state.RegroupHoldSeconds = Config.PostKillRegroupHoldSeconds;

@@ -2349,12 +2349,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
         command.ReplyToCommand(
-            $"[GunGameBotAI] grenade targets={_grenadeLevel.Targets}; switches={_grenadeLevel.Switches}; defensiveSwitches={_grenadeLevel.DefensiveSwitches}; throwAttempts={_grenadeLevel.ThrowAttempts}; confirmedThrows={_grenadeLevel.ConfirmedThrows}; rejectedTraces={_grenadeLevel.RejectedTraces}; enabled={Config.GrenadeThrowAssistEnabled}.");
+            $"[GunGameBotAI] grenade targets={_grenadeLevel.Targets}; switches={_grenadeLevel.Switches}; defensiveSwitches={_grenadeLevel.DefensiveSwitches}; postThrowPistolSwitches={_grenadeLevel.PostThrowPistolSwitches}; throwAttempts={_grenadeLevel.ThrowAttempts}; confirmedThrows={_grenadeLevel.ConfirmedThrows}; rejectedTraces={_grenadeLevel.RejectedTraces}; enabled={Config.GrenadeThrowAssistEnabled}.");
 
         foreach (BotRuntimeState state in _registry.States.Values)
         {
             command.ReplyToCommand(
-                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; holdingHe={state.GrenadeHoldingHe}; consumed={state.GrenadeConsumed}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
+                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; holdingHe={state.GrenadeHoldingHe}; consumed={state.GrenadeConsumed}; pistolFallback={state.GrenadePistolFallbackPending}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
         }
     }
 

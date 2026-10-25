@@ -23,8 +23,8 @@ they immediately affect the running plugin and do **not** call
 
 This policy applies to all operator commands, including Aim, Hearing,
 Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
-settings. The schema version is `46` following the addition of HE grenade
-assistance settings.
+settings. The schema version is `46`. Updated startup defaults do not replace
+values already saved in an existing server configuration.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
 to enabled and reacts to a live enemy with real physical LOS anywhere around
@@ -35,12 +35,12 @@ refreshes Valve perception state, and may call the validated native
 
 The default profile is production-oriented:
 
-The ConfigVersion 45 production profile keeps `EnabledOnLoad=false` as the
+The ConfigVersion 46 production profile keeps `EnabledOnLoad=false` as the
 master runtime gate. Behaviour-changing bot features default to enabled, while
 debug/observation-only facilities default to disabled. In particular:
 `Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
 `VisionDebug=false`, `VisionMonitorEnabled=false`,
-`HearingMonitorEnabled=false`, `HearingReactionEnabled=false`, `HearingDebug=false`,
+`HearingMonitorEnabled=false`, `HearingDebug=false`,
 `StuckMonitorEnabled=false`, `GeometrySafetyDetectionEnabled=false`,
 `LadderMapDebug=false`, and `LadderHumanMovementDiagnostics=false`.
 
@@ -53,7 +53,7 @@ debug/observation-only facilities default to disabled. In particular:
   "DecisionIntervalSeconds": 0.1,
   "FastActuatorEveryTicks": 1,
   "IdleRepathEnabled": true,
-  "IdleRepathSeconds": 4,
+  "IdleRepathSeconds": 2,
   "LadderEntryJumpEnabled": true,
   "CombatStrafeEnabled": true,
   "CounterStrafeEnabled": true,
@@ -67,8 +67,8 @@ debug/observation-only facilities default to disabled. In particular:
   "VisionDebug": false,
   "HearingMonitorEnabled": false,
   "HearingDebug": false,
-  "HearingReactionEnabled": false,
-  "HearingReactionLookMode": 0,
+  "HearingReactionEnabled": true,
+  "HearingReactionLookMode": 3,
   "VisionEnhancementEnabled": true,
   "HumanLookScanEnabled": true,
   "EnemyReactionEnabled": true,
@@ -104,9 +104,10 @@ not part of the current schema.
   are not required for either passive monitor.
 
 Hearing 6A diagnostics and Hearing 6B look reactions were accepted in
-live tests on 25 October 2026. The mode 3 native integration is
-build-sensitive, remains disabled by default and must be revalidated
-after server updates.
+live tests on 25 October 2026. The native mode 3 reaction is enabled by
+default on the reviewed Linux server profile, but remains build-sensitive
+and must be revalidated after CS2 updates. An unavailable signature
+disables the native path rather than falling back to direct yaw writes.
 
 `ConfigVersion` is migrated by the plugin; the production-default profile uses version `46`.
 Existing installations which never had the Stage 5/6 properties receive
@@ -136,18 +137,19 @@ and `weapon_reload` with Valve `CCSBot.NoisePosition`, `NoiseTravelDistance`,
 Stage 6A never writes hearing, enemy, view, navigation, movement or attack
 state. Aggregate hearing statistics are included in `css_ggbotai_status`.
 
-`HearingReactionEnabled` controls Stage 6B and defaults to `false` until live
-acceptance. A new Valve enemy `NoiseTimestamp` inside
+`HearingReactionEnabled` controls Stage 6B and now defaults to `true`
+following the accepted mode 3 Linux tests. A new Valve enemy `NoiseTimestamp` inside
 `HearingReactionMaxDistance` may create a random
 `HearingReactionMinSeconds..HearingReactionMaxSeconds` delay followed by a
-short `HearingReactionHoldSeconds` `EyeAngles.Y` hold toward the copied
-`NoisePosition`. The opt-in `HearingReactionLookMode` may be 0 (existing
+short `HearingReactionHoldSeconds` look request toward the copied
+`NoisePosition`. `HearingReactionLookMode` defaults to 3, but may be 0 (existing
 feedback), 1 (bounded Valve LookAtSpot corrections no more frequently than every
 50 ms while off-target), 2 (the same plus LookYaw corrections), or
 3 (Linux-only, signature-validated native CCSBot::SetLookAt, which sets the
-internal active-look state and priority). Modes 1–3 remain opt-in
-experiments; mode 3 may crash a test server if the inferred native ABI
-is incorrect, so it must not be tested on production. `HearingReactionYawToleranceDegrees` suppresses redundant
+internal active-look state and priority). Modes 1–2 remain experimental.
+Mode 3 was accepted on the reviewed Linux binary only. Native ABI or
+signature mismatches can be fatal; check the current CS2 binary before
+deploying updates to production. `HearingReactionYawToleranceDegrees` suppresses redundant
 yaw writes and `HearingReactionCooldownSeconds` prevents immediate repeated
 leases. `NoiseSource` is used only for team/entity validation; the source
 pawn's current position is never read. Stage 6B never assigns Enemy and never

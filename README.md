@@ -116,7 +116,8 @@ Stage 6A adds `HearingMonitorService`. When explicitly enabled it correlates
 distance, noise-position error and bent-noise availability, but performs no
 hearing, enemy, view, navigation, movement or attack writes.
 
-Stage 6B adds opt-in `HearingReactionService`. A new Valve-owned enemy
+Stage 6B adds `HearingReactionService`, enabled by default with Linux-only
+native look mode 3. A new Valve-owned enemy
 `NoiseTimestamp` may create a short reaction delay and bounded look
 toward the copied, imprecise `NoisePosition`. Mode 0 directly corrects
 `EyeAngles.Y`; the live-accepted Linux mode 3 uses native
@@ -162,7 +163,7 @@ fail-closed and must be rechecked after CS2 updates.
 `HearingMonitorEnabled` and `VisionMonitorEnabled` are passive
 diagnostics, not dependencies of `HearingReactionEnabled`.
 `HearingDebug` controls detailed logs. For regular play, keep all
-three disabled while enabling only the desired behaviour flags.
+three diagnostic toggles disabled; hearing reaction itself defaults to enabled.
 Operator console tuning is temporary; restarting or
 `css_ggbotai_reload` restores the on-disk configuration.
 

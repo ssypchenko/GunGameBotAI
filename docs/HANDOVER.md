@@ -46,6 +46,23 @@ The assistant development environment used for these changes does not have the
 project's .NET SDK/runtime available, so Sergey performs the authoritative
 compile and live-server test locally.
 
+## Startup configuration defaults — 25 October 2026
+
+The default profile now sets `IdleRepathSeconds=2`,
+`HearingReactionEnabled=true` and `HearingReactionLookMode=3`.
+The validator's fallback for invalid IdleRepathSeconds and
+HearingReactionLookMode was aligned to these defaults.
+`ConfigVersion` remains 46: no new keys or forced migration. Existing
+on-disk JSON/TOML settings are authoritative and are not overwritten merely
+by replacing the plugin DLL. Operators must manually change the three values
+in a previously generated config and reload/restart the plugin.
+
+Linux-only mode 3 uses the exact-signature-validated native
+`CCSBot::SetLookAt`; it was live-accepted for the reviewed server binary,
+not for every future Valve update. Recheck the native signature against the
+actual `libserver.so` after CS2 updates. Keep `HearingMonitorEnabled=false`
+and `HearingDebug=false` for normal play; they are not needed for reaction.
+
 ## HE grenade control — Stage 10/11 (25 October 2026)
 
 **Source implemented; Release build and live server tests pending.**

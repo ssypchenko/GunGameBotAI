@@ -30,7 +30,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool PreventPoliteWaiting { get; set; } = true;
 
     public bool IdleRepathEnabled { get; set; } = true;
-    public float IdleRepathSeconds { get; set; } = 4.0f;
+    public float IdleRepathSeconds { get; set; } = 2.0f;
 
     // Observation-only Stage 1 diagnostics. Never performs recovery actions.
     public bool StuckMonitorEnabled { get; set; } = false;
@@ -272,16 +272,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool HearingDebug { get; set; } = false;
 
     // Stage 6B bounded hearing reaction. Uses only Valve's imprecise
-    // NoisePosition snapshot from a validated enemy NoiseSource. The default
-    // uses EyeAngles.Y; experimental 6B.2 modes write a short-lived Valve
-    // LookAtSpot request, optionally seeding LookYaw once. Neither controls
-    // Enemy, navigation, movement or fire.
-    public bool HearingReactionEnabled { get; set; } = false;
+    // NoisePosition snapshot from a validated enemy NoiseSource. The reviewed
+    // Linux production default is native CCSBot::SetLookAt (mode 3).
+    // Native signature/ABI validation remains essential after CS2 updates.
+    // This feature never controls Enemy, navigation, movement or fire.
+    public bool HearingReactionEnabled { get; set; } = true;
     // 0 = EyeAngles.Y corrections; 1 = bounded LookAtSpot feedback;
-    // 2 = the same plus bounded LookYaw corrections. Both are experimental.
-    // 3 = call native CCSBot::SetLookAt with priority/state (Linux only).
-    // Neither Valve mode repeats EyeAngles writes. Default stays at 0.
-    public int HearingReactionLookMode { get; set; } = 0;
+    // 2 = the same plus bounded LookYaw corrections (experimental).
+    // 3 = native CCSBot::SetLookAt with priority/state (Linux only, fail-closed).
+    public int HearingReactionLookMode { get; set; } = 3;
     public float HearingReactionMinSeconds { get; set; } = 0.10f;
     public float HearingReactionMaxSeconds { get; set; } = 0.25f;
     public float HearingReactionHoldSeconds { get; set; } = 0.25f;
@@ -336,7 +335,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     {
         DecisionIntervalSeconds = Clamp(DecisionIntervalSeconds, 0.05f, 0.25f, 0.10f, nameof(DecisionIntervalSeconds), warn);
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
-        IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
+        IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 2.0f, nameof(IdleRepathSeconds), warn);
         GrenadeMinThrowDistance = Clamp(GrenadeMinThrowDistance, 150.0f, 450.0f, 220.0f, nameof(GrenadeMinThrowDistance), warn);
         GrenadeMaxThrowDistance = Clamp(GrenadeMaxThrowDistance, GrenadeMinThrowDistance, 1400.0f, 850.0f, nameof(GrenadeMaxThrowDistance), warn);
         GrenadeKnifeDefenceDistance = Clamp(GrenadeKnifeDefenceDistance, 100.0f, 350.0f, 230.0f, nameof(GrenadeKnifeDefenceDistance), warn);
@@ -351,7 +350,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             HearingReactionLookMode,
             0,
             3,
-            0,
+            3,
             nameof(HearingReactionLookMode),
             warn);
         HearingReactionMinSeconds = Clamp(

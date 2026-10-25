@@ -76,6 +76,8 @@ public sealed class BotRuntimeState
     public Vector3 RegroupDirection { get; set; }
     public float RegroupStartedAt { get; set; }
     public float RegroupMoveUntil { get; set; }
+    public float RegroupRetreatDistance { get; set; }
+    public float RegroupHoldSeconds { get; set; }
     public float RegroupHoldUntil { get; set; }
     public float RegroupCooldownUntil { get; set; }
     public bool RegroupReloadIssued { get; set; }
@@ -88,6 +90,8 @@ public sealed class BotRuntimeState
         RegroupDirection = default;
         RegroupStartedAt = 0.0f;
         RegroupMoveUntil = 0.0f;
+        RegroupRetreatDistance = 0.0f;
+        RegroupHoldSeconds = 0.0f;
         RegroupHoldUntil = 0.0f;
         RegroupReloadIssued = false;
         RegroupLastHealth = 0;

@@ -49,13 +49,14 @@ compile and live-server test locally.
 ## Post-kill regroup — 25 October 2026
 
 **Source implemented, build and live tests pending.** A GunGame-connected
-bot that scores a valid opposing-team kill can make a short retreat when
-health is at most 55 or an opposing team spawn is within 650 units.
-It uses a geometry-clear direction away from the nearby spawn or last kill.
-The destination requires a nearby floor trace. The manoeuvre runs for
-at most 1.35 seconds or 160 units, then pauses and crouches for 0.80 seconds.
-A single Reload pulse is sent after a 0.40-second weapon-settle delay.
-The cooldown is 4 seconds.
+bot that scores a valid opposing-team kill attempts a small regroup.
+Normally it retreats at most 96 units / 0.75 seconds and pauses for
+0.25 seconds. With health at most 55 or an opposing team spawn within 650
+units, it retreats at most 160 units / 1.35 seconds and pauses for
+0.80 seconds. It uses a geometry-clear direction away from a nearby spawn,
+the last kill or its previous facing direction. Corridor and destination
+floor probes must succeed. A single Reload pulse is sent after a
+0.40-second weapon-settle delay. The cooldown is 4 seconds.
 
 The shared TransientControlService owns only bounded movement leases; Valve
 retains navigation, target selection and fire. A newly visible enemy or incoming damage interrupts the

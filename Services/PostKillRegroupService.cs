@@ -72,8 +72,10 @@ public sealed class PostKillRegroupService
         bool lowHealth = pawn.Health <= Config.PostKillRegroupHealthThreshold;
         bool hasSpawn = TryGetNearestEnemySpawn(pawn, origin, out Vector3 spawn, out float spawnDistance);
         bool nearSpawn = hasSpawn && spawnDistance <= Config.PostKillRegroupSpawnRadius;
-        if (!lowHealth && !nearSpawn)
-            return;
+        bool defensive = lowHealth || nearSpawn;
+        float retreatDistance = defensive
+            ? Config.PostKillRegroupRetreatDistance
+            : MathF.Min(96.0f, Config.PostKillRegroupRetreatDistance * 0.6f);
 
         Vector3 threat = nearSpawn
             ? spawn
@@ -84,12 +86,18 @@ public sealed class PostKillRegroupService
         if (away.LengthSquared() < 1.0f)
             away = -Facing(pawn.EyeAngles.Y);
 
-        if (!TryChooseSafeDirection(pawn, origin, Vector3.Normalize(away), out Vector3 direction))
+        if (!TryChooseSafeDirection(pawn, origin, Vector3.Normalize(away), retreatDistance, out Vector3 direction))
             return;
 
         state.RegroupActive = true;
         state.RegroupStartedAt = now;
-        state.RegroupMoveUntil = now + Config.PostKillRegroupMoveSeconds;
+        state.RegroupMoveUntil = now + (defensive
+            ? Config.PostKillRegroupMoveSeconds
+            : MathF.Min(0.75f, Config.PostKillRegroupMoveSeconds));
+        state.RegroupRetreatDistance = retreatDistance;
+        state.RegroupHoldSeconds = defensive
+            ? Config.PostKillRegroupHoldSeconds
+            : MathF.Min(0.25f, Config.PostKillRegroupHoldSeconds);
         state.RegroupHoldUntil = 0.0f;
         state.RegroupCooldownUntil = now + Config.PostKillRegroupCooldownSeconds;
         state.RegroupOrigin = origin;
@@ -99,7 +107,8 @@ public sealed class PostKillRegroupService
         Started++;
 
         _corrections.Action(state.Slot, nameof(PostKillRegroupService), "regroup", "started",
-            $"health={pawn.Health}; nearSpawn={nearSpawn}; spawnDistance={(hasSpawn ? spawnDistance : -1.0f):0}; " +
+            $"health={pawn.Health}; defensive={defensive}; nearSpawn={nearSpawn}; distance={retreatDistance:0}; " +
+            $"spawnDistance={(hasSpawn ? spawnDistance : -1.0f):0}; " +
             $"direction=({direction.X:0.##},{direction.Y:0.##})");
     }
 
@@ -145,7 +154,7 @@ public sealed class PostKillRegroupService
         float travelled = Distance2D(state.RegroupOrigin, position);
         if (state.RegroupHoldUntil <= 0.0f &&
             now < state.RegroupMoveUntil &&
-            travelled < Config.PostKillRegroupRetreatDistance)
+            travelled < state.RegroupRetreatDistance)
         {
             Vector3 facing = Facing(pawn.EyeAngles.Y);
             Vector3 left = new(-facing.Y, facing.X, 0.0f);
@@ -161,7 +170,7 @@ public sealed class PostKillRegroupService
         }
 
         if (state.RegroupHoldUntil <= 0.0f)
-            state.RegroupHoldUntil = now + Config.PostKillRegroupHoldSeconds;
+            state.RegroupHoldUntil = now + state.RegroupHoldSeconds;
 
         if (now >= state.RegroupHoldUntil)
         {
@@ -199,12 +208,11 @@ public sealed class PostKillRegroupService
         CCSPlayerPawn pawn,
         Vector3 origin,
         Vector3 away,
+        float distance,
         out Vector3 direction)
     {
         direction = default;
         float baseYaw = MathF.Atan2(away.Y, away.X) * (180.0f / MathF.PI);
-        float distance = Config.PostKillRegroupRetreatDistance;
-
         foreach (float offset in DirectionOffsets)
         {
             Vector3 candidate = Facing(baseYaw + offset);

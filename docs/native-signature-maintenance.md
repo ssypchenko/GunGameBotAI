@@ -239,6 +239,7 @@ and Ladder signatures from the C# source):
 
 ```bash
 python3 scripts/check_native_signatures.py --self-test
+python3 scripts/test_native_signature_tools.py
 ```
 
 After a CS2 update:

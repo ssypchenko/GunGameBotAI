@@ -280,7 +280,7 @@ python3 scripts/check_native_signatures.py \
   /path/to/libserver.so \
   --context 96 \
   --ladder-layout \
-  --json-report native-signatures.json
+  --json-report native-signatures-review.json
 ```
 
 The `ladder_layout` object is then written into the JSON report.

@@ -141,8 +141,9 @@ acceptance. A new Valve enemy `NoiseTimestamp` inside
 `HearingReactionMinSeconds..HearingReactionMaxSeconds` delay followed by a
 short `HearingReactionHoldSeconds` `EyeAngles.Y` hold toward the copied
 `NoisePosition`. The opt-in `HearingReactionLookMode` may be 0 (existing
-feedback), 1 (single bounded Valve LookAtSpot request), or 2 (the same plus
-one LookYaw seed); the new modes require runtime testing. `HearingReactionYawToleranceDegrees` suppresses redundant
+feedback), 1 (bounded Valve LookAtSpot corrections no more frequently than every
+50 ms while off-target), or 2 (the same plus LookYaw corrections);
+the new modes require runtime testing. `HearingReactionYawToleranceDegrees` suppresses redundant
 yaw writes and `HearingReactionCooldownSeconds` prevents immediate repeated
 leases. `NoiseSource` is used only for team/entity validation; the source
 pawn's current position is never read. Stage 6B never assigns Enemy and never

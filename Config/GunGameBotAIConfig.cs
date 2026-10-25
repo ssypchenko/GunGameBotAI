@@ -267,8 +267,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // LookAtSpot request, optionally seeding LookYaw once. Neither controls
     // Enemy, navigation, movement or fire.
     public bool HearingReactionEnabled { get; set; } = false;
-    // 0 = existing EyeAngles.Y corrections; 1 = Valve LookAtSpot lease;
-    // 2 = experimental LookAtSpot plus one-time internal LookYaw seed.
+    // 0 = EyeAngles.Y corrections; 1 = bounded LookAtSpot feedback;
+    // 2 = the same plus bounded LookYaw corrections. Both are experimental.
     // Neither Valve mode repeats EyeAngles writes. Default stays at 0.
     public int HearingReactionLookMode { get; set; } = 0;
     public float HearingReactionMinSeconds { get; set; } = 0.10f;

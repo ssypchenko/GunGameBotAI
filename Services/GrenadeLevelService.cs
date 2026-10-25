@@ -33,6 +33,7 @@ public sealed class GrenadeLevelService
     public int Targets { get; private set; }
     public int Switches { get; private set; }
     public int DefensiveSwitches { get; private set; }
+    public int PostThrowPistolSwitches { get; private set; }
     public int ThrowAttempts { get; private set; }
     public int ConfirmedThrows { get; private set; }
     public int RejectedTraces { get; private set; }
@@ -42,6 +43,7 @@ public sealed class GrenadeLevelService
         Targets = 0;
         Switches = 0;
         DefensiveSwitches = 0;
+        PostThrowPistolSwitches = 0;
         ThrowAttempts = 0;
         ConfirmedThrows = 0;
         RejectedTraces = 0;
@@ -54,6 +56,8 @@ public sealed class GrenadeLevelService
 
         state.GrenadeConsumed = true;
         state.GrenadeHoldingHe = false;
+        state.GrenadePistolFallbackPending = true;
+        state.GrenadeThrownAt = now;
         state.GrenadeMissingObserved = false;
         state.GrenadeThrownHandle = state.GrenadeOwnedHandle;
         state.GrenadeTargetSlot = -1;
@@ -81,6 +85,9 @@ public sealed class GrenadeLevelService
             return;
         }
 
+        if (state.GrenadePistolFallbackPending && now >= state.GrenadeThrownAt + 0.15f)
+            SelectPostThrowPistol(controller, pawn, state, now);
+
         CBasePlayerWeapon? grenade = FindWeapon(pawn, WeaponClass.Grenade, heOnly: true);
         if (grenade == null)
         {
@@ -99,6 +106,7 @@ public sealed class GrenadeLevelService
             (state.GrenadeMissingObserved || grenade.Handle != state.GrenadeThrownHandle))
         {
             state.GrenadeConsumed = false;
+            state.GrenadePistolFallbackPending = false;
             state.GrenadeNextAttemptAt = now + 0.15f;
         }
 
@@ -261,6 +269,34 @@ public sealed class GrenadeLevelService
         _corrections.Action(state.Slot, nameof(GrenadeLevelService),
             "he-throw", "requested", $"target={state.GrenadeTargetEntityIndex}");
         return false;
+    }
+
+    private void SelectPostThrowPistol(CCSPlayerController controller,
+        CCSPlayerPawn pawn, BotRuntimeState state, float now)
+    {
+        CBasePlayerWeapon? pistol = FindWeapon(pawn, WeaponClass.Pistol);
+        if (pistol == null)
+            return;
+
+        try
+        {
+            if (pawn.WeaponServices?.ActiveWeapon.Value?.Handle == pistol.Handle)
+            {
+                state.GrenadePistolFallbackPending = false;
+                return;
+            }
+        }
+        catch { return; }
+
+        if (!_weapons.IsBackendAvailable || now < state.GrenadeNextSwitchAt)
+            return;
+
+        state.GrenadeNextSwitchAt = now + 0.10f;
+        if (_weapons.TryRestoreWeapon(controller, pawn, pistol.DesignerName))
+        {
+            state.GrenadePistolFallbackPending = false;
+            PostThrowPistolSwitches++;
+        }
     }
 
     private bool EnsureSelected(CCSPlayerController controller, CCSPlayerPawn pawn,

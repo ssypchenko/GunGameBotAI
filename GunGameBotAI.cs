@@ -1707,7 +1707,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             "target=Valve-NoisePosition; movement=none; enemyAssignment=none.");
     }
 
-    [ConsoleCommand("css_ggbotai_hearing_look_mode", "Select Stage 6B experimental look control: 0=EyeAngles, 1=Valve LookAtSpot, 2=LookAtSpot+LookYaw.")]
+    [ConsoleCommand("css_ggbotai_hearing_look_mode", "Select Stage 6B experimental look control: 0=EyeAngles, 1=Valve LookAtSpot feedback, 2=LookAtSpot+LookYaw feedback.")]
     [CommandHelper(minArgs: 1, usage: "0|1|2", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnHearingLookModeCommand(
         CCSPlayerController? player,
@@ -1728,8 +1728,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         PersistConfig(command);
         command.ReplyToCommand(
             $"[GunGameBotAI] hearingLookMode={mode}; " +
-            "0=EyeAngles.Y-feedback; 1=Valve-LookAtSpot-once; " +
-            "2=Valve-LookAtSpot+LookYaw-once; new Valve modes are experimental.");
+            "0=EyeAngles.Y-feedback; 1=Valve-LookAtSpot-feedback; " +
+            "2=Valve-LookAtSpot+LookYaw-feedback; new Valve modes are experimental.");
     }
 
     [ConsoleCommand("css_ggbotai_hearing_debug", "Enable or disable detailed Stage 6A/6B hearing logs.")]

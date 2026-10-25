@@ -91,14 +91,18 @@ Stage 3 adds `VisibilityTraceService` using CounterStrikeSharp's built-in
 diagnostic traces. When explicitly enabled it samples HEAD/CHEST/GUT/PELVIS for
 the current Valve enemy only; it does not modify aim or enemy selection.
 
-Stage 4 adds an opt-in `PickNewAimSpot` PostHook. Valve still selects enemies,
-rotates the bot, predicts and fires. GunGameBotAI keeps Valve's targetSpot when
-it is on the live enemy and visible; otherwise it may replace only targetSpot
-with the first visible AABB aim point selected by `AimPolicyService`.
-`IAimPointProvider` keeps the coordinate source replaceable if later testing
-justifies a hybrid/bone-backed HEAD point. This behaviour flag defaults to enabled in ConfigVersion 45, but the
-overall runtime still defaults to disabled until `EnabledOnLoad` or
-`css_ggbotai_enable 1` enables it.
+Stage 4 uses a `PickNewAimSpot` PostHook for weapon-aware target-point
+selection. Valve still selects enemies, rotates the bot, predicts and fires.
+In `AimMode=Mixed`, rifles, pistols, SMGs and machine guns now prefer a
+physically visible HEAD point, while shotguns, AWP and SSG08 prefer CHEST.
+If the preferred point is obscured, the policy falls back to the next
+visible AABB point. Valve's existing target is kept only if already
+very close to the preferred visible point. The plugin writes
+`CCSBot.TargetSpot` only; no per-tick forced aim changes were added.
+`IAimPointProvider` keeps the coordinate source replaceable if later
+testing justifies a bone/hitbox-backed HEAD point. The feature defaults
+to enabled in ConfigVersion 45, while overall runtime activation remains
+opt-in. This revised priority requires a new live acceptance run.
 
 Stage 5 adds `VisionMonitorService`. When explicitly enabled it samples nearby
 live opponents at a bounded rate and records cases where a point trace says the

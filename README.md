@@ -96,7 +96,9 @@ rotates the bot, predicts and fires. GunGameBotAI keeps Valve's targetSpot when
 it is on the live enemy and visible; otherwise it may replace only targetSpot
 with the first visible AABB aim point selected by `AimPolicyService`.
 `IAimPointProvider` keeps the coordinate source replaceable if later testing
-justifies a hybrid/bone-backed HEAD point. The feature defaults to OFF.
+justifies a hybrid/bone-backed HEAD point. This behaviour flag defaults to enabled in ConfigVersion 45, but the
+overall runtime still defaults to disabled until `EnabledOnLoad` or
+`css_ggbotai_enable 1` enables it.
 
 Stage 5 adds `VisionMonitorService`. When explicitly enabled it samples nearby
 live opponents at a bounded rate and records cases where a point trace says the

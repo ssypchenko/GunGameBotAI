@@ -1,6 +1,6 @@
 # GunGameBotAI development handover
 
-Last updated: 2026-10-02
+Last updated: 2026-10-25
 
 This file is the working handover for continuing GunGameBotAI development in a
 new chat/session without reconstructing the vision/attack investigation from
@@ -25,18 +25,22 @@ Current development target after this handover:
 ```text
 GunGameBotAI 0.8.5
 ConfigVersion 45
-CounterStrikeSharp.API 1.0.375
+CounterStrikeSharp.API 1.0.378
 target framework net10.0
 ```
 
-Local verification for the current Stage 6B branch:
+Local verification for the merged `main` branch:
 
 ```bash
 git fetch origin
-git switch stage-6b-hearing-reaction
-git pull --ff-only origin stage-6b-hearing-reaction
-dotnet build -c Release
+git switch main
+git pull --ff-only origin main
+dotnet restore GunGameBotAI.csproj
+dotnet build GunGameBotAI.csproj -c Release --no-restore
+python3 scripts/check_native_signatures.py --self-test
 ```
+
+Source-level review is distinct from build and live server verification.
 
 The assistant development environment used for these changes does not have the
 project's .NET SDK/runtime available, so Sergey performs the authoritative
@@ -57,78 +61,62 @@ It may call the validated native `CCSBot::Attack(CCSPlayerPawn*)` once after
 the configured human-like reaction delay. There is still no raw
 `IsAttacking=true` write and no Fire/PrimaryAttack injection.
 
-## Stage 6A hearing diagnostics accepted; Stage 6B awaiting live evidence
+## Hearing 6A/6B — completed and accepted (25 October 2026)
 
-Stage 6A live evidence is accepted. The three-bot
-`aim_fiffy_gg1` test showed 1669 native noise changes, all attributed to enemy
-sources in that run; footsteps, weapon fire and reload all produced useful
-Valve hearing state. `NoisePosition` was intentionally imprecise and
-`BentNoisePosition` could remain stale, so active behaviour must use the
-copied `NoisePosition` rather than hidden source coordinates.
+**Stage 6A (monitoring)** is accepted: the live three-bot
+`aim_fiffy_gg1` test observed 1,669 native noise changes from enemy
+sources, including footsteps, shots and reload. Valve `NoisePosition`
+already includes useful location uncertainty; `BentNoisePosition`
+can be stale. Do not read the enemy pawn's actual coordinates to
+manufacture a hearing target.
 
-Stage 6B detection/arbitration passed its first live test, but the direct
-`EyeAngles.Y` actuator is not yet accepted: many reactions issued repeated yaw
-writes while the observed turn stayed near zero. Stage 6B.1 is now implemented
-on `stage-6b-hearing-reaction` to identify the competing Valve look owner
-without changing behaviour.
+**Stage 6B (bounded look reaction)** is accepted for the tested
+Linux `CCSBot::SetLookAt` mode 3. The live test measured:
 
-The diagnostic records raw Valve `LookAtSpot*`, `LookYaw`, `LookYawVel`,
-look-around timestamps and pathfinder-eye ownership at DETECT / COMMIT / END.
-It also performs next-fast-tick readback of each plugin yaw write and counts
-`readbackSurvived`, `readbackLost` and `suppressedTurns`.
+| Hearing reaction counter | Observed |
+|---|---:|
+| enemyNoise | 211 |
+| started / committed | 76 / 68 |
+| completed / combatInterrupted | 57 / 13 |
+| valveLookReached | 55 |
+| nativeLookCalls / Accepted / Rejected | 183 / 179 / 4 |
+| avgRequestedDeg / avgObservedDeg | 42.5° / 42.4° |
 
-Stage 6B still uses `HearingReactionService` with a bounded look-only reaction:
+The initial four rejected native calls were goal-equivalence false
+negatives (Valve keeps a previous position when differences are within
+10 world units per axis). The wrapper was corrected afterwards;
+the corrected rejection count awaits a new live sample. Visual
+observation of the mode 3 bot reactions was acceptable.
 
-```text
-Services/HearingReactionService.cs
-HearingReactionEnabled=false
-css_ggbotai_hearing_reaction 0|1
-```
+Runtime requirements for mode 3:
+- Linux CS2 `libserver.so` with reviewed native signature; known binary
+  SHA-256 `ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7`;
+- `HearingReactionEnabled=true` and `HearingReactionLookMode=3`;
+- Engine combat, ladder and Knife ownership outrank Hearing;
+- no accurate enemy position, navigation destination or direct attack is
+  supplied by the Hearing reaction.
 
-The service validates that `NoiseSource` is an enemy, copies only Valve
-`NoisePosition`, waits 0.10..0.25 s by default, then briefly holds
-`EyeAngles.Y` toward that approximate sound position. It never reads the
-source pawn's current position, assigns Enemy, or writes navigation/movement.
+For normal play, keep `HearingMonitorEnabled=false`,
+`VisionMonitorEnabled=false` and `HearingDebug=false`. These are
+**observation/debug toggles**, not behaviour prerequisites. For live
+regression capture, enable `HearingDebug` temporarily.
 
-Arbitration is ladder > Knife/special > visible EnemyReaction > HearingReaction
-> Human Look Scan. Visible combat cancels hearing immediately. Repeated noise
-may refresh the target during one lease but never extends the lease deadline.
+**Configuration semantics (October 2026):** the JSON contains startup
+defaults. Operator console commands change in-memory values only; they
+do not call `Config.Update()`. `css_ggbotai_reload` or restarting the
+plugin/server re-reads saved defaults. Manual ladder learning has a
+separate, explicitly armed map-data persistence mechanism.
 
-For the Stage 6B.1 live diagnostic use:
+**Scope boundary:** Stage 6A/6B Hearing detection and look reaction
+are complete, but future Stage 6C investigation/navigation, hotspot
+intent and post-respawn memory are not implemented. The integrated
+Aim/Vision/EnemyReaction/HumanLookScan/KnifeRush + Hearing soak test
+has not yet been recorded for a single production configuration.
+Keep mode 3 opt-in and fail-closed after Valve binary updates.
 
-```text
-css_ggbotai_enable 1
-css_ggbotai_hearing_monitor 0
-css_ggbotai_hearing_reaction 1
-css_ggbotai_hearing_debug 1
-css_ggbotai_status
-```
-
-Keep `HearingDebug=1` for the whole capture; the decisive evidence is in the
-`look=[...]` fields and next-tick readback counters.
-
-The Stage 6A monitor may stay disabled unless detailed event/native
-correlation is wanted. See `docs/capabilities/hearing-reaction.md`.
-
-Stage 6A diagnostic pieces remain available:
-
-```text
-Services/HearingMonitorService.cs
-HearingMonitorEnabled=false
-HearingDebug=false
-css_ggbotai_hearing_monitor 0|1
-css_ggbotai_hearing_debug 0|1
-```
-
-The monitor correlates `player_footstep`, `weapon_fire` and
-`weapon_reload` events with the current Valve `CCSBot.Noise*` schema state.
-It records enemy/friendly/self source relationship, native noise position,
-travel distance, bent-noise availability and event/native position error.
-
-Stage 6A remains observation-only and performs no hearing, enemy, view,
-navigation, movement, button, weapon or attack writes. Its first controlled
-live gate is complete; keep it available for future regression diagnostics.
-See `docs/capabilities/hearing-monitor.md` for the original evidence contract.
+Source of truth: `docs/capabilities/hearing-monitor.md`,
+`docs/capabilities/hearing-reaction.md`,
+`docs/native-signature-maintenance.md`.
 
 ## Stable/accepted systems
 

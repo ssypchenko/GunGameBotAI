@@ -318,3 +318,72 @@ css_ggbotai_hearing_reaction 0
 
 The implementation has not been built against the server installation or
 verified in game at the time of this change.
+
+
+## Stage 6B.3 opt-in native CCSBot::SetLookAt (Linux test only)
+
+The direct-field experiments above show that a requested LookAtSpot can
+survive readback without producing a physical turn. Reverse engineering of
+the **actual CS2 Linux** `libserver.so` (SHA-256
+`ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7`)
+identified `CCSBot::SetLookAt` from its embedded
+`%3.1f SetLookAt( %s ), duration = %f` message and **20 direct call sites**.
+
+- ELF virtual address: `0xC11320`
+- File offset: `0xC10320`
+- Exact 37-byte entry signature: unique in this binary
+- Implementation: `Services/NativeLookAtService.cs`
+- ABI (Linux System V): `CCSBot*, const char*, const Vector*, int priority,
+  float duration, bool clearIfClose, float angleTolerance, bool attack`
+- The function sets both the internal active-look state and look priority,
+  which writing only schema fields in modes 1 and 2 did not establish
+
+The plugin's new `HearingReactionLookMode=3` uses this native transition
+with priority **2**, `clearIfClose=false`, `attack=false`, and the same
+Valve-imprecise NoisePosition (+32 Z). A higher priority Valve target can
+refuse the request. The native wrapper validates that the returned target
+matches the requested point before marking it accepted.
+
+Commands:
+
+```text
+css_ggbotai_hearing_reaction 1
+css_ggbotai_hearing_debug 1
+css_ggbotai_hearing_look_mode 3
+css_ggbotai_status
+```
+
+Only run this mode on an expendable Linux test server with the **exact**
+verified build. The native signature must resolve before calls are allowed;
+on Windows or after a signature mismatch, calls are rejected and existing
+Valve behaviour continues. The managed exception boundary cannot catch an
+incorrect native ABI or prevent a process crash.
+
+Mode 3 keeps the same 50 ms maximum feedback frequency, original 250 ms
+hold by default, the existing combat/ladder/pathfinder priority gates and
+ownership-aware release. It does not alter movement, attack, Enemy or
+`CCSPlayerPawn.EyeAngles` directly, and does not seed LookYaw.
+
+Additional statistics:
+`nativeLookCalls`, `nativeLookAccepted`, `nativeLookRejected`,
+`nativeLookStatus`. `nativeLookAccepted` means SetLookAt installed the
+target in Valve state, **not** proof that the eye yaw subsequently moved.
+Continue using `valveLookReached` and per-bot REACTION-END records to
+measure effectiveness.
+
+Safety note: the native method retains the description as an unmanaged
+`char*`. The short, process-lifetime string allocation is intentionally
+not freed on plugin hot reload, to avoid dangling references in Valve
+state.
+
+To revert immediately:
+
+```text
+css_ggbotai_hearing_look_mode 0
+css_ggbotai_hearing_reaction 0
+```
+
+**Verification status:** stripped binary analysed, entry pattern unique,
+register arguments independently checked at call sites. Integration
+compilation, live native execution, visual steering and cancellation after
+combat have **not** yet been tested. The experiment remains opt-in.

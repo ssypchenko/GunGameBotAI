@@ -85,12 +85,13 @@ public sealed class GrenadeLevelService
             return;
         }
 
-        if (state.GrenadePistolFallbackPending && now >= state.GrenadeThrownAt + 0.15f)
-            SelectPostThrowPistol(controller, pawn, state, now);
-
         CBasePlayerWeapon? grenade = FindWeapon(pawn, WeaponClass.Grenade, heOnly: true);
         if (grenade == null)
         {
+            if (state.GrenadePistolFallbackPending &&
+                now >= state.GrenadeThrownAt + 0.15f)
+                SelectPostThrowPistol(controller, pawn, state, now);
+
             state.GrenadeMissingObserved = true;
             state.GrenadeOwnedHandle = nint.Zero;
             state.GrenadeHoldingHe = false;
@@ -116,6 +117,10 @@ public sealed class GrenadeLevelService
 
         if (state.GrenadeConsumed)
         {
+            if (state.GrenadePistolFallbackPending &&
+                now >= state.GrenadeThrownAt + 0.15f)
+                SelectPostThrowPistol(controller, pawn, state, now);
+
             state.GrenadeTargetSlot = -1;
             state.GrenadeDefending = false;
             return;

@@ -15,9 +15,10 @@ namespace GunGameBotAI.Services;
 /// imprecise NoisePosition snapshot. NoiseSource is used only to validate team
 /// relationship and record an entity id; its current position is never read.
 ///
-/// This stage writes only CCSPlayerPawn.EyeAngles.Y for a short bounded hold.
-/// It never assigns Enemy, changes visibility/perception state, writes hearing
-/// state, navigation, movement, buttons, weapons or attack state.
+/// The production mode writes only CCSPlayerPawn.EyeAngles.Y. Experimental
+/// 6B.2 modes instead write a short-lived Valve LookAtSpot lease, optionally
+/// seeding the internal LookYaw once. No mode changes Enemy, hearing, navigation,
+/// movement, buttons, weapons or attack state.
 /// </summary>
 public sealed class HearingReactionService
 {
@@ -26,6 +27,8 @@ public sealed class HearingReactionService
     private const float SuppressedRequestedThresholdDegrees = 20.0f;
     private const float SuppressedObservedThresholdDegrees = 5.0f;
     private const int SuppressedMinimumWrites = 10;
+    private const float ValveLookHeightOffset = 32.0f;
+    private const float ValveLookPositionTolerance = 1.0f;
 
     private readonly Random _random = new();
     private readonly Action<string> _info;
@@ -56,6 +59,11 @@ public sealed class HearingReactionService
     private long _writeReadbackChecks;
     private long _writeReadbackSurvived;
     private long _writeReadbackLost;
+    private long _valveLookApplied;
+    private long _valveLookOverrides;
+    private long _valveLookRetained;
+    private long _valveLookReleased;
+    private long _valveLookReached;
     private long _failures;
 
     private double _totalReactionMilliseconds;
@@ -123,6 +131,9 @@ public sealed class HearingReactionService
                 $"suppressedTurns={_suppressedTurns}; lookSnapshots={_lookSnapshots}; " +
                 $"lookSnapshotFailures={_lookSnapshotFailures}; readbackChecks={_writeReadbackChecks}; " +
                 $"readbackSurvived={_writeReadbackSurvived}; readbackLost={_writeReadbackLost}; " +
+                $"valveLookApplied={_valveLookApplied}; valveLookOverrides={_valveLookOverrides}; " +
+                $"valveLookRetained={_valveLookRetained}; valveLookReleased={_valveLookReleased}; " +
+                $"valveLookReached={_valveLookReached}; " +
                 $"avgReadbackErrorDeg={AverageReadbackErrorDegrees:0.0}; " +
                 $"maxReadbackErrorDeg={_maximumReadbackErrorDegrees:0.0}; " +
                 $"avgReactionMs={averageReactionMs:0.0}; avgRequestedDeg={averageRequested:0.0}; " +
@@ -142,7 +153,7 @@ public sealed class HearingReactionService
 
     public void Reset()
     {
-        _states.Clear();
+        ClearRuntimeState();
 
         _noiseTimestampChanges = 0;
         _enemyNoises = 0;
@@ -169,6 +180,11 @@ public sealed class HearingReactionService
         _writeReadbackChecks = 0;
         _writeReadbackSurvived = 0;
         _writeReadbackLost = 0;
+        _valveLookApplied = 0;
+        _valveLookOverrides = 0;
+        _valveLookRetained = 0;
+        _valveLookReleased = 0;
+        _valveLookReached = 0;
         _failures = 0;
 
         _totalReactionMilliseconds = 0.0;
@@ -179,12 +195,42 @@ public sealed class HearingReactionService
         _maximumReadbackErrorDegrees = 0.0f;
     }
 
-    public void ClearRuntimeState() =>
-        _states.Clear();
+    public void ClearRuntimeState()
+    {
+        // Runtime transitions are on the game thread. Never retain a native
+        // pointer between ticks; resolve the live bot only when needed.
+        foreach ((int slot, ReactionState state) in _states)
+            ReleaseLiveValveLook(slot, state);
 
-    public void RemoveSlot(
-        int slot) =>
-        _states.Remove(slot);
+        _states.Clear();
+    }
+
+    public void RemoveSlot(int slot)
+    {
+        if (_states.TryGetValue(slot, out ReactionState? state))
+        {
+            ReleaseLiveValveLook(slot, state);
+            _states.Remove(slot);
+        }
+    }
+
+    private void ReleaseLiveValveLook(int slot, ReactionState state)
+    {
+        if (!state.ValveLookApplied)
+            return;
+
+        if (BotValidation.TryResolveLiveBot(
+                slot,
+                out _,
+                out _,
+                out CCSBot? bot) &&
+            bot != null)
+        {
+            ReleaseValveLook(bot, state);
+        }
+        // If the pawn already died or disconnected, the bounded 0.75s
+        // maximum look lease expires without chasing an invalid pointer.
+    }
 
     public void LogMapSummary(
         string mapName)
@@ -413,6 +459,15 @@ public sealed class HearingReactionService
 
         if (state.Tracking)
         {
+            // Do not move an already committed Valve look lease: the original
+            // imprecise sound snapshot remains fixed for this short reaction.
+            // Further sounds may start a new reaction after the cooldown.
+            if (state.Committed &&
+                Config.HearingReactionLookMode != 0)
+            {
+                return;
+            }
+
             // A newer enemy sound may refine the imprecise position while this
             // one bounded reaction is already pending/active. Update the target
             // but never extend ReactAt or EndsAt, preventing a stream of
@@ -491,6 +546,12 @@ public sealed class HearingReactionService
         state.ReadbackSurvived = 0;
         state.ReadbackLost = 0;
         state.MaxReadbackError = 0.0f;
+        state.ValveLookApplied = false;
+        state.ValveLookChecked = false;
+        state.ValveLookRetained = false;
+        state.ValveLookReached = false;
+        state.ValveLookPosition = default;
+        state.ValveLookTimestamp = 0.0f;
 
         _started++;
         _totalRequestedDegrees +=
@@ -657,6 +718,26 @@ public sealed class HearingReactionService
                     state.DetectedAt) *
                 1000.0;
 
+            if (Config.HearingReactionLookMode != 0)
+            {
+                if (!TryApplyValveLook(
+                        bot,
+                        state,
+                        now))
+                {
+                    _failures++;
+                    Finish(
+                        controller,
+                        pawn,
+                        bot,
+                        state,
+                        now,
+                        "valve-look-write-failure",
+                        countOutcome: false);
+                    return false;
+                }
+            }
+
             if (Config.HearingDebug)
             {
                 _info(
@@ -664,9 +745,21 @@ public sealed class HearingReactionService
                     $"sourceEntity={state.NoiseSourceEntityIndex}; targetPos={FormatVector(state.TargetPosition)}; " +
                     $"reaction={MathF.Max(0.0f, now - state.DetectedAt):0.000}s; " +
                     $"currentYaw={currentYaw:0.0}; targetYaw={state.TargetYaw:0.0}; " +
-                    $"requestedDelta={state.RequestedDelta:0.0}; " +
+                    $"requestedDelta={state.RequestedDelta:0.0}; mode={Config.HearingReactionLookMode}; " +
+                    $"valveLookApplied={state.ValveLookApplied}; " +
                     $"look={ReadAndFormatLookSnapshot(bot)}");
             }
+        }
+
+        if (state.ValveLookApplied)
+        {
+            ObserveValveLook(
+                bot,
+                currentYaw,
+                state);
+            // Valve must own the camera in modes 1/2. No EyeAngles writes or
+            // fast-tick forcing: an override is an observed test outcome.
+            return true;
         }
 
         float error =
@@ -736,6 +829,9 @@ public sealed class HearingReactionService
         float observed =
             state.MaxObservedTurn;
 
+        if (state.ValveLookApplied)
+            ReleaseValveLook(bot, state);
+
         _finished++;
         _totalObservedDegrees +=
             observed;
@@ -779,6 +875,7 @@ public sealed class HearingReactionService
                 $"writes={state.Writes}; fastChecks={state.FastChecks}; withinTolerance={state.WithinTolerance}; " +
                 $"readbackChecks={state.ReadbackChecks}; readbackSurvived={state.ReadbackSurvived}; " +
                 $"readbackLost={state.ReadbackLost}; maxReadbackError={state.MaxReadbackError:0.0}; " +
+                $"valveLookRetained={state.ValveLookRetained}; valveLookReached={state.ValveLookReached}; " +
                 $"look={ReadAndFormatLookSnapshot(bot)}");
         }
 
@@ -809,6 +906,163 @@ public sealed class HearingReactionService
         state.ReadbackSurvived = 0;
         state.ReadbackLost = 0;
         state.MaxReadbackError = 0.0f;
+        state.ValveLookApplied = false;
+        state.ValveLookChecked = false;
+        state.ValveLookRetained = false;
+        state.ValveLookReached = false;
+        state.ValveLookPosition = default;
+        state.ValveLookTimestamp = 0.0f;
+    }
+
+    // Unlike the old EyeAngles actuator, the Valve experiment issues one
+    // bounded request and then observes what the engine does with it.
+    // These are public CCSBot schema fields, not native signatures.
+    private bool TryApplyValveLook(
+        CCSBot bot,
+        ReactionState state,
+        float now)
+    {
+        try
+        {
+            if (!NativeValueReader.TryCopy(
+                    bot.LookAtSpot,
+                    out _) ||
+                !float.IsFinite(bot.LookAtSpotDuration) ||
+                !float.IsFinite(bot.LookAtSpotTimestamp) ||
+                !float.IsFinite(bot.LookYaw))
+            {
+                return false;
+            }
+
+            // Keep the vertical target around torso level, rather than the
+            // near-ground NoisePosition. X/Y remain exactly Valve's sample.
+            Vector3 position = state.TargetPosition +
+                new Vector3(0.0f, 0.0f, ValveLookHeightOffset);
+
+            if (!float.IsFinite(position.Z))
+                return false;
+
+            // Configure the lease before exposing a new timestamp/position.
+            // Never write LookAtDesc (native char* ownership is unknown).
+            bot.LookAtSpot.X = position.X;
+            bot.LookAtSpot.Y = position.Y;
+            bot.LookAtSpot.Z = position.Z;
+            bot.LookAtSpotAngleTolerance =
+                Config.HearingReactionYawToleranceDegrees;
+            bot.LookAtSpotClearIfClose = false;
+            bot.LookAtSpotAttack = false;
+            bot.LookAtSpotDuration = MathF.Max(
+                0.01f,
+                state.EndsAt - now);
+            bot.LookAtSpotTimestamp = now;
+
+            if (Config.HearingReactionLookMode == 2)
+            {
+                // Explicitly experimental: seed internal look interpolation
+                // once, not every tick, and do not force pawn EyeAngles.
+                bot.LookYaw = NormalizePositiveYaw(state.TargetYaw);
+                bot.LookYawVel = 0.0f;
+            }
+
+            state.ValveLookApplied = true;
+            state.ValveLookPosition = position;
+            state.ValveLookTimestamp = now;
+            _valveLookApplied++;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void ObserveValveLook(
+        CCSBot bot,
+        float currentYaw,
+        ReactionState state)
+    {
+        if (!state.ValveLookChecked)
+        {
+            state.ValveLookChecked = true;
+
+            try
+            {
+                // Detect Valve overwriting the request instead of fighting it.
+                if (NativeValueReader.TryCopy(
+                        bot.LookAtSpot,
+                        out Vector3 spot) &&
+                    Vector3.DistanceSquared(
+                        spot,
+                        state.ValveLookPosition) <=
+                        ValveLookPositionTolerance * ValveLookPositionTolerance &&
+                    MathF.Abs(bot.LookAtSpotTimestamp -
+                        state.ValveLookTimestamp) <= TimestampEpsilonSeconds)
+                {
+                    state.ValveLookRetained = true;
+                    _valveLookRetained++;
+                }
+                else
+                {
+                    _valveLookOverrides++;
+                }
+            }
+            catch
+            {
+                _valveLookOverrides++;
+            }
+        }
+
+        if (!state.ValveLookReached &&
+            MathF.Abs(AngleDelta(
+                currentYaw,
+                state.TargetYaw)) <=
+                Config.HearingReactionYawToleranceDegrees)
+        {
+            state.ValveLookReached = true;
+            _valveLookReached++;
+        }
+    }
+
+    private void ReleaseValveLook(
+        CCSBot bot,
+        ReactionState state)
+    {
+        if (!state.ValveLookApplied)
+            return;
+
+        state.ValveLookApplied = false;
+        try
+        {
+            if (!NativeValueReader.TryCopy(
+                    bot.LookAtSpot,
+                    out Vector3 spot) ||
+                Vector3.DistanceSquared(
+                    spot,
+                    state.ValveLookPosition) >
+                    ValveLookPositionTolerance * ValveLookPositionTolerance ||
+                MathF.Abs(bot.LookAtSpotTimestamp -
+                    state.ValveLookTimestamp) > TimestampEpsilonSeconds)
+            {
+                // A newer Valve goal owns these fields; leave it untouched.
+                return;
+            }
+
+            // Expire only our own lease. Never restore an old Valve goal:
+            // it may have become obsolete during combat or navigation.
+            bot.LookAtSpotDuration = 0.0f;
+            bot.LookAtSpotTimestamp = 0.0f;
+            _valveLookReleased++;
+        }
+        catch
+        {
+            _failures++;
+        }
+    }
+
+    private static float NormalizePositiveYaw(float yaw)
+    {
+        float normalized = NormalizeYaw(yaw);
+        return normalized < 0.0f ? normalized + 360.0f : normalized;
     }
 
     private void ObserveWriteReadback(
@@ -1316,6 +1570,12 @@ public sealed class HearingReactionService
         public int ReadbackSurvived { get; set; }
         public int ReadbackLost { get; set; }
         public float MaxReadbackError { get; set; }
+        public bool ValveLookApplied { get; set; }
+        public bool ValveLookChecked { get; set; }
+        public bool ValveLookRetained { get; set; }
+        public bool ValveLookReached { get; set; }
+        public Vector3 ValveLookPosition { get; set; }
+        public float ValveLookTimestamp { get; set; }
     }
 
     private readonly record struct ValveLookSnapshot(

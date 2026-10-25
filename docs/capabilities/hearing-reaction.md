@@ -260,3 +260,53 @@ Stage 6B is accepted when:
 - hearing never changes movement or nav destination;
 - repeated native noise does not create an unbounded hold;
 - disabling `HearingReactionEnabled` removes all Stage 6B writes.
+
+## Stage 6B.2 opt-in Valve look experiments (not yet live-validated)
+
+The observation-only 6B.1 evidence showed frequent EyeAngles.Y readback loss.
+Stage 6B.2 adds two bounded, **disabled-by-default** experimental look control
+paths using schema-backed `CCSBot` fields rather than native call signatures:
+
+```text
+css_ggbotai_hearing_look_mode 0  # unchanged: EyeAngles.Y repeated feedback
+css_ggbotai_hearing_look_mode 1  # one short LookAtSpot lease per COMMIT
+css_ggbotai_hearing_look_mode 2  # same lease plus one initial LookYaw seed
+```
+
+The mode is persisted in `HearingReactionLookMode` (0..2, default 0).
+HearingReactionEnabled remains a separate required switch. The Valve modes
+do **not** write EyeAngles.Y on fast ticks, and never force a lease back into
+place after Valve overrides it. Each lease lasts at most the remaining
+HearingReactionHoldSeconds, currently capped by config validation at 0.75 s.
+The target X/Y is the copied imprecise Valve NoisePosition; Z is elevated by
+32 world units to avoid directing the look down at the floor. The active
+Valve target is kept fixed after COMMIT even if another sound arrives.
+
+On combat, completion, disable, mode change or reset, the service expires its
+own look lease when a live pawn and unchanged target/timestamp confirm
+ownership. It does not restore obsolete Valve state and never changes
+LookAtDesc (an unmanaged char pointer). If the pawn is already gone, the
+short duration provides a bounded fallback. The experiment cannot assert the
+internal `CCSBot::SetLookAt` priority/state machine; whether these fields
+are sufficient requires a live test.
+
+New status counters: `valveLookApplied`, `valveLookOverrides`,
+`valveLookRetained`, `valveLookReleased`, `valveLookReached`.
+`valveLookRetained` checks the same target and timestamp at the first
+subsequent fast tick; `valveLookReached` counts a bot that subsequently gets
+within the configured yaw tolerance of the requested noise direction.
+These are observations, **not proof of plugin causality**. The old EyeAngles
+readback counters apply only to mode 0.
+
+Test mode 1 alone first on a non-production test server, with Aim and
+EnemyReaction disabled as in Stage 6B.1, recording REACTION-COMMIT,
+REACTION-END and the status counters. Only then test mode 2. Stop the
+experiment immediately if look behaviour becomes erratic:
+
+```text
+css_ggbotai_hearing_look_mode 0
+css_ggbotai_hearing_reaction 0
+```
+
+The implementation has not been built against the server installation or
+verified in game at the time of this change.

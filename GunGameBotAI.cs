@@ -1700,10 +1700,36 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"delay={Config.HearingReactionMinSeconds:0.###}.." +
             $"{Config.HearingReactionMaxSeconds:0.###}s; " +
             $"hold={Config.HearingReactionHoldSeconds:0.###}s; " +
+            $"lookMode={Config.HearingReactionLookMode}; " +
             $"yawTolerance={Config.HearingReactionYawToleranceDegrees:0.#}deg; " +
             $"maxDistance={Config.HearingReactionMaxDistance:0.#}; " +
             $"cooldown={Config.HearingReactionCooldownSeconds:0.###}s; " +
             "target=Valve-NoisePosition; movement=none; enemyAssignment=none.");
+    }
+
+    [ConsoleCommand("css_ggbotai_hearing_look_mode", "Select Stage 6B experimental look control: 0=EyeAngles, 1=Valve LookAtSpot, 2=LookAtSpot+LookYaw.")]
+    [CommandHelper(minArgs: 1, usage: "0|1|2", whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnHearingLookModeCommand(
+        CCSPlayerController? player,
+        CommandInfo command)
+    {
+        if (!int.TryParse(command.GetArg(1), out int mode) ||
+            mode < 0 || mode > 2)
+        {
+            command.ReplyToCommand(
+                "[GunGameBotAI] Usage: css_ggbotai_hearing_look_mode 0|1|2");
+            return;
+        }
+
+        // Stop any pending old-mode lease before enabling the new policy.
+        _hearingReaction.ClearRuntimeState();
+        Config.HearingReactionLookMode = mode;
+        _hearingReaction.Config = Config;
+        PersistConfig(command);
+        command.ReplyToCommand(
+            $"[GunGameBotAI] hearingLookMode={mode}; " +
+            "0=EyeAngles.Y-feedback; 1=Valve-LookAtSpot-once; " +
+            "2=Valve-LookAtSpot+LookYaw-once; new Valve modes are experimental.");
     }
 
     [ConsoleCommand("css_ggbotai_hearing_debug", "Enable or disable detailed Stage 6A/6B hearing logs.")]
@@ -2295,6 +2321,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"hearingReactionDelay={Config.HearingReactionMinSeconds:0.###}.." +
             $"{Config.HearingReactionMaxSeconds:0.###}s; " +
             $"hearingReactionHold={Config.HearingReactionHoldSeconds:0.###}s; " +
+            $"hearingLookMode={Config.HearingReactionLookMode}; " +
             $"hearingReactionDistance={Config.HearingReactionMaxDistance:0.#}; " +
             $"visionEnhancement={(Config.VisionEnhancementEnabled ? "enabled" : "disabled")}; " +
             $"visionRestartInterval={Config.VisionLookAroundRestartIntervalSeconds:0.###}s; " +

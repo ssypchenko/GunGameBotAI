@@ -75,6 +75,7 @@ debug/observation-only facilities default to disabled. In particular:
   "HearingMonitorEnabled": false,
   "HearingDebug": false,
   "HearingReactionEnabled": false,
+  "HearingReactionLookMode": 0,
   "HearingReactionMinSeconds": 0.10,
   "HearingReactionMaxSeconds": 0.25,
   "HearingReactionHoldSeconds": 0.25,
@@ -139,7 +140,9 @@ acceptance. A new Valve enemy `NoiseTimestamp` inside
 `HearingReactionMaxDistance` may create a random
 `HearingReactionMinSeconds..HearingReactionMaxSeconds` delay followed by a
 short `HearingReactionHoldSeconds` `EyeAngles.Y` hold toward the copied
-`NoisePosition`. `HearingReactionYawToleranceDegrees` suppresses redundant
+`NoisePosition`. The opt-in `HearingReactionLookMode` may be 0 (existing
+feedback), 1 (single bounded Valve LookAtSpot request), or 2 (the same plus
+one LookYaw seed); the new modes require runtime testing. `HearingReactionYawToleranceDegrees` suppresses redundant
 yaw writes and `HearingReactionCooldownSeconds` prevents immediate repeated
 leases. `NoiseSource` is used only for team/entity validation; the source
 pawn's current position is never read. Stage 6B never assigns Enemy and never

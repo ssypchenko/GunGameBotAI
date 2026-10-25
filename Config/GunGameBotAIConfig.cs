@@ -262,9 +262,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool HearingDebug { get; set; } = false;
 
     // Stage 6B bounded hearing reaction. Uses only Valve's imprecise
-    // NoisePosition snapshot from a validated enemy NoiseSource. It may hold
-    // EyeAngles.Y briefly but never changes Enemy, navigation, movement or fire.
+    // NoisePosition snapshot from a validated enemy NoiseSource. The default
+    // uses EyeAngles.Y; experimental 6B.2 modes write a short-lived Valve
+    // LookAtSpot request, optionally seeding LookYaw once. Neither controls
+    // Enemy, navigation, movement or fire.
     public bool HearingReactionEnabled { get; set; } = false;
+    // 0 = existing EyeAngles.Y corrections; 1 = Valve LookAtSpot lease;
+    // 2 = experimental LookAtSpot plus one-time internal LookYaw seed.
+    // Neither Valve mode repeats EyeAngles writes. Default stays at 0.
+    public int HearingReactionLookMode { get; set; } = 0;
     public float HearingReactionMinSeconds { get; set; } = 0.10f;
     public float HearingReactionMaxSeconds { get; set; } = 0.25f;
     public float HearingReactionHoldSeconds { get; set; } = 0.25f;
@@ -321,6 +327,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
         VisionMonitorDistance = Clamp(VisionMonitorDistance, 100.0f, 2000.0f, 800.0f, nameof(VisionMonitorDistance), warn);
+        HearingReactionLookMode = Clamp(
+            HearingReactionLookMode,
+            0,
+            2,
+            0,
+            nameof(HearingReactionLookMode),
+            warn);
         HearingReactionMinSeconds = Clamp(
             HearingReactionMinSeconds,
             0.05f,

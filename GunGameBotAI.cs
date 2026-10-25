@@ -2286,6 +2286,48 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         }
     }
 
+    [ConsoleCommand("css_ggbotai_regroup_debug", "Show or toggle post-kill retreat measurements.")]
+    [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnRegroupDebugCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (command.ArgCount >= 2)
+        {
+            if (!TryParseBinary(command.GetArg(1), out bool enabled))
+            {
+                command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_regroup_debug 0|1");
+                return;
+            }
+
+            Config.PostKillRegroupDebug = enabled;
+        }
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] regroupDebug={(Config.PostKillRegroupDebug ? "enabled" : "disabled")}; " +
+            "logs=REGROUP-SKIP/START/MOVE/UPGRADE/END; source=actual-pawn-position; " +
+            "persistence=none.");
+    }
+
+    [ConsoleCommand("css_ggbotai_knife_attack_debug", "Show or toggle knife input and hit diagnostics.")]
+    [CommandHelper(whoCanExecute: CommandUsage.SERVER_ONLY)]
+    public void OnKnifeAttackDebugCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (command.ArgCount >= 2)
+        {
+            if (!TryParseBinary(command.GetArg(1), out bool enabled))
+            {
+                command.ReplyToCommand("[GunGameBotAI] Usage: css_ggbotai_knife_attack_debug 0|1");
+                return;
+            }
+
+            Config.KnifeAttackDebug = enabled;
+        }
+
+        command.ReplyToCommand(
+            $"[GunGameBotAI] knifeAttackDebug={(Config.KnifeAttackDebug ? "enabled" : "disabled")}; " +
+            "logs=KNIFE-REQUEST/INPUT-QUEUED/WEAPON-FIRE/HURT-EVENT/HIT-MATCH/HIT-UNMATCHED/KILL-EVENT; " +
+            "event-attack-variant=unavailable; persistence=none.");
+    }
+
     [ConsoleCommand("css_ggbotai_testknife", "Test public bot knife activation.")]
     [CommandHelper(minArgs: 1, usage: "<slot>", whoCanExecute: CommandUsage.SERVER_ONLY)]
     public void OnTestKnifeCommand(CCSPlayerController? player, CommandInfo command)

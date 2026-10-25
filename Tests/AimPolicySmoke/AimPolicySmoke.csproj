@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile actual production policy and lightweight domain models,
+         without loading CounterStrikeSharp or requiring a game server. -->
+    <Compile Include="../../Services/AimPolicyService.cs" Link="AimPolicyService.cs" />
+    <Compile Include="../../Models/AimMode.cs" Link="AimMode.cs" />
+    <Compile Include="../../Models/WeaponClass.cs" Link="WeaponClass.cs" />
+    <Compile Include="../../Models/AimVisibility.cs" Link="AimVisibility.cs" />
+  </ItemGroup>
+</Project>

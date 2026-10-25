@@ -118,6 +118,27 @@ Source of truth: `docs/capabilities/hearing-monitor.md`,
 `docs/capabilities/hearing-reaction.md`,
 `docs/native-signature-maintenance.md`.
 
+## Stage 4 weapon-aware aim priority update (25 October 2026)
+
+The existing `AimPolicyService` already preferred HEAD for rifles,
+pistols and SMGs, and CHEST for shotguns, AWP and SSG08. However,
+the old `AimService` implementation retained *any* visible Valve
+point, even a chest point in the head-first class. The updated
+`PickNewAimSpot` PostHook selects the first physically visible
+preferred point **before** deciding whether the Valve point is good.
+It preserves Valve aim only within 4 world units of that preferred
+point and when the Valve point itself is on the enemy and visible.
+Candidate fallback now covers HEAD, UPPER_CHEST, CHEST, GUT and PELVIS.
+The AABB HEAD point is approximate, not a verified head hitbox.
+
+The small dependency-free .NET 10 smoke project is
+`Tests/AimPolicySmoke/AimPolicySmoke.csproj`. It covers weapon
+preference, fallback order and small spatial tolerance without CS2.
+Compile/test status of the changed runtime hook and full-game aim
+effects is **pending**. Specifically check `aimHooked=True`,
+`AimMode=Mixed`, head versus shotgun point, obstructed targets and
+the `aimPerf` cost. See `docs/capabilities/aim-service.md`.
+
 ## Stable/accepted systems
 
 The following are considered established unless a new regression demonstrates

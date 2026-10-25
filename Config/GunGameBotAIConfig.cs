@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 48;
+    public override int Version { get; set; } = 49;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -228,6 +228,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     // Post-kill GunGame regroup. A low-health kill or proximity to an
     // opposing team spawn may trigger one short, geometry-checked retreat.
     public bool PostKillRegroupEnabled { get; set; } = true;
+    public bool PostKillRegroupDebug { get; set; } = false;
     public int PostKillRegroupHealthThreshold { get; set; } = 55;
     public float PostKillRegroupSpawnRadius { get; set; } = 650.0f;
     public float PostKillRegroupRetreatDistance { get; set; } = 160.0f;
@@ -244,6 +245,7 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float KnifeGunfireMaxAgeSeconds { get; set; } = 4.0f;
     public float KnifeGunfireMaxDistance { get; set; } = 1400.0f;
 
+    public bool KnifeAttackDebug { get; set; } = false;
     public bool KnifeRushEnabled { get; set; } = true;
     public int KnifeRushChancePercent { get; set; } = 50;
     public float KnifeRushTriggerDistance { get; set; } = 400.0f;
@@ -1150,6 +1152,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // Retain existing settings and initialise the independent crouch
             // duration only if it is missing from the configuration.
             Version = 48;
+        }
+
+        if (Version < 49)
+        {
+            // Both new diagnostics default to off; retain other settings.
+            Version = 49;
         }
     }
 

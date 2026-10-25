@@ -95,6 +95,14 @@ public sealed class BotRuntimeState
     public bool RegroupReloadIssued { get; set; }
     public int RegroupLastHealth { get; set; }
 
+    // Position samples measure actual movement, not requested input.
+    public Vector3 RegroupDiagnosticOrigin { get; set; }
+    public Vector3 RegroupDiagnosticLastPosition { get; set; }
+    public Vector3 RegroupDiagnosticDirection { get; set; }
+    public float RegroupDiagnosticPath { get; set; }
+    public float RegroupDiagnosticNextLogAt { get; set; }
+    public int RegroupDiagnosticSamples { get; set; }
+
     public void ResetRegroup(bool clearCooldown = false)
     {
         RegroupActive = false;
@@ -108,6 +116,12 @@ public sealed class BotRuntimeState
         RegroupCrouchUntil = 0.0f;
         RegroupReloadIssued = false;
         RegroupLastHealth = 0;
+        RegroupDiagnosticOrigin = default;
+        RegroupDiagnosticLastPosition = default;
+        RegroupDiagnosticDirection = default;
+        RegroupDiagnosticPath = 0.0f;
+        RegroupDiagnosticNextLogAt = 0.0f;
+        RegroupDiagnosticSamples = 0;
         if (clearCooldown)
             RegroupCooldownUntil = 0.0f;
     }

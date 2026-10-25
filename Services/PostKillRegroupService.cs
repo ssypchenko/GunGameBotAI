@@ -29,17 +29,20 @@ public sealed class PostKillRegroupService
     private readonly ButtonPulseService _buttons;
     private readonly VisibilityTraceService _visibility;
     private readonly CorrectionLogger _corrections;
+    private readonly Action<string> _diagnosticLog;
 
     public PostKillRegroupService(
         TransientControlService control,
         ButtonPulseService buttons,
         VisibilityTraceService visibility,
-        CorrectionLogger corrections)
+        CorrectionLogger corrections,
+        Action<string> diagnosticLog)
     {
         _control = control;
         _buttons = buttons;
         _visibility = visibility;
         _corrections = corrections;
+        _diagnosticLog = diagnosticLog;
     }
 
     public GunGameBotAIConfig Config { get; set; } = new();
@@ -57,8 +60,10 @@ public sealed class PostKillRegroupService
         Vector3? victimPosition,
         float now)
     {
-        if (!Config.PostKillRegroupEnabled ||
-            state.RegroupActive ||
+        if (!Config.PostKillRegroupEnabled)
+            return;
+
+        if (state.RegroupActive ||
             now < state.RegroupCooldownUntil ||
             state.HasBeenControlledByPlayerThisRound ||
             state.Mode is not (BotBehaviorMode.NormalGunGame or BotBehaviorMode.GrenadeLevel) ||
@@ -66,6 +71,9 @@ public sealed class PostKillRegroupService
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER ||
             !NativeValueReader.TryGetOrigin(pawn, out Vector3 origin))
         {
+            Trace($"REGROUP-SKIP slot={state.Slot}; reason=ineligible-or-cooldown; " +
+                $"mode={state.Mode}; weapon={state.LevelWeaponClass}; health={pawn.Health}; " +
+                $"active={state.RegroupActive}; cooldownRemaining={MathF.Max(0.0f, state.RegroupCooldownUntil - now):0.###}s");
             return;
         }
 
@@ -88,7 +96,11 @@ public sealed class PostKillRegroupService
             away = -Facing(pawn.EyeAngles.Y);
 
         if (!TryChooseSafeDirection(pawn, origin, Vector3.Normalize(away), retreatDistance, out Vector3 direction))
+        {
+            Trace($"REGROUP-SKIP slot={state.Slot}; reason=no-safe-direction; " +
+                $"health={pawn.Health}; grenade={grenadeLevel}; planned={retreatDistance:0.#}u");
             return;
+        }
 
         state.RegroupActive = true;
         state.RegroupStartedAt = now;
@@ -106,7 +118,19 @@ public sealed class PostKillRegroupService
         state.RegroupDirection = direction;
         state.RegroupReloadIssued = false;
         state.RegroupLastHealth = pawn.Health;
+        state.RegroupDiagnosticOrigin = origin;
+        state.RegroupDiagnosticLastPosition = origin;
+        state.RegroupDiagnosticDirection = direction;
+        state.RegroupDiagnosticPath = 0.0f;
+        state.RegroupDiagnosticSamples = 0;
+        state.RegroupDiagnosticNextLogAt = now + 0.35f;
         Started++;
+
+        Trace($"REGROUP-START slot={state.Slot}; health={pawn.Health}; " +
+            $"grenade={grenadeLevel}; nearSpawn={nearSpawn}; " +
+            $"planned={retreatDistance:0.#}u; moveUntil={state.RegroupMoveUntil - now:0.##}s; " +
+            $"origin=({origin.X:0.#},{origin.Y:0.#},{origin.Z:0.#}); " +
+            $"direction=({direction.X:0.###},{direction.Y:0.###})");
 
         _corrections.Action(state.Slot, nameof(PostKillRegroupService), "regroup", "started",
             $"health={pawn.Health}; defensive={defensive}; nearSpawn={nearSpawn}; distance={retreatDistance:0}; " +
@@ -129,6 +153,10 @@ public sealed class PostKillRegroupService
         if (!state.RegroupActive)
             return false;
 
+        bool hasPosition = NativeValueReader.TryGetOrigin(pawn, out Vector3 position);
+        if (hasPosition)
+            SamplePosition(state, position, now);
+
         if (!Config.PostKillRegroupEnabled ||
             freezePeriod ||
             state.HasBeenControlledByPlayerThisRound ||
@@ -137,9 +165,20 @@ public sealed class PostKillRegroupService
             enemy is { IsVisible: true } ||
             pawn.Health < state.RegroupLastHealth ||
             pawn.MovementServices == null ||
-            !NativeValueReader.TryGetOrigin(pawn, out Vector3 position))
+            !hasPosition)
         {
-            Cancel(state, pawn);
+            string reason = enemy is { IsVisible: true }
+                ? "visible-enemy"
+                : pawn.Health < state.RegroupLastHealth
+                    ? "damage"
+                    : pawn.MoveType == MoveType_t.MOVETYPE_LADDER
+                        ? "ladder"
+                        : state.LevelWeaponClass == WeaponClass.Knife
+                            ? "knife-level"
+                            : freezePeriod
+                                ? "freeze-period"
+                                : "invalid-or-disabled";
+            Cancel(state, pawn, reason);
             return false;
         }
 
@@ -156,10 +195,12 @@ public sealed class PostKillRegroupService
                     pawn, position, state.RegroupDirection,
                     Config.PostKillRegroupRetreatDistance, out Vector3 direction))
             {
-                Cancel(state, pawn);
+                Cancel(state, pawn, "upgrade-route-unavailable");
                 return false;
             }
 
+            Trace($"REGROUP-UPGRADE slot={state.Slot}; reason=grenade-level; " +
+                $"remainingDistance={Config.PostKillRegroupRetreatDistance:0.#}u");
             state.RegroupOrigin = position;
             state.RegroupDirection = direction;
             state.RegroupRetreatDistance = Config.PostKillRegroupRetreatDistance;
@@ -202,6 +243,8 @@ public sealed class PostKillRegroupService
 
         if (now >= state.RegroupHoldUntil)
         {
+            SamplePosition(state, position, now);
+            TraceFinish(state, now, "completed");
             _control.CancelOwner(state.Slot, LeaseOwner, pawn);
             state.ResetRegroup();
             Completed++;
@@ -216,14 +259,64 @@ public sealed class PostKillRegroupService
             duck: now < state.RegroupCrouchUntil);
     }
 
-    public void Cancel(BotRuntimeState state, CCSPlayerPawn? pawn = null)
+    public void Cancel(
+        BotRuntimeState state,
+        CCSPlayerPawn? pawn = null,
+        string reason = "external-control")
     {
         if (!state.RegroupActive)
             return;
 
+        if (pawn != null && NativeValueReader.TryGetOrigin(pawn, out Vector3 position))
+            SamplePosition(state, position, Server.CurrentTime);
+
+        TraceFinish(state, Server.CurrentTime, reason);
         _control.CancelOwner(state.Slot, LeaseOwner, pawn);
         state.ResetRegroup();
         Interrupted++;
+    }
+
+    private void SamplePosition(BotRuntimeState state, Vector3 position, float now)
+    {
+        if (!Config.PostKillRegroupDebug)
+            return;
+
+        state.RegroupDiagnosticPath += Distance2D(
+            state.RegroupDiagnosticLastPosition, position);
+        state.RegroupDiagnosticLastPosition = position;
+        state.RegroupDiagnosticSamples++;
+
+        if (now < state.RegroupDiagnosticNextLogAt)
+            return;
+
+        state.RegroupDiagnosticNextLogAt = now + 0.35f;
+        Vector3 displacement = position - state.RegroupDiagnosticOrigin;
+        float net = Distance2D(position, state.RegroupDiagnosticOrigin);
+        float along = Vector3.Dot(displacement, state.RegroupDiagnosticDirection);
+        Trace($"REGROUP-MOVE slot={state.Slot}; elapsed={now - state.RegroupStartedAt:0.###}s; " +
+            $"net={net:0.#}u; path={state.RegroupDiagnosticPath:0.#}u; " +
+            $"along={along:0.#}u; samples={state.RegroupDiagnosticSamples}; " +
+            $"position=({position.X:0.#},{position.Y:0.#},{position.Z:0.#})");
+    }
+
+    private void TraceFinish(BotRuntimeState state, float now, string result)
+    {
+        if (!Config.PostKillRegroupDebug)
+            return;
+
+        Vector3 displacement = state.RegroupDiagnosticLastPosition - state.RegroupDiagnosticOrigin;
+        float net = Distance2D(state.RegroupDiagnosticLastPosition, state.RegroupDiagnosticOrigin);
+        float along = Vector3.Dot(displacement, state.RegroupDiagnosticDirection);
+        Trace($"REGROUP-END slot={state.Slot}; result={result}; elapsed={now - state.RegroupStartedAt:0.###}s; " +
+            $"net={net:0.#}u; path={state.RegroupDiagnosticPath:0.#}u; " +
+            $"along={along:0.#}u; samples={state.RegroupDiagnosticSamples}; " +
+            $"movedAway={(along >= 24.0f ? "yes" : "no")}");
+    }
+
+    private void Trace(string message)
+    {
+        if (Config.PostKillRegroupDebug)
+            _diagnosticLog(message);
     }
 
     public void ResetStatistics()

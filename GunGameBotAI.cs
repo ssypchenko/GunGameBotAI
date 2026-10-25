@@ -92,7 +92,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _visibilityTrace = new VisibilityTraceService(
             _aimPointProvider);
         _postKillRegroup = new PostKillRegroupService(
-            _transientControl, _buttonPulses, _visibilityTrace, _corrections);
+            _transientControl, _buttonPulses, _visibilityTrace, _corrections,
+            message => Logger.LogInformation("[GunGameBotAI][Regroup] {Message}", message));
         _knifeRecovery = new KnifeRecoveryService(
             _transientControl, _visibilityTrace);
         _grenadeLevel = new GrenadeLevelService(_corrections, _weaponActivation,
@@ -155,7 +156,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.9";
+    public override string ModuleVersion => "0.8.10";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 

@@ -48,7 +48,7 @@ compile and live-server test locally.
 
 ## HE grenade control — Stage 10/11 (25 October 2026)
 
-**Source implemented in branch; Release build and live server tests pending.**
+**Source implemented; Release build and live server tests pending.**
 The new logic is in `GrenadeLevelService` with pure policy in
 `GrenadeThrowPolicy`. The existing WeaponActivationService,
 VisibilityTraceService and ButtonPulseService are reused.
@@ -60,9 +60,12 @@ VisibilityTraceService and ButtonPulseService are reused.
   It prefers a physically visible Valve enemy. If Valve has no suitable
   enemy, it considers live opponents with a visible chest point and
   selects the nearest candidate in the configured range.
+- An owned HE remains selected even while waiting for a suitable throw
+  target. A pistol is never the ordinary first choice while HE remains.
 - The throw uses short velocity lead and bounded elevation. The
   high-frequency actuator holds HE selection, checks angle read-back,
-  waits for deployment and sends one bounded Attack pulse. This is an
+  waits for deployment and a grounded bot, then sends one bounded Attack
+  pulse. This is an
   initial direct-throw approximation, not a physics trajectory solver.
 - If an opponent visibly carries a knife at close range or approaches
   quickly, the controller holds an owned pistol instead. It returns

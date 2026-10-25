@@ -126,7 +126,9 @@ Stage 6C route investigation and respawn memory are NOT implemented.
 
 ## Stage 6 managed look-around verification
 
-Stage 6 defaults to disabled:
+`VisionEnhancementEnabled` now defaults to `true` in ConfigVersion 45
+(the plugin-wide runtime defaults to off). For a controlled A/B test,
+first disable managed vision enhancement:
 
 ```text
 css_ggbotai_vision_enhancement 0

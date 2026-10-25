@@ -131,6 +131,7 @@ public sealed class GrenadeLevelService
             !GrenadeThrowPolicy.IsUsefulDistance(
                 distance, Config.GrenadeMinThrowDistance, Config.GrenadeMaxThrowDistance) ||
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER ||
+            (pawn.Flags & (uint)PlayerFlags.FL_ONGROUND) == 0 ||
             !TryGetEye(bot, pawn, out Vector3 eye) ||
             !GrenadeThrowPolicy.TryGetThrowAngles(eye, chest, enemyVelocity,
                 Config.GrenadeLeadSeconds, Config.GrenadeArcFactor,
@@ -216,6 +217,9 @@ public sealed class GrenadeLevelService
             target.TeamNum == pawn.TeamNum ||
             checked((int)target.Index) != state.GrenadeTargetEntityIndex)
             return false;
+
+        if ((pawn.Flags & (uint)PlayerFlags.FL_ONGROUND) == 0)
+            return true;
 
         if (!TryReadAngles(pawn, out float currentPitch, out float currentYaw))
             return true;

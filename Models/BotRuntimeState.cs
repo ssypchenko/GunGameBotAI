@@ -75,6 +75,23 @@ public sealed class BotRuntimeState
     public int? GunGameLevel { get; set; }
     public int? GunGameMaxLevel { get; set; }
 
+    // Stage 10/11: per-life grenade intent.
+    public int GrenadeTargetSlot { get; set; } = -1;
+    public int GrenadeTargetEntityIndex { get; set; } = -1;
+    public float GrenadeTargetExpiresAt { get; set; }
+    public float GrenadeTargetPitch { get; set; }
+    public float GrenadeTargetYaw { get; set; }
+    public bool GrenadeDefending { get; set; }
+    public bool GrenadeConsumed { get; set; }
+    public bool GrenadeMissingObserved { get; set; }
+    public nint GrenadeOwnedHandle { get; set; }
+    public nint GrenadeThrownHandle { get; set; }
+    public float GrenadeSelectedAt { get; set; } = float.NegativeInfinity;
+    public float GrenadeAimAlignedSince { get; set; } = float.NegativeInfinity;
+    public float GrenadeNextSwitchAt { get; set; }
+    public float GrenadeThrowPendingUntil { get; set; }
+    public float GrenadeNextAttemptAt { get; set; }
+
     // ---------------------------------------------------------------------
     // Ownership / human takeover
     // ---------------------------------------------------------------------
@@ -159,6 +176,25 @@ public sealed class BotRuntimeState
         LastCombatStrafeAt = float.NegativeInfinity;
     }
 
+    public void ResetGrenadeState()
+    {
+        GrenadeTargetSlot = -1;
+        GrenadeTargetEntityIndex = -1;
+        GrenadeTargetExpiresAt = 0.0f;
+        GrenadeTargetPitch = 0.0f;
+        GrenadeTargetYaw = 0.0f;
+        GrenadeDefending = false;
+        GrenadeConsumed = false;
+        GrenadeMissingObserved = false;
+        GrenadeOwnedHandle = nint.Zero;
+        GrenadeThrownHandle = nint.Zero;
+        GrenadeSelectedAt = float.NegativeInfinity;
+        GrenadeAimAlignedSince = float.NegativeInfinity;
+        GrenadeNextSwitchAt = 0.0f;
+        GrenadeThrowPendingUntil = 0.0f;
+        GrenadeNextAttemptAt = 0.0f;
+    }
+
     public void ResetWeaponState()
     {
         LevelWeaponDesignerName = null;
@@ -166,5 +202,6 @@ public sealed class BotRuntimeState
 
         GunGameLevel = null;
         GunGameMaxLevel = null;
+        ResetGrenadeState();
     }
 }

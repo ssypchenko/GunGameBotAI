@@ -23,7 +23,7 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.5
+GunGameBotAI 0.8.6
 ConfigVersion 45
 CounterStrikeSharp.API 1.0.378
 target framework net10.0

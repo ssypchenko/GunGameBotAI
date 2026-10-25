@@ -23,7 +23,7 @@ they immediately affect the running plugin and do **not** call
 
 This policy applies to all operator commands, including Aim, Hearing,
 Vision, Enemy Reaction, Knife Rush, ladder traversal switches and debug
-settings. The schema version is `46`. Updated startup defaults do not replace
+settings. The schema version is `47`. Updated startup defaults do not replace
 values already saved in an existing server configuration.
 
 The production visible-enemy correction is `EnemyReactionService`. It defaults
@@ -35,7 +35,7 @@ refreshes Valve perception state, and may call the validated native
 
 The default profile is production-oriented:
 
-The ConfigVersion 46 production profile keeps `EnabledOnLoad=false` as the
+The ConfigVersion 47 production profile keeps `EnabledOnLoad=false` as the
 master runtime gate. Behaviour-changing bot features default to enabled, while
 debug/observation-only facilities default to disabled. In particular:
 `Debug=false`, `VerboseCorrectionDebug=false`, `AimDebug=false`,
@@ -46,7 +46,7 @@ debug/observation-only facilities default to disabled. In particular:
 
 ```json
 {
-  "ConfigVersion": 46,
+  "ConfigVersion": 47,
   "EnabledOnLoad": false,
   "Debug": false,
   "VerboseCorrectionDebug": false,
@@ -54,6 +54,13 @@ debug/observation-only facilities default to disabled. In particular:
   "FastActuatorEveryTicks": 1,
   "IdleRepathEnabled": true,
   "IdleRepathSeconds": 2,
+  "PostKillRegroupEnabled": true,
+  "PostKillRegroupHealthThreshold": 55,
+  "PostKillRegroupSpawnRadius": 650,
+  "PostKillRegroupRetreatDistance": 160,
+  "PostKillRegroupMoveSeconds": 1.35,
+  "PostKillRegroupHoldSeconds": 0.8,
+  "PostKillRegroupCooldownSeconds": 4,
   "LadderEntryJumpEnabled": true,
   "CombatStrafeEnabled": true,
   "CounterStrafeEnabled": true,
@@ -109,7 +116,7 @@ default on the reviewed Linux server profile, but remains build-sensitive
 and must be revalidated after CS2 updates. An unavailable signature
 disables the native path rather than falling back to direct yaw writes.
 
-`ConfigVersion` is migrated by the plugin; the production-default profile uses version `46`.
+`ConfigVersion` is migrated by the plugin; the production-default profile uses version `47`.
 Existing installations which never had the Stage 5/6 properties receive
 safe defaults: `VisionMonitorEnabled=false`,
 `VisionMonitorDistance=800.0`, `VisionEnhancementEnabled=false`, and

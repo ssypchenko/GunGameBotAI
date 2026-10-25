@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace GunGameBotAI.Models;
 
 /// <summary>
@@ -66,6 +68,32 @@ public sealed class BotRuntimeState
     public float LastCombatStrafeAt { get; set; } = float.NegativeInfinity;
 
     // ---------------------------------------------------------------------
+    // Bounded post-kill regroup
+    // ---------------------------------------------------------------------
+
+    public bool RegroupActive { get; set; }
+    public Vector3 RegroupOrigin { get; set; }
+    public Vector3 RegroupDirection { get; set; }
+    public float RegroupStartedAt { get; set; }
+    public float RegroupMoveUntil { get; set; }
+    public float RegroupHoldUntil { get; set; }
+    public float RegroupCooldownUntil { get; set; }
+    public bool RegroupReloadIssued { get; set; }
+
+    public void ResetRegroup(bool clearCooldown = false)
+    {
+        RegroupActive = false;
+        RegroupOrigin = default;
+        RegroupDirection = default;
+        RegroupStartedAt = 0.0f;
+        RegroupMoveUntil = 0.0f;
+        RegroupHoldUntil = 0.0f;
+        RegroupReloadIssued = false;
+        if (clearCooldown)
+            RegroupCooldownUntil = 0.0f;
+    }
+
+    // ---------------------------------------------------------------------
     // GunGame weapon / level
     // ---------------------------------------------------------------------
 
@@ -112,6 +140,7 @@ public sealed class BotRuntimeState
         ClearEnemyEncounter();
         ResetKnifeRushRuntime(clearCooldown: true);
         ResetIdleAndCombatState();
+        ResetRegroup(clearCooldown: true);
         ResetWeaponState();
 
         HasBeenControlledByPlayerThisRound = false;

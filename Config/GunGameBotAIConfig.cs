@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 46;
+    public override int Version { get; set; } = 47;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -225,6 +225,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool CounterStrafeEnabled { get; set; } = true;
     public bool SniperPeekEnabled { get; set; } = true;
 
+    // Post-kill GunGame regroup. A low-health kill or proximity to an
+    // opposing team spawn may trigger one short, geometry-checked retreat.
+    public bool PostKillRegroupEnabled { get; set; } = true;
+    public int PostKillRegroupHealthThreshold { get; set; } = 55;
+    public float PostKillRegroupSpawnRadius { get; set; } = 650.0f;
+    public float PostKillRegroupRetreatDistance { get; set; } = 160.0f;
+    public float PostKillRegroupMoveSeconds { get; set; } = 1.35f;
+    public float PostKillRegroupHoldSeconds { get; set; } = 0.80f;
+    public float PostKillRegroupCooldownSeconds { get; set; } = 4.0f;
+
     public bool KnifeRushEnabled { get; set; } = true;
     public int KnifeRushChancePercent { get; set; } = 50;
     public float KnifeRushTriggerDistance { get; set; } = 400.0f;
@@ -336,6 +346,12 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         DecisionIntervalSeconds = Clamp(DecisionIntervalSeconds, 0.05f, 0.25f, 0.10f, nameof(DecisionIntervalSeconds), warn);
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 2.0f, nameof(IdleRepathSeconds), warn);
+        PostKillRegroupHealthThreshold = Clamp(PostKillRegroupHealthThreshold, 1, 100, 55, nameof(PostKillRegroupHealthThreshold), warn);
+        PostKillRegroupSpawnRadius = Clamp(PostKillRegroupSpawnRadius, 100.0f, 1600.0f, 650.0f, nameof(PostKillRegroupSpawnRadius), warn);
+        PostKillRegroupRetreatDistance = Clamp(PostKillRegroupRetreatDistance, 64.0f, 320.0f, 160.0f, nameof(PostKillRegroupRetreatDistance), warn);
+        PostKillRegroupMoveSeconds = Clamp(PostKillRegroupMoveSeconds, 0.30f, 3.0f, 1.35f, nameof(PostKillRegroupMoveSeconds), warn);
+        PostKillRegroupHoldSeconds = Clamp(PostKillRegroupHoldSeconds, 0.0f, 2.0f, 0.80f, nameof(PostKillRegroupHoldSeconds), warn);
+        PostKillRegroupCooldownSeconds = Clamp(PostKillRegroupCooldownSeconds, 1.0f, 15.0f, 4.0f, nameof(PostKillRegroupCooldownSeconds), warn);
         GrenadeMinThrowDistance = Clamp(GrenadeMinThrowDistance, 150.0f, 450.0f, 220.0f, nameof(GrenadeMinThrowDistance), warn);
         GrenadeMaxThrowDistance = Clamp(GrenadeMaxThrowDistance, GrenadeMinThrowDistance, 1400.0f, 850.0f, nameof(GrenadeMaxThrowDistance), warn);
         GrenadeKnifeDefenceDistance = Clamp(GrenadeKnifeDefenceDistance, 100.0f, 350.0f, 230.0f, nameof(GrenadeKnifeDefenceDistance), warn);
@@ -1104,6 +1120,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // Missing properties use the Stage 10/11 defaults. Preserve other
             // operator settings while moving the schema version forward.
             Version = 46;
+        }
+
+        if (Version < 47)
+        {
+            // Regroup defaults are initialised only for missing properties.
+            // Do not overwrite existing operator settings.
+            Version = 47;
         }
     }
 

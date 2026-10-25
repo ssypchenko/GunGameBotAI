@@ -23,8 +23,8 @@ Usual local checkout:
 Current development target after this handover:
 
 ```text
-GunGameBotAI 0.8.7
-ConfigVersion 46
+GunGameBotAI 0.8.8
+ConfigVersion 47
 CounterStrikeSharp.API 1.0.378
 target framework net10.0
 ```
@@ -45,6 +45,37 @@ Source-level review is distinct from build and live server verification.
 The assistant development environment used for these changes does not have the
 project's .NET SDK/runtime available, so Sergey performs the authoritative
 compile and live-server test locally.
+
+## Post-kill regroup — 25 October 2026
+
+**Source implemented, build and live tests pending.** A GunGame-connected
+bot that scores a valid opposing-team kill can make a short retreat when
+health is at most 55 or an opposing team spawn is within 650 units.
+It uses a geometry-clear direction away from the nearby spawn or last kill.
+The destination requires a nearby floor trace. The manoeuvre runs for
+at most 1.35 seconds or 160 units, then pauses and crouches for 0.80 seconds.
+A single Reload pulse is sent after a 0.40-second weapon-settle delay.
+The cooldown is 4 seconds.
+
+The shared TransientControlService owns only bounded movement leases; Valve
+retains navigation, target selection and fire. Visible combat interrupts the
+manoeuvre. Knife, grenade, ladder, disabled runtime, takeover and round reset
+have priority. No extra native signature or dependency was added.
+
+This is a **short tactical retreat, not verified cover selection**. A trace
+cannot prove navmesh reachability, protect against dynamic objects, or predict
+a random GunGame respawn. Test short maps, vertical drops, moving geometry,
+weapon upgrades and repeated kills before enabling on a production server.
+The feature is enabled by default in config version 47 and can be disabled
+with `PostKillRegroupEnabled=false`. Existing configuration files retain
+their explicit values; previously missing properties receive defaults.
+Use `css_ggbotai_status` to inspect started/completed/interrupted counters.
+
+**Checks not executed in this environment:** .NET build, game-server tests and
+movement observation. After local build, verify the fallback on maps with no
+spawn entities, collision/floor detection, visible enemy interruption and
+post-kill weapon reload. Review `PlayerButtons.Reload` during a GunGame
+level-up. The source design may need tuning after gameplay observations.
 
 ## Startup configuration defaults — 25 October 2026
 

@@ -26,6 +26,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     private readonly AggressionService _aggression;
     private readonly IdleRecoveryService _idleRecovery;
     private readonly CombatMovementService _combatMovement;
+    private readonly PostKillRegroupService _postKillRegroup;
     private readonly GrenadeLevelService _grenadeLevel;
     private readonly WeaponActivationService _weaponActivation;
     private readonly KnifeRushService _knifeRush;
@@ -89,6 +90,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _aimPointProvider = new AabbAimPointProvider();
         _visibilityTrace = new VisibilityTraceService(
             _aimPointProvider);
+        _postKillRegroup = new PostKillRegroupService(
+            _transientControl, _buttonPulses, _visibilityTrace, _corrections);
         _grenadeLevel = new GrenadeLevelService(_corrections, _weaponActivation,
             _visibilityTrace, _buttonPulses);
         _visionMonitor = new VisionMonitorService(
@@ -149,7 +152,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.7";
+    public override string ModuleVersion => "0.8.8";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -527,6 +530,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 if (ladderTraversalActive)
                 {
+                    _postKillRegroup.Cancel(state, pawn);
+
                     // Learned ladder traversal owns movement before Knife Rush
                     // or normal combat movement. This keeps the one-shot entry
                     // jump and mount observation free from movement conflicts.
@@ -740,6 +745,14 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             controller.Slot,
             bot,
             now);
+
+        if (_postKillRegroup.ApplyDecision(
+                pawn, bot, state, enemy, now, IsFreezePeriod()))
+        {
+            SetMode(state, BotBehaviorMode.NormalGunGame, "post-kill regroup");
+            _registry.DeactivateActuator(state.Slot);
+            return;
+        }
 
         // Keep the generic recovery surface deliberately small. The retired
         // LadderAssist/StuckRecovery services repeatedly fought Valve bot AI and
@@ -1286,6 +1299,8 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         // Stage 2 leases plus Stage 3/4 aim and Stage 5 vision runtime state
         // are round-scoped even though aggregate diagnostics may survive.
         _transientControl.Clear();
+        foreach (BotRuntimeState state in _registry.States.Values)
+            state.ResetRegroup(clearCooldown: true);
         _visionMonitor.ClearRuntimeState();
         _hearingMonitor.ClearRuntimeState();
         _hearingReaction.ClearRuntimeState();
@@ -1337,6 +1352,40 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     EventPlayerDeath @event,
     GameEventInfo info)
     {
+        if (_enabled &&
+            !_mapChanging &&
+            _gunGameApi != null &&
+            @event.Attacker is { IsValid: true, IsBot: true } attacker &&
+            !attacker.IsHLTV &&
+            @event.Userid is { IsValid: true } victim &&
+            attacker.Slot != victim.Slot &&
+            attacker.TeamNum != victim.TeamNum &&
+            !IsBotInSpawnGrace(attacker, Server.CurrentTime) &&
+            _registry.TryGet(attacker.Slot, out BotRuntimeState? killerState) &&
+            killerState != null &&
+            BotValidation.TryResolveLiveBot(
+                attacker.Slot, out _, out CCSPlayerPawn? killerPawn, out _) &&
+            killerPawn != null)
+        {
+            System.Numerics.Vector3? victimPosition = null;
+            try
+            {
+                CCSPlayerPawn? victimPawn = victim.PlayerPawn.Value;
+                if (victimPawn != null &&
+                    victimPawn.IsValid &&
+                    NativeValueReader.TryGetOrigin(
+                        victimPawn, out System.Numerics.Vector3 origin))
+                    victimPosition = origin;
+            }
+            catch
+            {
+                // A dead pawn can disappear before this event is observed.
+            }
+
+            _postKillRegroup.OnKill(
+                killerPawn, killerState, victimPosition, Server.CurrentTime);
+        }
+
         int slot = @event.Userid?.Slot ?? -1;
 
         if (slot >= 0)
@@ -1474,6 +1523,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             state != null)
         {
             state.HasBeenControlledByPlayerThisRound = true;
+            state.ResetRegroup(clearCooldown: true);
 
             ReleaseButtonPulse(slot);
 
@@ -2191,6 +2241,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         {
             _knifeRush.ResetStatistics();
             _grenadeLevel.ResetStatistics();
+            _postKillRegroup.ResetStatistics();
         }
     }
 
@@ -2215,6 +2266,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         _transientControl.Clear();
         _knifeRush.ResetStatistics();
         _grenadeLevel.ResetStatistics();
+        _postKillRegroup.ResetStatistics();
     }
 
     private bool SynchronizeAimHook()
@@ -2239,6 +2291,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         _idleRecovery.Config = Config;
         _combatMovement.Config = Config;
+        _postKillRegroup.Config = Config;
         _grenadeLevel.Config = Config;
         _knifeRush.Config = Config;
         _geometrySafety.Config = Config;
@@ -2347,6 +2400,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"geometrySafety={Config.GeometrySafetyDetectionEnabled}; geometryTracked={_geometrySafety.TrackedCount}; " +
             $"stuckMonitor={Config.StuckMonitorEnabled}; stuckTracked={_stuckMonitor.TrackedCount}; stuckActive={_stuckMonitor.ActiveEventCount}.");
         command.ReplyToCommand(
+            $"[GunGameBotAI] regroup enabled={Config.PostKillRegroupEnabled}; started={_postKillRegroup.Started}; " +
+            $"completed={_postKillRegroup.Completed}; interrupted={_postKillRegroup.Interrupted}; " +
+            $"active={_registry.States.Values.Count(state => state.RegroupActive)}.");
+        command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] grenade targets={_grenadeLevel.Targets}; switches={_grenadeLevel.Switches}; defensiveSwitches={_grenadeLevel.DefensiveSwitches}; postThrowPistolSwitches={_grenadeLevel.PostThrowPistolSwitches}; throwAttempts={_grenadeLevel.ThrowAttempts}; confirmedThrows={_grenadeLevel.ConfirmedThrows}; rejectedTraces={_grenadeLevel.RejectedTraces}; enabled={Config.GrenadeThrowAssistEnabled}.");
@@ -2354,7 +2411,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         foreach (BotRuntimeState state in _registry.States.Values)
         {
             command.ReplyToCommand(
-                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; holdingHe={state.GrenadeHoldingHe}; consumed={state.GrenadeConsumed}; pistolFallback={state.GrenadePistolFallbackPending}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
+                $"[GunGameBotAI] slot={state.Slot}; mode={state.Mode}; weapon={state.LevelWeaponClass}; regroup={state.RegroupActive}; target={state.KnifeRushTargetEntityIndex?.ToString() ?? "none"}; switchAttempts={state.KnifeSwitchAttempts}; grenadeTarget={state.GrenadeTargetEntityIndex}; defending={state.GrenadeDefending}; holdingHe={state.GrenadeHoldingHe}; consumed={state.GrenadeConsumed}; pistolFallback={state.GrenadePistolFallbackPending}; throwPending={state.GrenadeThrowPendingUntil > Server.CurrentTime}.");
         }
     }
 

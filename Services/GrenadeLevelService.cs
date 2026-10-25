@@ -53,6 +53,7 @@ public sealed class GrenadeLevelService
             return;
 
         state.GrenadeConsumed = true;
+        state.GrenadeHoldingHe = false;
         state.GrenadeMissingObserved = false;
         state.GrenadeThrownHandle = state.GrenadeOwnedHandle;
         state.GrenadeTargetSlot = -1;
@@ -76,6 +77,7 @@ public sealed class GrenadeLevelService
         {
             state.GrenadeTargetSlot = -1;
             state.GrenadeDefending = false;
+            state.GrenadeHoldingHe = false;
             return;
         }
 
@@ -84,6 +86,7 @@ public sealed class GrenadeLevelService
         {
             state.GrenadeMissingObserved = true;
             state.GrenadeOwnedHandle = nint.Zero;
+            state.GrenadeHoldingHe = false;
             state.GrenadeTargetSlot = -1;
             state.GrenadeDefending = false;
             state.GrenadeSelectedAt = float.NegativeInfinity;
@@ -101,6 +104,7 @@ public sealed class GrenadeLevelService
 
         state.GrenadeOwnedHandle = grenade.Handle;
         state.GrenadeMissingObserved = false;
+        state.GrenadeHoldingHe = !state.GrenadeConsumed;
 
         if (state.GrenadeConsumed)
         {
@@ -152,9 +156,7 @@ public sealed class GrenadeLevelService
 
     public bool NeedsFastControl(BotRuntimeState state, float now) =>
         Config.GrenadeLevelEnabled && Config.GrenadeThrowAssistEnabled &&
-        !state.GrenadeConsumed &&
-        (state.GrenadeDefending ||
-         (state.GrenadeTargetSlot >= 0 && now <= state.GrenadeTargetExpiresAt));
+        !state.GrenadeConsumed && state.GrenadeHoldingHe;
 
     public bool ApplyFast(CCSPlayerController controller, CCSPlayerPawn pawn,
         BotRuntimeState state, float now)
@@ -179,6 +181,24 @@ public sealed class GrenadeLevelService
         if (now < state.GrenadeThrowPendingUntil)
             return false;
 
+        CBasePlayerWeapon? grenade = FindWeapon(pawn, WeaponClass.Grenade, heOnly: true);
+        if (grenade == null || grenade.Handle != state.GrenadeOwnedHandle)
+            return false;
+
+        if (!EnsureSelected(controller, pawn, state, grenade, now, defence: false))
+        {
+            state.GrenadeSelectedAt = float.NegativeInfinity;
+            return true;
+        }
+
+        if (state.GrenadeSelectedAt == float.NegativeInfinity)
+            state.GrenadeSelectedAt = now;
+
+        // Hold HE even without a throw opportunity. The pistol is reserved
+        // for knife defence or for the period after the HE is consumed.
+        if (state.GrenadeTargetSlot < 0 || now > state.GrenadeTargetExpiresAt)
+            return true;
+
         CCSPlayerPawn? target;
         try
         {
@@ -196,19 +216,6 @@ public sealed class GrenadeLevelService
             target.TeamNum == pawn.TeamNum ||
             checked((int)target.Index) != state.GrenadeTargetEntityIndex)
             return false;
-
-        CBasePlayerWeapon? grenade = FindWeapon(pawn, WeaponClass.Grenade, heOnly: true);
-        if (grenade == null || grenade.Handle != state.GrenadeOwnedHandle)
-            return false;
-
-        if (!EnsureSelected(controller, pawn, state, grenade, now, defence: false))
-        {
-            state.GrenadeSelectedAt = float.NegativeInfinity;
-            return true;
-        }
-
-        if (state.GrenadeSelectedAt == float.NegativeInfinity)
-            state.GrenadeSelectedAt = now;
 
         if (!TryReadAngles(pawn, out float currentPitch, out float currentYaw))
             return true;

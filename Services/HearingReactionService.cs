@@ -29,6 +29,7 @@ public sealed class HearingReactionService
     private const int SuppressedMinimumWrites = 10;
     private const float ValveLookHeightOffset = 32.0f;
     private const float ValveLookPositionTolerance = 1.0f;
+    private const float ValveLookFeedbackIntervalSeconds = 0.05f;
 
     private readonly Random _random = new();
     private readonly Action<string> _info;
@@ -62,6 +63,7 @@ public sealed class HearingReactionService
     private long _valveLookApplied;
     private long _valveLookOverrides;
     private long _valveLookRetained;
+    private long _valveLookReasserted;
     private long _valveLookReleased;
     private long _valveLookReached;
     private long _failures;
@@ -132,7 +134,8 @@ public sealed class HearingReactionService
                 $"lookSnapshotFailures={_lookSnapshotFailures}; readbackChecks={_writeReadbackChecks}; " +
                 $"readbackSurvived={_writeReadbackSurvived}; readbackLost={_writeReadbackLost}; " +
                 $"valveLookApplied={_valveLookApplied}; valveLookOverrides={_valveLookOverrides}; " +
-                $"valveLookRetained={_valveLookRetained}; valveLookReleased={_valveLookReleased}; " +
+                $"valveLookRetained={_valveLookRetained}; valveLookReasserted={_valveLookReasserted}; " +
+                $"valveLookReleased={_valveLookReleased}; " +
                 $"valveLookReached={_valveLookReached}; " +
                 $"avgReadbackErrorDeg={AverageReadbackErrorDegrees:0.0}; " +
                 $"maxReadbackErrorDeg={_maximumReadbackErrorDegrees:0.0}; " +
@@ -183,6 +186,7 @@ public sealed class HearingReactionService
         _valveLookApplied = 0;
         _valveLookOverrides = 0;
         _valveLookRetained = 0;
+        _valveLookReasserted = 0;
         _valveLookReleased = 0;
         _valveLookReached = 0;
         _failures = 0;
@@ -552,6 +556,8 @@ public sealed class HearingReactionService
         state.ValveLookReached = false;
         state.ValveLookPosition = default;
         state.ValveLookTimestamp = 0.0f;
+        state.ValveLookLastWriteAt = 0.0f;
+        state.ValveLookReasserted = 0;
 
         _started++;
         _totalRequestedDegrees +=
@@ -753,12 +759,16 @@ public sealed class HearingReactionService
 
         if (state.ValveLookApplied)
         {
-            ObserveValveLook(
-                bot,
-                currentYaw,
-                state);
-            // Valve must own the camera in modes 1/2. No EyeAngles writes or
-            // fast-tick forcing: an override is an observed test outcome.
+            if (!MaintainValveLook(bot, currentYaw, state, now))
+            {
+                _failures++;
+                Finish(controller, pawn, bot, state, now,
+                    "valve-look-feedback-failure", countOutcome: false);
+                return false;
+            }
+
+            // No direct EyeAngles write in mode 1/2. Reinforce the Valve look
+            // request only while yaw is off-target and at a bounded rate.
             return true;
         }
 
@@ -876,6 +886,7 @@ public sealed class HearingReactionService
                 $"readbackChecks={state.ReadbackChecks}; readbackSurvived={state.ReadbackSurvived}; " +
                 $"readbackLost={state.ReadbackLost}; maxReadbackError={state.MaxReadbackError:0.0}; " +
                 $"valveLookRetained={state.ValveLookRetained}; valveLookReached={state.ValveLookReached}; " +
+                $"valveLookReasserted={state.ValveLookReasserted}; " +
                 $"look={ReadAndFormatLookSnapshot(bot)}");
         }
 
@@ -912,11 +923,11 @@ public sealed class HearingReactionService
         state.ValveLookReached = false;
         state.ValveLookPosition = default;
         state.ValveLookTimestamp = 0.0f;
+        state.ValveLookLastWriteAt = 0.0f;
+        state.ValveLookReasserted = 0;
     }
 
-    // Unlike the old EyeAngles actuator, the Valve experiment issues one
-    // bounded request and then observes what the engine does with it.
-    // These are public CCSBot schema fields, not native signatures.
+    // Bounded Valve look readback feedback; no new native signatures.
     private bool TryApplyValveLook(
         CCSBot bot,
         ReactionState state,
@@ -959,7 +970,7 @@ public sealed class HearingReactionService
             if (Config.HearingReactionLookMode == 2)
             {
                 // Explicitly experimental: seed internal look interpolation
-                // once, not every tick, and do not force pawn EyeAngles.
+                // at each bounded correction, never every fast tick.
                 bot.LookYaw = NormalizePositiveYaw(state.TargetYaw);
                 bot.LookYawVel = 0.0f;
             }
@@ -967,6 +978,8 @@ public sealed class HearingReactionService
             state.ValveLookApplied = true;
             state.ValveLookPosition = position;
             state.ValveLookTimestamp = now;
+            state.ValveLookLastWriteAt = now;
+            state.ValveLookChecked = false;
             _valveLookApplied++;
             return true;
         }
@@ -976,27 +989,43 @@ public sealed class HearingReactionService
         }
     }
 
-    private void ObserveValveLook(
+    private bool MaintainValveLook(
         CCSBot bot,
         float currentYaw,
-        ReactionState state)
+        ReactionState state,
+        float now)
     {
-        if (!state.ValveLookChecked)
+        bool aligned =
+            MathF.Abs(AngleDelta(currentYaw, state.TargetYaw)) <=
+            Config.HearingReactionYawToleranceDegrees;
+
+        if (aligned)
+        {
+            _withinTolerance++;
+            state.WithinTolerance++;
+            if (!state.ValveLookReached)
+            {
+                state.ValveLookReached = true;
+                _valveLookReached++;
+            }
+        }
+
+        // Check each issued request on the next tick, not immediately
+        // after writing it. Overwrites count per write attempt.
+        if (!state.ValveLookChecked &&
+            now - state.ValveLookLastWriteAt > TimestampEpsilonSeconds)
         {
             state.ValveLookChecked = true;
-
             try
             {
-                // Detect Valve overwriting the request instead of fighting it.
-                if (NativeValueReader.TryCopy(
-                        bot.LookAtSpot,
-                        out Vector3 spot) &&
-                    Vector3.DistanceSquared(
-                        spot,
-                        state.ValveLookPosition) <=
+                bool retained =
+                    NativeValueReader.TryCopy(bot.LookAtSpot, out Vector3 spot) &&
+                    Vector3.DistanceSquared(spot, state.ValveLookPosition) <=
                         ValveLookPositionTolerance * ValveLookPositionTolerance &&
-                    MathF.Abs(bot.LookAtSpotTimestamp -
-                        state.ValveLookTimestamp) <= TimestampEpsilonSeconds)
+                    MathF.Abs(bot.LookAtSpotTimestamp - state.ValveLookTimestamp) <=
+                        TimestampEpsilonSeconds;
+
+                if (retained)
                 {
                     state.ValveLookRetained = true;
                     _valveLookRetained++;
@@ -1008,19 +1037,22 @@ public sealed class HearingReactionService
             }
             catch
             {
-                _valveLookOverrides++;
+                return false;
             }
         }
 
-        if (!state.ValveLookReached &&
-            MathF.Abs(AngleDelta(
-                currentYaw,
-                state.TargetYaw)) <=
-                Config.HearingReactionYawToleranceDegrees)
-        {
-            state.ValveLookReached = true;
-            _valveLookReached++;
-        }
+        // Keep the original EndsAt fixed. The new request is never issued
+        // after that deadline (checked by ApplyFast before this method).
+        if (aligned ||
+            now - state.ValveLookLastWriteAt < ValveLookFeedbackIntervalSeconds)
+            return true;
+
+        if (!TryApplyValveLook(bot, state, now))
+            return false;
+
+        _valveLookReasserted++;
+        state.ValveLookReasserted++;
+        return true;
     }
 
     private void ReleaseValveLook(
@@ -1576,6 +1608,8 @@ public sealed class HearingReactionService
         public bool ValveLookReached { get; set; }
         public Vector3 ValveLookPosition { get; set; }
         public float ValveLookTimestamp { get; set; }
+        public float ValveLookLastWriteAt { get; set; }
+        public int ValveLookReasserted { get; set; }
     }
 
     private readonly record struct ValveLookSnapshot(

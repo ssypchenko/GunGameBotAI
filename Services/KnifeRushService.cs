@@ -14,6 +14,13 @@ public sealed class KnifeRushService
     private readonly ButtonPulseService _buttonPulses;
     private readonly CorrectionLogger _corrections;
     private readonly Action<string> _debug;
+    public Action<string>? AttackDiagnosticLog { get; set; }
+
+    public int PrimaryRequests { get; private set; }
+    public int SecondaryRequests { get; private set; }
+    public int PrimaryMatchedHits { get; private set; }
+    public int SecondaryMatchedHits { get; private set; }
+    public int UnmatchedKnifeHits { get; private set; }
 
     public KnifeRushService(
         Random random,
@@ -227,6 +234,11 @@ public sealed class KnifeRushService
         AcceptedCount = 0;
         RejectedCount = 0;
         AbortCount = 0;
+        PrimaryRequests = 0;
+        SecondaryRequests = 0;
+        PrimaryMatchedHits = 0;
+        SecondaryMatchedHits = 0;
+        UnmatchedKnifeHits = 0;
     }
 
     public void EndWithoutRestore(BotRuntimeState state)
@@ -615,6 +627,14 @@ public sealed class KnifeRushService
             state.Slot,
             secondary ? PlayerButtons.Attack2 : PlayerButtons.Attack,
             1);
+        if (secondary)
+            SecondaryRequests++;
+        else
+            PrimaryRequests++;
+
+        TraceAttack($"KNIFE-REQUEST slot={state.Slot}; time={now:0.###}; " +
+            $"target={enemyEntityIndex}; requested={(secondary ? "secondary" : "primary")}; " +
+            $"primaryHits={state.KnifeComboConfirmedPrimaryHits}; distance={distance:0.#}u");
         state.KnifeComboPendingAt = now;
         state.KnifeComboPendingSecondary = secondary;
         state.NextKnifeAttackAt = now + (secondary ? 1.0f : 0.48f);
@@ -625,12 +645,35 @@ public sealed class KnifeRushService
     {
         if (state.KnifeComboTargetEntityIndex != victimEntityIndex ||
             !KnifeComboPolicy.IsTimelyConfirmation(now, state.KnifeComboPendingAt))
+        {
+            UnmatchedKnifeHits++;
+            TraceAttack($"KNIFE-HIT-UNMATCHED slot={state.Slot}; time={now:0.###}; " +
+                $"victimEntity={victimEntityIndex}; expectedTarget={state.KnifeComboTargetEntityIndex}; " +
+                $"pendingAt={state.KnifeComboPendingAt:0.###}");
             return;
+        }
+
+        bool secondary = state.KnifeComboPendingSecondary;
+        if (secondary)
+            SecondaryMatchedHits++;
+        else
+            PrimaryMatchedHits++;
 
         state.KnifeComboConfirmedPrimaryHits = KnifeComboPolicy.OnConfirmedHit(
-            state.KnifeComboConfirmedPrimaryHits, state.KnifeComboPendingSecondary);
+            state.KnifeComboConfirmedPrimaryHits, secondary);
+
+        TraceAttack($"KNIFE-HIT-MATCH slot={state.Slot}; time={now:0.###}; " +
+            $"victimEntity={victimEntityIndex}; associatedRequest={(secondary ? "secondary" : "primary")}; " +
+            $"nextPrimaryHits={state.KnifeComboConfirmedPrimaryHits}; " +
+            "association=timing-only-not-verified-swing");
 
         state.KnifeComboPendingAt = float.NegativeInfinity;
+    }
+
+    private void TraceAttack(string message)
+    {
+        if (Config.KnifeAttackDebug)
+            AttackDiagnosticLog?.Invoke(message);
     }
 
     private void SetMode(BotRuntimeState state, BotBehaviorMode mode, string reason)

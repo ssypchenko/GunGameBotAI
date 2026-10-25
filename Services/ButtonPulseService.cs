@@ -45,6 +45,10 @@ public sealed class ButtonPulseService
     private readonly Dictionary<int, PulseState> _pulses = new();
     private readonly CorrectionLogger _corrections;
 
+    // Observes only newly queued input bits. This is not proof that the
+    // engine performed a swing or that Valve AI did not attack on its own.
+    public Action<int, ulong, ulong>? ButtonsQueued { get; set; }
+
     public ButtonPulseService(CorrectionLogger corrections)
     {
         _corrections = corrections;
@@ -337,6 +341,15 @@ public sealed class ButtonPulseService
                     $"0x{oldChange:X}",
                     $"0x{newChange:X}",
                     "mark queued button press transition");
+            }
+
+            try
+            {
+                ButtonsQueued?.Invoke(slot, newlyPressed, movement.QueuedButtonDownMask);
+            }
+            catch
+            {
+                // Diagnostics cannot interrupt live bot input.
             }
         }
     }

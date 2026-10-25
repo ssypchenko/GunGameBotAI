@@ -78,12 +78,38 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             () => Config.Debug && Config.VerboseCorrectionDebug,
             message => Logger.LogInformation("[GunGameBotAI][DEBUG] {Message}", message));
         _buttonPulses = new ButtonPulseService(_corrections);
+        _buttonPulses.ButtonsQueued = (slot, pressed, readback) =>
+        {
+            if (!_enabled || !Config.KnifeAttackDebug)
+                return;
+
+            ulong attackMask = (ulong)(PlayerButtons.Attack | PlayerButtons.Attack2);
+            ulong actual = pressed & attackMask;
+            if (actual == 0 ||
+                !_registry.TryGet(slot, out BotRuntimeState? state) ||
+                state == null ||
+                state.Mode is not (BotBehaviorMode.KnifeLevel or BotBehaviorMode.OpportunisticKnifeRush))
+                return;
+
+            Logger.LogInformation(
+                "[GunGameBotAI][KnifeAttack] KNIFE-INPUT-QUEUED slot={Slot}; time={Time:0.###}; " +
+                "queued={Queued}; readbackDown={ReadbackDown}; " +
+                "pendingSecondary={PendingSecondary}; inputOnly=true",
+                slot, Server.CurrentTime,
+                (actual & (ulong)PlayerButtons.Attack2) != 0 ? "secondary" : "primary",
+                (readback & actual) == actual,
+                state.KnifeComboPendingSecondary);
+        };
         _transientControl = new TransientControlService(_buttonPulses, _corrections);
         _aggression = new AggressionService(_corrections);
         _idleRecovery = new IdleRecoveryService(_corrections);
         _combatMovement = new CombatMovementService(_corrections);
         _weaponActivation = new WeaponActivationService(new NativeSelectItemWeaponSwitchBackend(), _corrections);
-        _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog);
+        _knifeRush = new KnifeRushService(_random, _weaponActivation, _buttonPulses, _corrections, DebugLog)
+        {
+            AttackDiagnosticLog = message =>
+                Logger.LogInformation("[GunGameBotAI][KnifeAttack] {Message}", message)
+        };
         _geometrySafety = new GeometrySafetyService(
             GeometryDebugLog);
         _stuckMonitor = new StuckMonitorService(
@@ -1372,6 +1398,20 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     EventPlayerDeath @event,
     GameEventInfo info)
     {
+        if (_enabled && Config.KnifeAttackDebug &&
+            @event.Attacker is { IsValid: true, IsBot: true } knifeKiller &&
+            @event.Userid is { IsValid: true } knifeVictim &&
+            knifeKiller.Slot != knifeVictim.Slot &&
+            @event.Weapon.Contains("knife", StringComparison.OrdinalIgnoreCase))
+        {
+            Logger.LogInformation(
+                "[GunGameBotAI][KnifeAttack] KNIFE-KILL-EVENT slot={Slot}; " +
+                "victimSlot={Victim}; time={Time:0.###}; weapon={Weapon}; " +
+                "damage={Damage}; variant=unavailable",
+                knifeKiller.Slot, knifeVictim.Slot, Server.CurrentTime,
+                @event.Weapon, @event.DmgHealth);
+        }
+
         if (_enabled &&
             !_mapChanging &&
             _gunGameApi != null &&
@@ -1410,6 +1450,10 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
         if (slot >= 0)
         {
+            if (_registry.TryGet(slot, out BotRuntimeState? dyingState) &&
+                dyingState != null)
+                _postKillRegroup.Cancel(dyingState, reason: "death");
+
             ReleaseButtonPulse(slot);
 
             _botSpawnGrace.Remove(slot);
@@ -1455,7 +1499,21 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         {
             CCSPlayerPawn? pawn = victim.PlayerPawn.Value;
             if (pawn != null && pawn.IsValid)
-                _knifeRush.OnKnifeHurt(state, checked((int)pawn.Index), Server.CurrentTime);
+            {
+                int victimEntity = checked((int)pawn.Index);
+                if (Config.KnifeAttackDebug)
+                {
+                    Logger.LogInformation(
+                        "[GunGameBotAI][KnifeAttack] KNIFE-HURT-EVENT slot={Slot}; " +
+                        "victimEntity={VictimEntity}; time={Time:0.###}; " +
+                        "damage={Damage}; remainingHealth={Health}; " +
+                        "weapon={Weapon}; attackVariant=unavailable",
+                        attacker.Slot, victimEntity, Server.CurrentTime,
+                        @event.DmgHealth, @event.Health, @event.Weapon);
+                }
+
+                _knifeRush.OnKnifeHurt(state, victimEntity, Server.CurrentTime);
+            }
         }
         catch
         {
@@ -1506,6 +1564,16 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
                 _currentMapName,
                 Server.CurrentTime);
             _knifeRecovery.RecordFire(@event.Userid, @event.Weapon, Server.CurrentTime);
+
+            if (Config.KnifeAttackDebug &&
+                @event.Userid is { IsValid: true, IsBot: true } knifeShooter &&
+                @event.Weapon.Contains("knife", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.LogInformation(
+                    "[GunGameBotAI][KnifeAttack] KNIFE-WEAPON-FIRE slot={Slot}; " +
+                    "time={Time:0.###}; weapon={Weapon}; attackVariant=unavailable",
+                    knifeShooter.Slot, Server.CurrentTime, @event.Weapon);
+            }
         }
 
         if (!_enabled || @event.Userid is not { IsValid: true, IsBot: true } player || player.IsHLTV ||
@@ -2460,6 +2528,12 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
             $"[GunGameBotAI] regroup enabled={Config.PostKillRegroupEnabled}; started={_postKillRegroup.Started}; " +
             $"completed={_postKillRegroup.Completed}; interrupted={_postKillRegroup.Interrupted}; " +
             $"active={_registry.States.Values.Count(state => state.RegroupActive)}.");
+        command.ReplyToCommand(
+            $"[GunGameBotAI] tacticsDiagnostics regroup={Config.PostKillRegroupDebug}; " +
+            $"knifeAttack={Config.KnifeAttackDebug}; " +
+            $"knifeRequests={_knifeRush.PrimaryRequests}/{_knifeRush.SecondaryRequests} primary/secondary; " +
+            $"knifeMatchedHits={_knifeRush.PrimaryMatchedHits}/{_knifeRush.SecondaryMatchedHits}; " +
+            $"knifeUnmatchedHits={_knifeRush.UnmatchedKnifeHits}.");
         command.ReplyToCommand(
             $"[GunGameBotAI] knifeRush opportunities={_knifeRush.OpportunityCount}; accepted={_knifeRush.AcceptedCount}; rejected={_knifeRush.RejectedCount}; aborted={_knifeRush.AbortCount}.");
         command.ReplyToCommand(

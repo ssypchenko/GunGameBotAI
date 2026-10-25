@@ -142,8 +142,11 @@ acceptance. A new Valve enemy `NoiseTimestamp` inside
 short `HearingReactionHoldSeconds` `EyeAngles.Y` hold toward the copied
 `NoisePosition`. The opt-in `HearingReactionLookMode` may be 0 (existing
 feedback), 1 (bounded Valve LookAtSpot corrections no more frequently than every
-50 ms while off-target), or 2 (the same plus LookYaw corrections);
-the new modes require runtime testing. `HearingReactionYawToleranceDegrees` suppresses redundant
+50 ms while off-target), 2 (the same plus LookYaw corrections), or
+3 (Linux-only, signature-validated native CCSBot::SetLookAt, which sets the
+internal active-look state and priority). Modes 1–3 remain opt-in
+experiments; mode 3 may crash a test server if the inferred native ABI
+is incorrect, so it must not be tested on production. `HearingReactionYawToleranceDegrees` suppresses redundant
 yaw writes and `HearingReactionCooldownSeconds` prevents immediate repeated
 leases. `NoiseSource` is used only for team/entity validation; the source
 pawn's current position is never read. Stage 6B never assigns Enemy and never

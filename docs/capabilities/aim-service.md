@@ -1,20 +1,31 @@
-# AimService v1
+# AimService — weapon-aware visible aim priority
 
-Stage 4 adds a bounded correction to Valve bot aim selection.
+Stage 4 originally corrected only **blocked** Valve aim points. After
+live observation of chest aim with ordinary firearms, the behaviour was
+updated on 25 October 2026: `AimPolicyService` now selects the **highest
+priority physically visible body point for the active weapon** even when
+Valve has chosen a lower-priority but visible location. Valve still chooses
+the enemy, rotates/smooths the aim, predicts and fires.
 
 The guiding rule is:
 
-> Valve chooses the enemy and performs the aim update. GunGameBotAI only
-> replaces `CCSBot.TargetSpot` when Valve has just selected a target point
-> that is not usable and a physically visible point exists on the same enemy.
+> Select the first physically visible point from the weapon-specific
+> priority order. Keep Valve's aim only if it is already essentially at
+> that point and itself visible; otherwise update `CCSBot.TargetSpot`
+> once from the `PickNewAimSpot` PostHook.
 
-The feature is opt-in:
+Current intended production configuration:
 
 ```json
-"AimEnhancementEnabled": false,
-"AimMode": "Mixed",
-"AimDebug": false
+{
+  "AimEnhancementEnabled": true,
+  "AimMode": "Mixed",
+  "AimDebug": false
+}
 ```
+
+The entire plugin must also be enabled. If the native hook is unavailable,
+this feature fails closed and Valve targeting is unchanged.
 
 ## Native integration
 
@@ -51,40 +62,29 @@ AimService remains unavailable and the rest of GunGameBotAI continues normally.
 
 ## Managed pipeline
 
-For a valid `PickNewAimSpot` callback:
-
 ```text
-Valve selects enemy
-    ↓
-Valve PickNewAimSpot()
-    ↓
-PostHook
-    ↓
-validate runtime / bot / current mode / current enemy
-    ↓
-read Valve CCSBot.TargetSpot
-    ↓
-is Valve point still on the current enemy hull?
-    ↓ yes
-trace Valve point
-    ↓ visible
-leave Valve targetSpot untouched
-
-otherwise
-    ↓
-AimPointProvider
-    ↓
-AimPolicyService
-    ↓
-VisibilityTraceService
-    ↓
-first visible candidate
-    ↓
-write only CCSBot.TargetSpot.X/Y/Z
+Valve selects enemy -> PickNewAimSpot -> PostHook
+    -> validate live bot, enemy, runtime and current mode
+    -> read Valve TargetSpot and enemy AABB
+    -> resolve current GunGame weapon and AimMode
+    -> trace ordered HEAD/BODY candidate points
+    -> choose the first physically visible preferred point
+    -> if Valve TargetSpot is within 4 world units
+       AND on enemy hull AND physically visible:
+         KEEP Valve's existing aim
+       else:
+         WRITE only CCSBot.TargetSpot.X/Y/Z
+    -> Valve owns aim rotation, prediction, smoothing and firing
 ```
 
-Stage 4 never writes `EyeAngles`, movement commands or attack buttons. Valve
-continues to own rotation, smoothing, prediction and firing.
+If there is no visible candidate, an AABB read fails, a trace raises an
+exception, or any eligibility gate fails, the hook continues without
+changing Valve state.
+
+This is **not** a per-tick forced aim override. The priority selection
+is performed only when the existing native `PickNewAimSpot` callback
+fires. The currently selected `TargetSpot` is not continuously reasserted
+between callbacks.
 
 ## Aim points
 
@@ -114,75 +114,55 @@ Full bone/hitbox processing is not part of Stage 4.
 
 ## Policy
 
-`AimMode=Mixed` is the default.
+`AimMode=Mixed` is the default. Each priority list includes all
+five supported AABB points as visibility fallbacks:
 
-For rifles, pistols, SMGs and other ordinary firearms:
+| Weapon | Preferred visible-point order |
+|---|---|
+| Rifle, pistol, SMG, machine gun and other ordinary firearms | HEAD → UPPER_CHEST → CHEST → GUT → PELVIS |
+| Shotguns (`nova`, `xm1014`, `mag7`, `sawedoff`) | CHEST → UPPER_CHEST → GUT → PELVIS → HEAD |
+| AWP and SSG08 | CHEST → UPPER_CHEST → GUT → PELVIS → HEAD |
 
-```text
-HEAD
-UPPER_CHEST
-CHEST
-GUT
-```
+Other classified sniper weapons currently use the head-first fallback,
+matching the existing `AimPolicyService` rules.
 
-For AWP, SSG08 and shotguns:
+`AimMode=Head` forces head-first order for all firearms; `AimMode=Body`
+forces chest-first order. Knife, grenade and non-normal GunGame bot
+modes remain excluded.
 
-```text
-CHEST
-GUT
-PELVIS
-HEAD
-```
+**Point accuracy limitation:** HEAD is an approximation at 90% of the
+target's world-space AABB height, not an actual head hitbox/bone
+coordinate. A physically visible HEAD sample does **not** guarantee
+an in-game headshot. Bone/hitbox targeting is a separate experiment
+if live tests show the AABB target is inadequate.
 
-`AimMode=Head` forces the head-first order.
+## Valve aim retention
 
-`AimMode=Body` forces the body-first order.
+Valve's aim is retained only when its `TargetSpot`:
+1. is on or very near the current opponent's live AABB;
+2. is within **4 world units (3D)** of the selected preferred point;
+3. is itself physically visible according to an independent trace.
 
-Knife and grenade modes are excluded. The service also requires
-`BotBehaviorMode.NormalGunGame`, so Knife Rush, mandatory Knife Level,
-Grenade Level and Ladder Traversal remain outside Stage 4.
+If the Valve target is visible but is at the chest while the weapon
+prefers a visible head, the plugin replaces it with the visible head
+point. For a shotgun, the reverse applies when the chest is visible.
+If HEAD is hidden by cover, the plugin traces the next candidate in
+priority order and aims only at a visible part.
 
-## Valve-first behaviour
-
-AimService does not blindly replace every Valve target.
-
-A Valve point is retained when:
-
-1. it is still on or very near the current live enemy AABB; and
-2. the point is physically visible through `VisibilityTraceService`.
-
-A stale point in clear free space is not treated as a good target merely because
-the ray reaches it.
-
-If a trace itself fails, AimService performs no correction.
-
-If no candidate point is visible, AimService performs no correction.
+No runtime console tuning writes back to the JSON defaults.
 
 ## Trace cost
 
-Stage 4 does not run a new per-tick scanning loop.
+No additional timers or per-tick scans were introduced. The
+`PickNewAimSpot` PostHook performs up to five ordered candidate traces,
+stopping on the first visible point, plus one independent Valve-point
+trace **only if** Valve is already within the tiny preferred-point
+tolerance. Normal fully visible head/chest scenarios typically need
+one candidate trace; unchanged Valve points may need one extra trace.
 
-Work happens only when Valve calls `PickNewAimSpot`.
-
-Typical callback:
-
-```text
-Valve target is valid and visible
-= 1 ray trace
-```
-
-Blocked/stale Valve target:
-
-```text
-0 or 1 Valve-point trace
-+ up to 4 candidate traces
-```
-
-Therefore the maximum Stage 4 visibility work is approximately five traces for
-one relevant `PickNewAimSpot` callback.
-
-`AimDebug=true` also enables the separate Stage 3 diagnostic sampler, so debug
-testing deliberately costs more than normal production operation.
+The worst case is **six traces for one eligible callback**; trace
+failures preserve Valve behaviour. `AimDebug` activates separate
+point-visibility diagnostics, increasing cost while troubleshooting.
 
 ## Performance counters
 
@@ -242,13 +222,13 @@ When a correction is actually applied:
 ```text
 [GunGameBotAI][Aim] CORRECT map=...; bot=...; slot=...;
 weaponClass=Rifle; weapon=weapon_ak47; aimMode=Mixed;
-ValveTarget=(...); ValveTargetVisible=false;
+ValveTarget=(...); ValveTargetPreferred=false;
 chosen=HEAD; target=(...); traces=...;
-action=replace-targetSpot-only
+action=replace-targetSpot-with-preferred-visible-point
 ```
 
-Routine callbacks where Valve already selected a good point are not logged per
-call.
+Routine callbacks where Valve already selected the preferred visible point
+are not logged per call.
 
 ## Live acceptance
 
@@ -276,6 +256,30 @@ Acceptance requires:
 - performance counters remain reasonable on the live server.
 
 
+## New weapon-priority regression gate (not yet live accepted)
+
+After building and deploying the updated DLL:
+
+1. Verify `css_ggbotai_status` reports `aimEnhancement=enabled`
+   and `aimHooked=True`; otherwise no changes to bot aim occur.
+2. Use `css_ggbotai_aim_mode mixed` and temporarily enable
+   `css_ggbotai_aim_debug 1`.
+3. In unobstructed rifle/pistol/SMG encounters, verify correction
+   logs choose HEAD rather than accepting the initial Valve chest spot.
+4. For shotguns, AWP and SSG08 verify CHEST is selected first.
+5. With only a lower body region exposed, verify the fallback chooses
+   a physically visible candidate; never aim through opaque walls.
+6. Inspect `aimPerf` for corrections, trace count and average/max
+   execution time before and after the change, including a map transition.
+7. Ensure `css_ggbotai_aim 0` restores Valve-only aim without
+   affecting Hearing, EnemyReaction, ladders, weapons or GunGame levels.
+8. Switch `AimDebug` off after the capture: debugging can increase
+   CPU usage and log volume.
+
+Release compilation and live-server acceptance of **this new policy**
+are pending. The earlier Stage 4 accepted test does not automatically
+validate this behaviour change.
+
 ## Stage 4 acceptance status
 
 Stage 4 was accepted after extended live testing on 23 September 2026.
@@ -285,7 +289,7 @@ including rifle, SMG, pistol, shotgun, sniper and machine-gun classes. The
 native hook remained stable, bounded corrections continued across the map
 change, and no Stage 4 exception/native-hook failure was observed.
 
-The final long-run performance sample before the map transition recorded:
+The historical **pre-policy-change** long-run performance sample recorded:
 
 ```text
 calls=38477
@@ -298,9 +302,9 @@ avgUs=10.2
 maxUs=1308.3
 ```
 
-Among callbacks that reached a real aim decision, Valve's point was retained
-most often; Stage 4 therefore remained a bounded correction rather than a
-replacement aim system.
+That sample measured the original **blocked-point-only** implementation,
+not the new weapon-priority behaviour. A new sample is required to
+quantify preferred-point corrections, CPU time and in-game accuracy.
 
 Detailed `AimDebug` logging is intended for diagnostics and should normally be
 disabled after acceptance while `AimEnhancementEnabled` remains enabled.

@@ -9,13 +9,17 @@ Typical usage:
 
 Optional:
     python3 scripts/check_native_signatures.py /path/to/libserver.so --context 96
-    python3 scripts/check_native_signatures.py /path/to/libserver.so --json-report report.json
+    python3 scripts/check_native_signatures.py /path/to/libserver.so --json-report native-signatures-review.json
     python3 scripts/check_native_signatures.py /path/to/libserver.so --ladder-layout
     python3 scripts/check_native_signatures.py --inventory
     python3 scripts/check_native_signatures.py --self-test
 
+Use refresh_native_signatures.py for SHA-gated updates to the tracked
+native-signatures.json report. This scanner never writes C# signatures, but
+--json-report overwrites the output path supplied by the operator.
+
 The script reads production signatures directly from the repository source:
-- known Aim, native Attack, Ladder and SelectItem signature variables;
+- explicit Aim, native Attack, Ladder, SelectItem and SetLookAt variables;
 - any additional C# variables named Linux*Signature / Linux*Signatures;
 - every signatures.linux entry in gamedata/*.json.
 

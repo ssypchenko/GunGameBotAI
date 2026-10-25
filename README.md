@@ -139,6 +139,16 @@ LOS is lost, or the hold timeout expires. Ambient Human Look Scan is suppressed
 while a reaction is pending or active and otherwise remains geometry/random
 only, so it no longer competes for enemy-directed turning.
 
+## HE grenade Stage 10/11 — not yet live accepted
+
+On the GunGame HE level the plugin now attempts to select and retain a real
+owned HE grenade, chooses a physically visible target and makes a bounded
+throw. The pistol is the defensive weapon against a close knife attacker
+and the fallback after the grenade is consumed. GunGame must grant a new HE.
+The status command reports throw attempts and confirmed `grenade_thrown`
+events. `GrenadeThrowAssistEnabled` can disable the new controller without
+removing existing movement behaviour. See `docs/HANDOVER.md` for validation.
+
 ## Hearing acceptance (25 October 2026)
 
 **Stage 6A passive monitoring and Stage 6B bounded look reaction are

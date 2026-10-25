@@ -152,7 +152,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
     }
 
     public override string ModuleName => "GunGame Bot AI";
-    public override string ModuleVersion => "0.8.8";
+    public override string ModuleVersion => "0.8.9";
     public override string ModuleAuthor => "Sergey";
     public override string ModuleDescription => "Bounded GunGame bot behaviour improvements.";
 
@@ -749,7 +749,11 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
         if (_postKillRegroup.ApplyDecision(
                 pawn, bot, state, enemy, now, IsFreezePeriod()))
         {
-            SetMode(state, BotBehaviorMode.NormalGunGame, "post-kill regroup");
+            SetMode(state,
+                state.LevelWeaponClass == WeaponClass.Grenade
+                    ? BotBehaviorMode.GrenadeLevel
+                    : BotBehaviorMode.NormalGunGame,
+                "post-kill regroup");
             _registry.DeactivateActuator(state.Slot);
             return;
         }
@@ -1006,6 +1010,7 @@ public sealed class GunGameBotAI : BasePlugin, IPluginConfig<GunGameBotAIConfig>
 
                 bool grenadeActuatorOwned = false;
                 if (!ladderTraversalOwned && !knifeActuatorOwned &&
+                    !state.RegroupActive &&
                     state.Mode == BotBehaviorMode.GrenadeLevel)
                 {
                     grenadeActuatorOwned = _grenadeLevel.ApplyFast(

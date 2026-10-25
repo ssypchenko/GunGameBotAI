@@ -61,8 +61,8 @@ public sealed class PostKillRegroupService
             state.RegroupActive ||
             now < state.RegroupCooldownUntil ||
             state.HasBeenControlledByPlayerThisRound ||
-            state.Mode != BotBehaviorMode.NormalGunGame ||
-            state.LevelWeaponClass is WeaponClass.Knife or WeaponClass.Grenade ||
+            state.Mode is not (BotBehaviorMode.NormalGunGame or BotBehaviorMode.GrenadeLevel) ||
+            state.LevelWeaponClass == WeaponClass.Knife ||
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER ||
             !NativeValueReader.TryGetOrigin(pawn, out Vector3 origin))
         {
@@ -72,7 +72,8 @@ public sealed class PostKillRegroupService
         bool lowHealth = pawn.Health <= Config.PostKillRegroupHealthThreshold;
         bool hasSpawn = TryGetNearestEnemySpawn(pawn, origin, out Vector3 spawn, out float spawnDistance);
         bool nearSpawn = hasSpawn && spawnDistance <= Config.PostKillRegroupSpawnRadius;
-        bool defensive = lowHealth || nearSpawn;
+        bool grenadeLevel = state.LevelWeaponClass == WeaponClass.Grenade;
+        bool defensive = lowHealth || nearSpawn || grenadeLevel;
         float retreatDistance = defensive
             ? Config.PostKillRegroupRetreatDistance
             : MathF.Min(96.0f, Config.PostKillRegroupRetreatDistance * 0.6f);
@@ -97,8 +98,9 @@ public sealed class PostKillRegroupService
         state.RegroupRetreatDistance = retreatDistance;
         state.RegroupHoldSeconds = defensive
             ? Config.PostKillRegroupHoldSeconds
-            : MathF.Min(0.25f, Config.PostKillRegroupHoldSeconds);
+            : MathF.Min(0.20f, Config.PostKillRegroupHoldSeconds);
         state.RegroupHoldUntil = 0.0f;
+        state.RegroupCrouchUntil = 0.0f;
         state.RegroupCooldownUntil = now + Config.PostKillRegroupCooldownSeconds;
         state.RegroupOrigin = origin;
         state.RegroupDirection = direction;
@@ -131,7 +133,7 @@ public sealed class PostKillRegroupService
             freezePeriod ||
             state.HasBeenControlledByPlayerThisRound ||
             pawn.MoveType == MoveType_t.MOVETYPE_LADDER ||
-            state.LevelWeaponClass is WeaponClass.Knife or WeaponClass.Grenade ||
+            state.LevelWeaponClass == WeaponClass.Knife ||
             enemy is { IsVisible: true } ||
             pawn.Health < state.RegroupLastHealth ||
             pawn.MovementServices == null ||
@@ -145,7 +147,7 @@ public sealed class PostKillRegroupService
 
         if (!state.RegroupReloadIssued &&
             now - state.RegroupStartedAt >= ReloadDelaySeconds &&
-            state.LevelWeaponClass != WeaponClass.Unknown)
+            state.LevelWeaponClass is not (WeaponClass.Unknown or WeaponClass.Grenade or WeaponClass.Knife))
         {
             _buttons.Pulse(state.Slot, PlayerButtons.Reload, 1);
             state.RegroupReloadIssued = true;
@@ -170,7 +172,11 @@ public sealed class PostKillRegroupService
         }
 
         if (state.RegroupHoldUntil <= 0.0f)
+        {
             state.RegroupHoldUntil = now + state.RegroupHoldSeconds;
+            state.RegroupCrouchUntil = now +
+                MathF.Min(state.RegroupHoldSeconds, Config.PostKillRegroupCrouchSeconds);
+        }
 
         if (now >= state.RegroupHoldUntil)
         {
@@ -180,11 +186,12 @@ public sealed class PostKillRegroupService
             return false;
         }
 
-        // A brief pause and crouch is not a claim that the location is cover.
-        // An acquired live enemy interrupts the pause at the next decision.
+        // Duck is asserted briefly, not throughout the stationary hold.
+        // The button pulse owns and releases only the bit it introduced.
         return _control.RequestLease(
             state.Slot, LeaseOwner, TransientControlPriority.ShortCombatCorrection,
-            LeaseTicks, forwardMove: 0.0f, leftMove: 0.0f, duck: true);
+            LeaseTicks, forwardMove: 0.0f, leftMove: 0.0f,
+            duck: now < state.RegroupCrouchUntil);
     }
 
     public void Cancel(BotRuntimeState state, CCSPlayerPawn? pawn = null)

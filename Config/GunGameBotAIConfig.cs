@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 47;
+    public override int Version { get; set; } = 48;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -232,7 +232,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public float PostKillRegroupSpawnRadius { get; set; } = 650.0f;
     public float PostKillRegroupRetreatDistance { get; set; } = 160.0f;
     public float PostKillRegroupMoveSeconds { get; set; } = 1.35f;
-    public float PostKillRegroupHoldSeconds { get; set; } = 0.80f;
+    public float PostKillRegroupHoldSeconds { get; set; } = 0.30f;
+    public float PostKillRegroupCrouchSeconds { get; set; } = 0.16f;
     public float PostKillRegroupCooldownSeconds { get; set; } = 4.0f;
 
     public bool KnifeRushEnabled { get; set; } = true;
@@ -350,7 +351,8 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         PostKillRegroupSpawnRadius = Clamp(PostKillRegroupSpawnRadius, 100.0f, 1600.0f, 650.0f, nameof(PostKillRegroupSpawnRadius), warn);
         PostKillRegroupRetreatDistance = Clamp(PostKillRegroupRetreatDistance, 64.0f, 320.0f, 160.0f, nameof(PostKillRegroupRetreatDistance), warn);
         PostKillRegroupMoveSeconds = Clamp(PostKillRegroupMoveSeconds, 0.30f, 3.0f, 1.35f, nameof(PostKillRegroupMoveSeconds), warn);
-        PostKillRegroupHoldSeconds = Clamp(PostKillRegroupHoldSeconds, 0.0f, 2.0f, 0.80f, nameof(PostKillRegroupHoldSeconds), warn);
+        PostKillRegroupHoldSeconds = Clamp(PostKillRegroupHoldSeconds, 0.0f, 2.0f, 0.30f, nameof(PostKillRegroupHoldSeconds), warn);
+        PostKillRegroupCrouchSeconds = Clamp(PostKillRegroupCrouchSeconds, 0.04f, 0.35f, 0.16f, nameof(PostKillRegroupCrouchSeconds), warn);
         PostKillRegroupCooldownSeconds = Clamp(PostKillRegroupCooldownSeconds, 1.0f, 15.0f, 4.0f, nameof(PostKillRegroupCooldownSeconds), warn);
         GrenadeMinThrowDistance = Clamp(GrenadeMinThrowDistance, 150.0f, 450.0f, 220.0f, nameof(GrenadeMinThrowDistance), warn);
         GrenadeMaxThrowDistance = Clamp(GrenadeMaxThrowDistance, GrenadeMinThrowDistance, 1400.0f, 850.0f, nameof(GrenadeMaxThrowDistance), warn);
@@ -1127,6 +1129,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
             // Regroup defaults are initialised only for missing properties.
             // Do not overwrite existing operator settings.
             Version = 47;
+        }
+
+        if (Version < 48)
+        {
+            // Retain existing settings and initialise the independent crouch
+            // duration only if it is missing from the configuration.
+            Version = 48;
         }
     }
 

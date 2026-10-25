@@ -33,6 +33,7 @@ public sealed class HearingReactionService
 
     private readonly Random _random = new();
     private readonly Action<string> _info;
+    private readonly NativeLookAtService _nativeLookAt;
     private readonly Dictionary<int, ReactionState> _states = new();
 
     private long _noiseTimestampChanges;
@@ -66,6 +67,9 @@ public sealed class HearingReactionService
     private long _valveLookReasserted;
     private long _valveLookReleased;
     private long _valveLookReached;
+    private long _nativeLookCalls;
+    private long _nativeLookAccepted;
+    private long _nativeLookRejected;
     private long _failures;
 
     private double _totalReactionMilliseconds;
@@ -79,6 +83,7 @@ public sealed class HearingReactionService
         Action<string> info)
     {
         _info = info;
+        _nativeLookAt = new NativeLookAtService(info, info);
     }
 
     public GunGameBotAIConfig Config { get; set; } = new();
@@ -137,6 +142,8 @@ public sealed class HearingReactionService
                 $"valveLookRetained={_valveLookRetained}; valveLookReasserted={_valveLookReasserted}; " +
                 $"valveLookReleased={_valveLookReleased}; " +
                 $"valveLookReached={_valveLookReached}; " +
+                $"nativeLookCalls={_nativeLookCalls}; nativeLookAccepted={_nativeLookAccepted}; " +
+                $"nativeLookRejected={_nativeLookRejected}; nativeLookStatus={_nativeLookAt.Status}; " +
                 $"avgReadbackErrorDeg={AverageReadbackErrorDegrees:0.0}; " +
                 $"maxReadbackErrorDeg={_maximumReadbackErrorDegrees:0.0}; " +
                 $"avgReactionMs={averageReactionMs:0.0}; avgRequestedDeg={averageRequested:0.0}; " +
@@ -189,6 +196,9 @@ public sealed class HearingReactionService
         _valveLookReasserted = 0;
         _valveLookReleased = 0;
         _valveLookReached = 0;
+        _nativeLookCalls = 0;
+        _nativeLookAccepted = 0;
+        _nativeLookRejected = 0;
         _failures = 0;
 
         _totalReactionMilliseconds = 0.0;
@@ -953,31 +963,55 @@ public sealed class HearingReactionService
             if (!float.IsFinite(position.Z))
                 return false;
 
-            // Configure the lease before exposing a new timestamp/position.
-            // Never write LookAtDesc (native char* ownership is unknown).
-            bot.LookAtSpot.X = position.X;
-            bot.LookAtSpot.Y = position.Y;
-            bot.LookAtSpot.Z = position.Z;
-            bot.LookAtSpotAngleTolerance =
-                Config.HearingReactionYawToleranceDegrees;
-            bot.LookAtSpotClearIfClose = false;
-            bot.LookAtSpotAttack = false;
-            bot.LookAtSpotDuration = MathF.Max(
-                0.01f,
-                state.EndsAt - now);
-            bot.LookAtSpotTimestamp = now;
-
-            if (Config.HearingReactionLookMode == 2)
+            if (Config.HearingReactionLookMode == 3)
             {
-                // Explicitly experimental: seed internal look interpolation
-                // at each bounded correction, never every fast tick.
-                bot.LookYaw = NormalizePositiveYaw(state.TargetYaw);
-                bot.LookYawVel = 0.0f;
+                // Native SetLookAt establishes Valve's own active state and
+                // priority, unlike assigning schema fields in modes 1/2.
+                // No direct LookYaw or EyeAngles writes in this mode.
+                _nativeLookCalls++;
+                if (!_nativeLookAt.TrySetLookAt(
+                        bot,
+                        position,
+                        MathF.Max(0.01f, state.EndsAt - now),
+                        Config.HearingReactionYawToleranceDegrees))
+                {
+                    _nativeLookRejected++;
+                    return false;
+                }
+
+                _nativeLookAccepted++;
+            }
+            else
+            {
+                // Original experimental modes 1/2 remain untouched.
+                // Never write LookAtDesc: native pointer ownership is unknown.
+                bot.LookAtSpot.X = position.X;
+                bot.LookAtSpot.Y = position.Y;
+                bot.LookAtSpot.Z = position.Z;
+                bot.LookAtSpotAngleTolerance =
+                    Config.HearingReactionYawToleranceDegrees;
+                bot.LookAtSpotClearIfClose = false;
+                bot.LookAtSpotAttack = false;
+                bot.LookAtSpotDuration = MathF.Max(
+                    0.01f,
+                    state.EndsAt - now);
+                bot.LookAtSpotTimestamp = now;
+
+                if (Config.HearingReactionLookMode == 2)
+                {
+                    bot.LookYaw = NormalizePositiveYaw(state.TargetYaw);
+                    bot.LookYawVel = 0.0f;
+                }
             }
 
             state.ValveLookApplied = true;
             state.ValveLookPosition = position;
-            state.ValveLookTimestamp = now;
+            // Native SetLookAt does not explicitly write the schema
+            // timestamp in this build. Track the actual observed value.
+            state.ValveLookTimestamp =
+                Config.HearingReactionLookMode == 3
+                    ? bot.LookAtSpotTimestamp
+                    : now;
             state.ValveLookLastWriteAt = now;
             state.ValveLookChecked = false;
             _valveLookApplied++;

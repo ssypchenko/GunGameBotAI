@@ -111,8 +111,10 @@ distance, noise-position error and bent-noise availability, but performs no
 hearing, enemy, view, navigation, movement or attack writes.
 
 Stage 6B adds opt-in `HearingReactionService`. A new Valve-owned enemy
-`NoiseTimestamp` may create a short reaction delay and bounded `EyeAngles.Y`
-hold toward the copied, imprecise `NoisePosition`. `NoiseSource` is used only
+`NoiseTimestamp` may create a short reaction delay and bounded look
+toward the copied, imprecise `NoisePosition`. Mode 0 directly corrects
+`EyeAngles.Y`; the live-accepted Linux mode 3 uses native
+`CCSBot::SetLookAt` instead. `NoiseSource` is used only
 to validate that the source is an opposing-team pawn and to record its entity
 id; the source pawn's current position is never read. The service never assigns
 Enemy and never changes hearing, navigation, movement, weapon or attack state.
@@ -131,10 +133,30 @@ LOS is lost, or the hold timeout expires. Ambient Human Look Scan is suppressed
 while a reaction is pending or active and otherwise remains geometry/random
 only, so it no longer competes for enemy-directed turning.
 
+## Hearing acceptance (25 October 2026)
+
+**Stage 6A passive monitoring and Stage 6B bounded look reaction are
+complete and live-accepted** for the tested Linux binary. Hearing reaction
+mode `3` calls the reviewed native `CCSBot::SetLookAt` with priority 2,
+using only Valve's imprecise `NoisePosition`. In the acceptance test,
+55 of 68 committed reactions reached the requested yaw tolerance and
+13 reactions were interrupted by combat. The exact signature is
+fail-closed and must be rechecked after CS2 updates.
+
+`HearingMonitorEnabled` and `VisionMonitorEnabled` are passive
+diagnostics, not dependencies of `HearingReactionEnabled`.
+`HearingDebug` controls detailed logs. For regular play, keep all
+three disabled while enabling only the desired behaviour flags.
+Operator console tuning is temporary; restarting or
+`css_ggbotai_reload` restores the on-disk configuration.
+
+Stage 6C investigation/navigation and combined-feature soak testing
+remain future work and are **not** part of this acceptance.
+
 ## Known limitations and verification gates
 
 - There is no complete path-finding or wall-penetration/omniscience logic.
-- Aim enhancement is disabled by default. Its native PickNewAimSpot hook is fail-closed: an unmatched signature leaves Valve aim unchanged.
+- Aim enhancement defaults to enabled in the ConfigVersion 45 production profile (the overall runtime is still opt-in). Its native PickNewAimSpot hook is fail-closed: an unmatched signature leaves Valve aim unchanged.
 - Native SelectItem weapon switching is fail-closed: an accepted signature
   must resolve and the known platform vtable slot must contain a non-null
   function pointer before the engine call is attempted.
@@ -157,7 +179,7 @@ To include the statically verifiable hidden Ladder FSM layout evidence:
 python3 scripts/check_native_signatures.py /path/to/libserver.so --ladder-layout
 ```
 
-The scanner checks the Aim, Ladder and SelectItem runtime signatures directly
+The scanner checks Aim, Ladder, SelectItem, native Attack and SetLookAt runtime signatures directly
 from the source. See
 `docs/native-signature-maintenance.md` for the safe update workflow.
 

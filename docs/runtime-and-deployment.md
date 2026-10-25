@@ -92,6 +92,38 @@ that summary for per-map comparisons; `css_ggbotai_status` remains cumulative
 across maps until the runtime is toggled.
 
 
+## Hearing 6A/6B acceptance and regression checks (25 October 2026)
+
+Stage 6A passive Noise/event correlation and Stage 6B native look
+reaction are accepted for the tested Linux CS2 binary with SHA-256
+`ac63a1513aac0d7716aa7920d5ee8728feb9953600aea79f3c2c92780ba8eae7`.
+
+Live mode 3 evidence: 211 enemy noises, 68 committed reactions,
+55 `valveLookReached`, 179/183 accepted native calls and 13 combat
+interruptions. The four earlier native-call readback false negatives
+were corrected subsequently, without a new accepted post-fix log yet.
+
+Recommended regression process:
+
+1. Verify the binary SHA and all five native signatures with
+   `scripts/check_native_signatures.py --ladder-layout`.
+2. Run `scripts/test_native_signature_tools.py` and build the DLL.
+3. Enable `HearingReactionEnabled=true`, mode 3 on the reviewed Linux
+   binary. Keep passive monitors and debug logging off for normal play.
+4. In a controlled test, temporarily enable `HearingDebug`; confirm
+   new enemy noises turn the bot towards imprecise Valve noise points.
+5. Confirm direct visible combat, ladder traversal and Knife modes
+   supersede Hearing. Check map transitions and server stability.
+6. Repeat with all intended production Aim, Vision, EnemyReaction,
+   HumanLookScan and KnifeRush options enabled; this combined test is
+   still outstanding.
+
+Operator console tuning is volatile. A server/plugin restart or
+`css_ggbotai_reload` restores persisted JSON startup defaults; manual
+ladder geometry has its own separately armed storage.
+
+Stage 6C route investigation and respawn memory are NOT implemented.
+
 ## Stage 6 managed look-around verification
 
 Stage 6 defaults to disabled:
@@ -306,9 +338,9 @@ After testing, return compact diagnostics to normal with:
 css_ggbotai_vision_debug 0
 ```
 
-## CounterStrikeSharp 1.0.375 / KHook
+## CounterStrikeSharp 1.0.378 / KHook history
 
-GunGameBotAI targets CounterStrikeSharp API 1.0.375.
+GunGameBotAI currently targets CounterStrikeSharp API **1.0.378** and `net10.0`. The KHook change described below was introduced with 1.0.375.
 
 CounterStrikeSharp 1.0.375 moved managed dynamic-function hooks onto KHook
 internally. Existing GunGameBotAI code which calls
@@ -319,13 +351,19 @@ Current native paths are:
 
 ```text
 PickNewAimSpot
-  signature -> MemoryFunction -> PostHook (KHook underneath CSS 1.0.375)
+  signature -> MemoryFunction -> PostHook (KHook introduced in CSS 1.0.375)
 
 Ladder SetLadderState
   signature -> MemoryFunction.Invoke
 
 SelectItem
   signature safety probe -> validated platform vtable slot -> VirtualFunction invoke
+
+Attack
+  exact signature -> MemoryFunction.Invoke (Enemy Reaction)
+
+SetLookAt
+  exact Linux signature -> MemoryFunction.Invoke (Hearing mode 3)
 ```
 
 The SelectItem switch is dispatched through the engine vtable method. The

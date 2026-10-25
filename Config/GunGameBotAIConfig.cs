@@ -7,7 +7,7 @@ namespace GunGameBotAI.Config;
 public sealed class GunGameBotAIConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")]
-    public override int Version { get; set; } = 45;
+    public override int Version { get; set; } = 46;
 
     public bool EnabledOnLoad { get; set; } = false;
 
@@ -242,6 +242,16 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
     public bool KnifeRushAllowOnGrenadeLevel { get; set; } = false;
 
     public bool GrenadeLevelEnabled { get; set; } = true;
+    public bool GrenadeThrowAssistEnabled { get; set; } = true;
+    public float GrenadeMinThrowDistance { get; set; } = 220.0f;
+    public float GrenadeMaxThrowDistance { get; set; } = 850.0f;
+    public float GrenadeKnifeDefenceDistance { get; set; } = 230.0f;
+    public float GrenadeKnifeApproachDistance { get; set; } = 340.0f;
+    public float GrenadeLeadSeconds { get; set; } = 0.16f;
+    public float GrenadeArcFactor { get; set; } = 0.20f;
+    public float GrenadeReadyDelaySeconds { get; set; } = 0.60f;
+    public float GrenadeAimToleranceDegrees { get; set; } = 8.0f;
+    public float GrenadeThrowCooldownSeconds { get; set; } = 1.80f;
 
     // Production combat aim correction. Enabled by default; diagnostics stay separate.
     public bool AimEnhancementEnabled { get; set; } = true;
@@ -327,6 +337,15 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
         DecisionIntervalSeconds = Clamp(DecisionIntervalSeconds, 0.05f, 0.25f, 0.10f, nameof(DecisionIntervalSeconds), warn);
         FastActuatorEveryTicks = Clamp(FastActuatorEveryTicks, 1, 2, 1, nameof(FastActuatorEveryTicks), warn);
         IdleRepathSeconds = Clamp(IdleRepathSeconds, 0.5f, 30.0f, 4.0f, nameof(IdleRepathSeconds), warn);
+        GrenadeMinThrowDistance = Clamp(GrenadeMinThrowDistance, 150.0f, 450.0f, 220.0f, nameof(GrenadeMinThrowDistance), warn);
+        GrenadeMaxThrowDistance = Clamp(GrenadeMaxThrowDistance, GrenadeMinThrowDistance, 1400.0f, 850.0f, nameof(GrenadeMaxThrowDistance), warn);
+        GrenadeKnifeDefenceDistance = Clamp(GrenadeKnifeDefenceDistance, 100.0f, 350.0f, 230.0f, nameof(GrenadeKnifeDefenceDistance), warn);
+        GrenadeKnifeApproachDistance = Clamp(GrenadeKnifeApproachDistance, GrenadeKnifeDefenceDistance, 500.0f, 340.0f, nameof(GrenadeKnifeApproachDistance), warn);
+        GrenadeLeadSeconds = Clamp(GrenadeLeadSeconds, 0.0f, 0.40f, 0.16f, nameof(GrenadeLeadSeconds), warn);
+        GrenadeArcFactor = Clamp(GrenadeArcFactor, 0.05f, 0.50f, 0.20f, nameof(GrenadeArcFactor), warn);
+        GrenadeReadyDelaySeconds = Clamp(GrenadeReadyDelaySeconds, 0.20f, 1.50f, 0.60f, nameof(GrenadeReadyDelaySeconds), warn);
+        GrenadeAimToleranceDegrees = Clamp(GrenadeAimToleranceDegrees, 2.0f, 20.0f, 8.0f, nameof(GrenadeAimToleranceDegrees), warn);
+        GrenadeThrowCooldownSeconds = Clamp(GrenadeThrowCooldownSeconds, 0.8f, 5.0f, 1.8f, nameof(GrenadeThrowCooldownSeconds), warn);
         VisionMonitorDistance = Clamp(VisionMonitorDistance, 100.0f, 2000.0f, 800.0f, nameof(VisionMonitorDistance), warn);
         HearingReactionLookMode = Clamp(
             HearingReactionLookMode,
@@ -1079,6 +1098,13 @@ public sealed class GunGameBotAIConfig : BasePluginConfig
 
             EnabledOnLoad = false;
             Version = 43;
+        }
+
+        if (Version < 46)
+        {
+            // Missing properties use the Stage 10/11 defaults. Preserve other
+            // operator settings while moving the schema version forward.
+            Version = 46;
         }
     }
 
